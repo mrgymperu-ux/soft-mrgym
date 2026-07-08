@@ -447,7 +447,14 @@ def _sembrar_gimnasio_default():
 
 @app.on_event("startup")
 def startup_event():
-    models.Base.metadata.create_all(bind=engine)
+    # En PostgreSQL, los ENUMs nativos pueden causar conflictos si ya existen.
+    # Envolver en try/except para que no falle si las tablas ya estan creadas.
+    try:
+        models.Base.metadata.create_all(bind=engine, checkfirst=True)
+    except Exception as e:
+        import traceback
+        print(f"[WARN] create_all parcial: {e}")
+        traceback.print_exc()
     _migrar_columnas_nuevas()
     _sembrar_gimnasio_default()  # garantiza que exista el gimnasio 1 y asigna data existente
     _sembrar_puestos_iniciales()
