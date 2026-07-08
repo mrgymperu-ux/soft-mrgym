@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soft-MrGym - Sistema de Gestión</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">🏋️</div>
+                <span class="logo-text">Soft-MrGym</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Principal</div>
+                <div class="nav-item active" onclick="showSection('dashboard', this)">
+                    <span class="nav-item-icon">📊</span>
+                    <span class="nav-item-text">Panel</span>
+                </div>
+                <div class="nav-item" onclick="showSection('asistencias', this)">
+                    <span class="nav-item-icon">✅</span>
+                    <span class="nav-item-text">Asistencias</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Gestión</div>
+                <div class="nav-item" onclick="showSection('clientes', this)">
+                    <span class="nav-item-icon">👥</span>
+                    <span class="nav-item-text">Clientes</span>
+                </div>
+                <div class="nav-item" onclick="showSection('membresias', this)">
+                    <span class="nav-item-icon">🎫</span>
+                    <span class="nav-item-text">Membresías</span>
+                </div>
+                <div class="nav-item" onclick="showSection('productos', this)">
+                    <span class="nav-item-icon">📦</span>
+                    <span class="nav-item-text">Productos</span>
+                </div>
+                <div class="nav-item" onclick="showSection('ventas', this)">
+                    <span class="nav-item-icon">💰</span>
+                    <span class="nav-item-text">Ventas</span>
+                </div>
+                <div class="nav-item" onclick="showSection('venta-rapida', this)">
+                    <span class="nav-item-icon">⚡</span>
+                    <span class="nav-item-text">Venta Rápida</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Seguimiento</div>
+                <div class="nav-item" onclick="showSection('progreso', this)">
+                    <span class="nav-item-icon">📈</span>
+                    <span class="nav-item-text">Progreso</span>
+                </div>
+                <div class="nav-item" onclick="showSection('agenda', this)">
+                    <span class="nav-item-icon">📅</span>
+                    <span class="nav-item-text">Agenda</span>
+                </div>
+                <div class="nav-item" onclick="showSection('entrenamientos', this)">
+                    <span class="nav-item-icon">💪</span>
+                    <span class="nav-item-text">Entrenamientos</span>
+                </div>
+                <div class="nav-item" onclick="showSection('retos', this)">
+                    <span class="nav-item-icon">🏆</span>
+                    <span class="nav-item-text">Retos</span>
+                </div>
+                <div class="nav-item" onclick="showSection('nutricion', this)">
+                    <span class="nav-item-icon">🥗</span>
+                    <span class="nav-item-text">Nutrición</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Sistema</div>
+                <div class="nav-item" onclick="showSection('configuracion', this)">
+                    <span class="nav-item-icon">⚙️</span>
+                    <span class="nav-item-text">Configuración</span>
+                </div>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+        <!-- HEADER -->
+        <div class="header">
+            <div>
+                <h1 class="header-title" id="page-title">Dashboard</h1>
+                <p class="header-subtitle" id="page-subtitle">Resumen general del gimnasio</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary" onclick="openConfiguracionRapida()">
+                    ⚙️ Configuración
+                </button>
+            </div>
+        </div>
+
+        <!-- DASHBOARD -->
+        <section id="dashboard" class="section active">
+            <div class="content">
+                <div class="stats-grid">
+                    <div class="stat-card blue">
+                        <div class="stat-icon blue">👥</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Total Clientes</div>
+                            <div class="stat-value" id="total-clientes">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card green">
+                        <div class="stat-icon green">🎫</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Membresías Activas</div>
+                            <div class="stat-value" id="membresias-activas">0</div>
+                        </div>
+                    </div>
+                    <div class="stat-card orange">
+                        <div class="stat-icon orange">💰</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Ingresos del Mes</div>
+                            <div class="stat-value" id="ingresos-mes">S/ 0.00</div>
+                        </div>
+                    </div>
+                    <div class="stat-card red">
+                        <div class="stat-icon red">⚠️</div>
+                        <div class="stat-content">
+                            <div class="stat-label">Productos Bajo Stock</div>
+                            <div class="stat-value" id="productos-bajo-stock">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Ventas Recientes</h3>
+                    </div>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Fecha</th>
+                                    <th>Cliente</th>
+                                    <th>Total</th>
+                                    <th>Método</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ventas-recientes">
+                                <tr>
+                                    <td colspan="5" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay ventas registradas
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ASISTENCIAS (NUEVA PÁGINA) -->
+        <section id="asistencias" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">✅ Control de Asistencias</h3>
+                        <button class="btn btn-primary" onclick="registrarEntrada()">
+                            + Registrar Entrada
+                        </button>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active" onclick="showAsistenciaTab('ultimos', this)">Últimos 20 Ingresos</button>
+                        <button class="tab" onclick="showAsistenciaTab('hoy', this)">Asistencias de Hoy</button>
+                    </div>
+
+                    <div id="asistencia-tab-ultimos" class="asistencia-tab-content">
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Hora</th>
+                                        <th>Cliente</th>
+                                        <th>DNI</th>
+                                        <th>Membresía</th>
+                                        <th>Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ultimos-ingresos">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; padding: 40px; color: #636E72;">
+                                            No hay ingresos registrados
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="asistencia-tab-hoy" class="asistencia-tab-content" style="display: none;">
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Hora Entrada</th>
+                                        <th>Hora Salida</th>
+                                        <th>Cliente</th>
+                                        <th>Duración</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="asistencias-hoy">
+                                    <tr>
+                                        <td colspan="4" style="text-align: center; padding: 40px; color: #636E72;">
+                                            No hay asistencias hoy
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CLIENTES -->
+        <section id="clientes" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Lista de Clientes</h3>
+                        <button class="btn btn-primary" onclick="showModal('cliente-modal')">
+                            + Nuevo Cliente
+                        </button>
+                    </div>
+
+                    <div class="search-bar">
+                        <input type="text" id="buscar-cliente" placeholder="Buscar por nombre, DNI o email..." onkeyup="buscarCliente()">
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nombre</th>
+                                    <th>DNI</th>
+                                    <th>Teléfono</th>
+                                    <th>Email</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clientes-table">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay clientes registrados
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- DETALLE CLIENTE -->
+        <section id="cliente-detalle" class="section">
+            <div class="content">
+                <button class="btn btn-secondary" onclick="showSection('clientes', document.querySelectorAll('.nav-item')[1])" style="margin-bottom: 20px;">
+                    ← Volver a Clientes
+                </button>
+
+                <div class="card">
+                    <div class="cliente-header">
+                        <div class="cliente-avatar" id="cliente-avatar-inicial">JP</div>
+                        <div class="cliente-info">
+                            <h2 class="cliente-nombre" id="cliente-nombre-detalle">Juan Pérez</h2>
+                            <p class="cliente-email" id="cliente-email-detalle">juan@email.com</p>
+                            <div class="cliente-stats">
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-membresias">0</div>
+                                    <div class="cliente-stat-label">Membresías</div>
+                                </div>
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-ventas">0</div>
+                                    <div class="cliente-stat-label">Ventas</div>
+                                </div>
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-progresos">0</div>
+                                    <div class="cliente-stat-label">Progresos</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active" onclick="showClienteTab('datos', this)">Datos del cliente</button>
+                        <button class="tab" onclick="showClienteTab('entrenamiento', this)">Entrenamiento</button>
+                        <button class="tab" onclick="showClienteTab('productos', this)">Productos</button>
+                        <button class="tab" onclick="showClienteTab('facturas', this)">Facturas</button>
+                        <button class="tab" onclick="showClienteTab('archivos', this)">Archivos y fotos</button>
+                    </div>
+
+                    <div id="cliente-tab-datos" class="cliente-tab-content">
+                        <div class="table-container">
+                            <table class="table">
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Nº de miembro del club</strong></td>
+                                        <td id="cliente-dni-detalle">22321234</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Nombre</strong></td>
+                                        <td id="cliente-nombre-tab">Diego</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Apellidos</strong></td>
+                                        <td id="cliente-apellidos">Perez</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Edad</strong></td>
+                                        <td id="cliente-edad">32</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Email</strong></td>
+                                        <td id="cliente-email-tab">diego@perez.com</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Número de teléfono</strong></td>
+                                        <td id="cliente-telefono-tab">987654321</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Dirección</strong></td>
+                                        <td id="cliente-direccion-tab">Av. Principal 123</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Detalles bancarios</strong></td>
+                                        <td>No registrado</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-entrenamiento" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">💪</div>
+                            <div class="empty-state-title">Sin entrenamientos asignados</div>
+                            <div class="empty-state-text">Asigna un plan de entrenamiento a este cliente</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-productos" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📦</div>
+                            <div class="empty-state-title">Sin productos</div>
+                            <div class="empty-state-text">Este cliente no tiene productos asignados</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-facturas" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">💰</div>
+                            <div class="empty-state-title">Sin facturas</div>
+                            <div class="empty-state-text">No hay facturas registradas para este cliente</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-archivos" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📁</div>
+                            <div class="empty-state-title">Sin archivos</div>
+                            <div class="empty-state-text">No hay archivos o fotos subidos</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- MEMBRESÍAS -->
+        <section id="membresias" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Planes de Membresía</h3>
+                        <button class="btn btn-primary" onclick="showModal('membresia-modal')">
+                            + Nueva Membresía
+                        </button>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nombre</th>
+                                    <th>Descripción</th>
+                                    <th>Precio</th>
+                                    <th>Duración</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="membresias-table">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay membresías registradas
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PRODUCTOS -->
+        <section id="productos" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Inventario de Productos</h3>
+                        <button class="btn btn-primary" onclick="showModal('producto-modal')">
+                            + Nuevo Producto
+                        </button>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nombre</th>
+                                    <th>Categoría</th>
+                                    <th>Precio Venta</th>
+                                    <th>Stock</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productos-table">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay productos registrados
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VENTAS -->
+        <section id="ventas" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Punto de Venta</h3>
+                        <button class="btn btn-primary" onclick="showModal('venta-modal')">
+                            + Nueva Venta
+                        </button>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Fecha</th>
+                                    <th>Cliente</th>
+                                    <th>Total</th>
+                                    <th>Método Pago</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ventas-table">
+                                <tr>
+                                    <td colspan="5" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay ventas registradas
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VENTA RÁPIDA (NUEVA PÁGINA) -->
+        <section id="venta-rapida" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">⚡ Venta Rápida</h3>
+                    </div>
+
+                    <div class="grid-cards" id="productos-venta-rapida">
+                        <!-- Se llena dinámicamente con imágenes y precio -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PROGRESO -->
+        <section id="progreso" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Progreso de Alumnos</h3>
+                        <button class="btn btn-primary" onclick="showModal('progreso-modal')">
+                            + Registrar Progreso
+                        </button>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Cliente</th>
+                                    <th>Fecha</th>
+                                    <th>Peso</th>
+                                    <th>% Grasa</th>
+                                    <th>% Músculo</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="progreso-table">
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay registros de progreso
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- AGENDA -->
+        <section id="agenda" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">📅 Agenda</h3>
+                    </div>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📅</div>
+                        <div class="empty-state-title">Agenda en desarrollo</div>
+                        <div class="empty-state-text">Próximamente podrás gestionar clases y eventos</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ENTRENAMIENTOS -->
+        <section id="entrenamientos" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">💪 Entrenamientos</h3>
+                        <button class="btn btn-primary" onclick="showModal('entrenamiento-modal')">
+                            + Nuevo Plan
+                        </button>
+                    </div>
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💪</div>
+                        <div class="empty-state-title">Editor de planes</div>
+                        <div class="empty-state-text">Crea rutinas personalizadas para tus alumnos</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- RETOS -->
+        <section id="retos" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🏆 Retos</h3>
+                        <button class="btn btn-primary" onclick="showModal('reto-modal')">
+                            + Nuevo Reto
+                        </button>
+                    </div>
+
+                    <div class="search-bar">
+                        <input type="text" placeholder="Buscar retos..." id="buscar-reto">
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active">Todos los retos</button>
+                        <button class="tab">Mis retos</button>
+                        <button class="tab">Completados</button>
+                    </div>
+
+                    <div class="grid-cards" id="retos-grid">
+                        <!-- Se llena dinámicamente -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- NUTRICIÓN -->
+        <section id="nutricion" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">🥗 Planes de Alimentación</h3>
+                        <button class="btn btn-primary" onclick="showModal('nutricion-modal')">
+                            + Nuevo Plan
+                        </button>
+                    </div>
+
+                    <div class="grid-cards" id="nutricion-grid">
+                        <!-- Se llena dinámicamente -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CONFIGURACIÓN -->
+        <section id="configuracion" class="section">
+            <div class="content">
+                <div class="config-panel">
+                    <div class="config-section">
+                        <h3 class="config-section-title">⚙️ Configuración General</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Moneda</label>
+                            <select class="config-input" id="config-moneda" onchange="guardarConfiguracion()">
+                                <option value="S/">Soles (S/) - Perú</option>
+                                <option value="$">Dólares ($) - USA</option>
+                                <option value="€">Euros (€) - Europa</option>
+                                <option value="MXN$">Pesos Mexicanos (MXN$)</option>
+                                <option value="ARS$">Pesos Argentinos (ARS$)</option>
+                                <option value="COP$">Pesos Colombianos (COP$)</option>
+                            </select>
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Nombre del Gimnasio</label>
+                            <input type="text" class="config-input" id="config-nombre-gimnasio" placeholder="Mi Gimnasio" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Teléfono de Contacto</label>
+                            <input type="text" class="config-input" id="config-telefono" placeholder="999-999-999" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Email de Contacto</label>
+                            <input type="email" class="config-input" id="config-email" placeholder="info@gimnasio.com" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Dirección</label>
+                            <input type="text" class="config-input" id="config-direccion" placeholder="Av. Principal 123" onchange="guardarConfiguracion()">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h3 class="config-section-title">💳 Comisiones de Pago</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Comisión Tarjeta (%)</label>
+                            <input type="number" class="config-input" id="config-comision-tarjeta" placeholder="3.5" step="0.1" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Comisión QR (%)</label>
+                            <input type="number" class="config-input" id="config-comision-qr" placeholder="2.0" step="0.1" onchange="guardarConfiguracion()">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h3 class="config-section-title">📊 Datos</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Exportar Datos</label>
+                            <button class="btn btn-secondary" onclick="exportarDatos()">
+                                📥 Exportar Backup
+                            </button>
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Importar Datos</label>
+                            <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">
+                                📤 Importar Backup
+                            </button>
+                            <input type="file" id="import-file" style="display: none;" accept=".json" onchange="importarDatos(event)">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Limpiar Todos los Datos</label>
+                            <button class="btn btn-danger" onclick="limpiarDatos()">
+                                🗑️ Limpiar Todo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- MODAL CLIENTE -->
+    <div id="cliente-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Nuevo Cliente</h2>
+                <button class="close" onclick="closeModal('cliente-modal')">&times;</button>
+            </div>
+            <form id="form-cliente">
+                <div class="form-group">
+                    <label>Nombre Completo *</label>
+                    <input type="text" id="cliente-nombre" placeholder="Juan Pérez" required>
+                </div>
+                <div class="form-group">
+                    <label>DNI</label>
+                    <input type="text" id="cliente-dni" placeholder="12345678">
+                </div>
+                <div class="form-group">
+                    <label>Teléfono</label>
+                    <input type="text" id="cliente-telefono" placeholder="987654321">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="cliente-email" placeholder="juan@email.com">
+                </div>
+                <div class="form-group">
+                    <label>Fecha de Nacimiento</label>
+                    <input type="date" id="cliente-nacimiento">
+                </div>
+                <div class="form-group">
+                    <label>Dirección</label>
+                    <textarea id="cliente-direccion" placeholder="Av. Principal 123"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('cliente-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar Cliente</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL MEMBRESÍA -->
+    <div id="membresia-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Nueva Membresía</h2>
+                <button class="close" onclick="closeModal('membresia-modal')">&times;</button>
+            </div>
+            <form id="form-membresia">
+                <div class="form-group">
+                    <label>Nombre del Plan *</label>
+                    <input type="text" id="membresia-nombre" placeholder="Mensual Básica" required>
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="membresia-descripcion" placeholder="Acceso ilimitado por 30 días"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Precio *</label>
+                    <input type="number" id="membresia-precio" placeholder="150.00" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label>Duración (días) *</label>
+                    <input type="number" id="membresia-duracion" placeholder="30" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('membresia-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar Membresía</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL PRODUCTO -->
+    <div id="producto-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Nuevo Producto</h2>
+                <button class="close" onclick="closeModal('producto-modal')">&times;</button>
+            </div>
+            <form id="form-producto">
+                <div class="form-group">
+                    <label>Nombre del Producto *</label>
+                    <input type="text" id="producto-nombre" placeholder="Proteína Whey 1kg" required>
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <textarea id="producto-descripcion" placeholder="Proteína de suero de leche"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Precio de Compra</label>
+                    <input type="number" id="producto-precio-compra" placeholder="80.00" step="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Precio de Venta *</label>
+                    <input type="number" id="producto-precio-venta" placeholder="120.00" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label>Stock Inicial *</label>
+                    <input type="number" id="producto-stock" placeholder="20" required>
+                </div>
+                <div class="form-group">
+                    <label>Stock Mínimo</label>
+                    <input type="number" id="producto-stock-minimo" placeholder="5" value="5">
+                </div>
+                <div class="form-group">
+                    <label>Categoría</label>
+                    <input type="text" id="producto-categoria" placeholder="Suplementos">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('producto-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar Producto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL VENTA -->
+    <div id="venta-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Nueva Venta</h2>
+                <button class="close" onclick="closeModal('venta-modal')">&times;</button>
+            </div>
+            <form id="form-venta">
+                <div class="form-group">
+                    <label>Cliente (Opcional)</label>
+                    <select id="venta-cliente">
+                        <option value="">Sin cliente</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Método de Pago *</label>
+                    <select id="venta-metodo-pago" required>
+                        <option value="efectivo">Efectivo</option>
+                        <option value="tarjeta">Tarjeta</option>
+                        <option value="qr">QR</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Productos</label>
+                    <div id="productos-venta"></div>
+                    <button type="button" class="btn btn-secondary" onclick="agregarProductoVenta()" style="margin-top: 10px;">
+                        + Agregar Producto
+                    </button>
+                </div>
+                <div class="form-group">
+                    <label>Total</label>
+                    <div style="font-size: 1.5em; font-weight: bold; color: #6C5CE7;">
+                        <span id="moneda-simbolo">S/</span> <span id="venta-total">0.00</span>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('venta-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar Venta</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL PROGRESO -->
+    <div id="progreso-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Registrar Progreso</h2>
+                <button class="close" onclick="closeModal('progreso-modal')">&times;</button>
+            </div>
+            <form id="form-progreso">
+                <div class="form-group">
+                    <label>Cliente *</label>
+                    <select id="progreso-cliente" required>
+                        <option value="">Seleccionar cliente</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Peso (kg)</label>
+                    <input type="number" id="progreso-peso" placeholder="70.5" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Altura (cm)</label>
+                    <input type="number" id="progreso-altura" placeholder="170" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>% Grasa Corporal</label>
+                    <input type="number" id="progreso-grasa" placeholder="15.5" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>% Músculo</label>
+                    <input type="number" id="progreso-musculo" placeholder="45.0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Notas</label>
+                    <textarea id="progreso-notas" placeholder="Observaciones del progreso..."></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('progreso-modal')">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar Progreso</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

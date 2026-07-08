@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin — Soft-MrGym</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:#f5f3ff; }
+        .topbar { background:#7c3aed; color:#fff; padding:1rem 2rem; display:flex; justify-content:space-between; align-items:center; }
+        .topbar h1 { margin:0; font-size:1.3rem; }
+        .topbar button { background:rgba(255,255,255,.2); color:#fff; border:none; padding:.5rem 1rem; border-radius:8px; cursor:pointer; font-size:.85rem; }
+        .container { max-width:1100px; margin:2rem auto; padding:0 1.5rem; }
+
+        .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; margin-bottom:2rem; }
+        .stat-card { background:#fff; border-radius:12px; padding:1.25rem; box-shadow:0 2px 8px rgba(0,0,0,.06); text-align:center; }
+        .stat-card .valor { font-size:2rem; font-weight:700; color:#7c3aed; }
+        .stat-card .label { font-size:.85rem; color:#666; margin-top:.25rem; }
+
+        .section { background:#fff; border-radius:12px; padding:1.5rem; box-shadow:0 2px 8px rgba(0,0,0,.06); margin-bottom:1.5rem; }
+        .section h2 { margin:0 0 1rem; font-size:1.15rem; display:flex; justify-content:space-between; align-items:center; }
+        .btn { padding:.5rem 1rem; border:none; border-radius:8px; cursor:pointer; font-size:.85rem; font-weight:600; }
+        .btn-primary { background:#7c3aed; color:#fff; }
+        .btn-danger { background:#dc2626; color:#fff; }
+        .btn-sm { padding:.35rem .75rem; font-size:.8rem; }
+
+        table { width:100%; border-collapse:collapse; font-size:.9rem; }
+        th { text-align:left; padding:.6rem .5rem; border-bottom:2px solid #e5e7eb; color:#666; font-size:.8rem; text-transform:uppercase; }
+        td { padding:.6rem .5rem; border-bottom:1px solid #f3f4f6; }
+        tr:hover td { background:#faf5ff; }
+        .badge { display:inline-block; padding:.15rem .5rem; border-radius:99px; font-size:.75rem; font-weight:600; }
+        .badge-green { background:#dcfce7; color:#166534; }
+        .badge-red { background:#fee2e2; color:#991b1b; }
+        .badge-blue { background:#dbeafe; color:#1e40af; }
+
+        .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; justify-content:center; align-items:center; }
+        .modal-overlay.active { display:flex; }
+        .modal { background:#fff; border-radius:16px; padding:2rem; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; }
+        .modal h3 { margin:0 0 1rem; }
+        .modal .form-group { margin-bottom:.75rem; }
+        .modal .form-group label { display:block; font-size:.85rem; font-weight:600; margin-bottom:.25rem; }
+        .modal .form-group input, .modal .form-group select { width:100%; padding:.5rem .6rem; border:1px solid #d1d5db; border-radius:8px; font-size:.9rem; box-sizing:border-box; }
+        .modal-actions { display:flex; gap:.5rem; justify-content:flex-end; margin-top:1rem; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>🛡️ Super Admin — Plataforma MrGym</h1>
+        <div>
+            <button onclick="window.location.href='principal.html'">← Volver al panel</button>
+            <button onclick="cerrarSesion()">Cerrar sesión</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="stats-grid" id="stats-grid"></div>
+
+        <div class="section">
+            <h2>Gimnasios <button class="btn btn-primary btn-sm" onclick="abrirModalGimnasio()">+ Nuevo gimnasio</button></h2>
+            <table>
+                <thead><tr><th>ID</th><th>Nombre</th><th>Slug</th><th>Plan</th><th>Clientes</th><th>Usuarios</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody id="tabla-gimnasios"></tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Planes SaaS <button class="btn btn-primary btn-sm" onclick="abrirModalPlan()">+ Nuevo plan</button></h2>
+            <table>
+                <thead><tr><th>ID</th><th>Nombre</th><th>Precio/mes</th><th>Máx clientes</th><th>Máx productos</th><th>Máx staff</th><th>Nutrición</th><th>Estado</th><th>Acciones</th></tr></thead>
+                <tbody id="tabla-planes"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Modal Gimnasio -->
+    <div class="modal-overlay" id="modal-gimnasio">
+        <div class="modal">
+            <h3 id="modal-gimnasio-titulo">Nuevo gimnasio</h3>
+            <input type="hidden" id="gym-edit-id">
+            <div class="form-group"><label>Nombre</label><input id="gym-nombre"></div>
+            <div class="form-group"><label>Slug</label><input id="gym-slug"></div>
+            <div class="form-group"><label>Plan</label><select id="gym-plan"></select></div>
+            <div class="form-group"><label>Email</label><input id="gym-email"></div>
+            <div class="form-group"><label>Teléfono</label><input id="gym-telefono"></div>
+            <div class="form-group"><label>Dirección</label><input id="gym-direccion"></div>
+            <div id="gym-admin-fields">
+                <div class="form-group"><label>Usuario admin</label><input id="gym-admin-user" value="admin"></div>
+                <div class="form-group"><label>Contraseña admin</label><input id="gym-admin-pass" value="admin123"></div>
+                <div class="form-group"><label>Nombre admin</label><input id="gym-admin-nombre" value="Administrador"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="cerrarModal('modal-gimnasio')">Cancelar</button>
+                <button class="btn btn-primary" onclick="guardarGimnasio()">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Plan -->
+    <div class="modal-overlay" id="modal-plan">
+        <div class="modal">
+            <h3 id="modal-plan-titulo">Nuevo plan</h3>
+            <input type="hidden" id="plan-edit-id">
+            <div class="form-group"><label>Nombre</label><input id="plan-nombre"></div>
+            <div class="form-group"><label>Precio mensual</label><input type="number" id="plan-precio" step="0.01" value="0"></div>
+            <div class="form-group"><label>Máx clientes</label><input type="number" id="plan-max-clientes" value="50"></div>
+            <div class="form-group"><label>Máx productos</label><input type="number" id="plan-max-productos" value="20"></div>
+            <div class="form-group"><label>Máx rutinas</label><input type="number" id="plan-max-rutinas" value="10"></div>
+            <div class="form-group"><label>Máx usuarios staff</label><input type="number" id="plan-max-staff" value="1"></div>
+            <div class="form-group"><label><input type="checkbox" id="plan-nutricion"> Nutrición habilitada</label></div>
+            <div class="form-group"><label><input type="checkbox" id="plan-reportes"> Reportes avanzados</label></div>
+            <div class="modal-actions">
+                <button class="btn" onclick="cerrarModal('modal-plan')">Cancelar</button>
+                <button class="btn btn-primary" onclick="guardarPlan()">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        const token = sessionStorage.getItem("mrgym_token");
+        if (!token) window.location.href = "login.html";
+
+        const hdrs = () => ({ "Authorization": "Bearer " + token, "Content-Type": "application/json" });
+        const api = async (path, opts = {}) => {
+            const r = await fetch(`${API_BASE_URL}${path}`, { headers: hdrs(), ...opts });
+            if (r.status === 403) { alert("No tienes permisos de superadmin"); return null; }
+            if (!r.ok) { const e = await r.json(); alert(e.detail || "Error"); return null; }
+            return r.json();
+        };
+
+        let planesCache = [];
+
+        async function cargarTodo() {
+            const [dashboard, gimnasios, planes] = await Promise.all([
+                api("/saas/dashboard"),
+                api("/saas/gimnasios"),
+                api("/saas/planes"),
+            ]);
+            if (!dashboard) return;
+            planesCache = planes || [];
+            renderStats(dashboard);
+            renderGimnasios(gimnasios || []);
+            renderPlanes(planes || []);
+        }
+
+        function renderStats(d) {
+            document.getElementById("stats-grid").innerHTML = `
+                <div class="stat-card"><div class="valor">${d.total_gimnasios}</div><div class="label">Gimnasios totales</div></div>
+                <div class="stat-card"><div class="valor">${d.gimnasios_activos}</div><div class="label">Gimnasios activos</div></div>
+                <div class="stat-card"><div class="valor">${d.total_clientes_plataforma}</div><div class="label">Clientes en plataforma</div></div>
+                <div class="stat-card"><div class="valor">${d.total_usuarios_plataforma}</div><div class="label">Usuarios staff total</div></div>
+            `;
+        }
+
+        function renderGimnasios(lista) {
+            document.getElementById("tabla-gimnasios").innerHTML = lista.map(g => `
+                <tr>
+                    <td>${g.id}</td>
+                    <td><strong>${g.nombre}</strong></td>
+                    <td><code>${g.slug}</code></td>
+                    <td><span class="badge badge-blue">${g.nombre_plan || "Sin plan"}</span></td>
+                    <td>${g.total_clientes}</td>
+                    <td>${g.total_usuarios}</td>
+                    <td><span class="badge ${g.activo ? 'badge-green' : 'badge-red'}">${g.activo ? 'Activo' : 'Inactivo'}</span></td>
+                    <td>
+                        <button class="btn btn-sm" onclick="editarGimnasio(${g.id})">✏️</button>
+                        ${g.id !== 1 ? `<button class="btn btn-danger btn-sm" onclick="eliminarGimnasio(${g.id},'${g.nombre.replace(/'/g,"\\'")}')">🗑️</button>` : ''}
+                    </td>
+                </tr>
+            `).join("");
+        }
+
+        function renderPlanes(lista) {
+            document.getElementById("tabla-planes").innerHTML = lista.map(p => `
+                <tr>
+                    <td>${p.id}</td>
+                    <td><strong>${p.nombre}</strong></td>
+                    <td>S/ ${p.precio_mensual.toFixed(2)}</td>
+                    <td>${p.max_clientes}</td>
+                    <td>${p.max_productos}</td>
+                    <td>${p.max_usuarios_staff}</td>
+                    <td>${p.nutricion_habilitada ? '✅' : '❌'}</td>
+                    <td><span class="badge ${p.activo ? 'badge-green' : 'badge-red'}">${p.activo ? 'Activo' : 'Inactivo'}</span></td>
+                    <td><button class="btn btn-sm" onclick="editarPlan(${p.id})">✏️</button></td>
+                </tr>
+            `).join("");
+        }
+
+        // --- Modales ---
+        function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
+
+        function abrirModalGimnasio(gym = null) {
+            document.getElementById("modal-gimnasio-titulo").textContent = gym ? "Editar gimnasio" : "Nuevo gimnasio";
+            document.getElementById("gym-edit-id").value = gym ? gym.id : "";
+            document.getElementById("gym-nombre").value = gym ? gym.nombre : "";
+            document.getElementById("gym-slug").value = gym ? gym.slug : "";
+            document.getElementById("gym-email").value = gym ? (gym.email_contacto || "") : "";
+            document.getElementById("gym-telefono").value = gym ? (gym.telefono || "") : "";
+            document.getElementById("gym-direccion").value = gym ? (gym.direccion || "") : "";
+            document.getElementById("gym-admin-fields").style.display = gym ? "none" : "block";
+
+            const sel = document.getElementById("gym-plan");
+            sel.innerHTML = '<option value="">Sin plan</option>' + planesCache.map(p => `<option value="${p.id}" ${gym && gym.plan_id === p.id ? 'selected' : ''}>${p.nombre}</option>`).join("");
+
+            document.getElementById("modal-gimnasio").classList.add("active");
+        }
+
+        async function editarGimnasio(id) {
+            const gimnasios = await api("/saas/gimnasios");
+            const gym = gimnasios.find(g => g.id === id);
+            if (gym) abrirModalGimnasio(gym);
+        }
+
+        async function guardarGimnasio() {
+            const editId = document.getElementById("gym-edit-id").value;
+            if (editId) {
+                await api(`/saas/gimnasios/${editId}`, {
+                    method: "PUT",
+                    body: JSON.stringify({
+                        nombre: document.getElementById("gym-nombre").value,
+                        slug: document.getElementById("gym-slug").value,
+                        plan_id: document.getElementById("gym-plan").value ? parseInt(document.getElementById("gym-plan").value) : null,
+                        email_contacto: document.getElementById("gym-email").value || null,
+                        telefono: document.getElementById("gym-telefono").value || null,
+                        direccion: document.getElementById("gym-direccion").value || null,
+                    }),
+                });
+            } else {
+                await api("/saas/gimnasios", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        nombre: document.getElementById("gym-nombre").value,
+                        slug: document.getElementById("gym-slug").value,
+                        plan_id: document.getElementById("gym-plan").value ? parseInt(document.getElementById("gym-plan").value) : null,
+                        email_contacto: document.getElementById("gym-email").value || null,
+                        telefono: document.getElementById("gym-telefono").value || null,
+                        direccion: document.getElementById("gym-direccion").value || null,
+                        admin_username: document.getElementById("gym-admin-user").value,
+                        admin_password: document.getElementById("gym-admin-pass").value,
+                        admin_nombre: document.getElementById("gym-admin-nombre").value,
+                    }),
+                });
+            }
+            cerrarModal("modal-gimnasio");
+            cargarTodo();
+        }
+
+        async function eliminarGimnasio(id, nombre) {
+            if (!confirm(`¿Eliminar el gimnasio "${nombre}" y TODOS sus datos? Esta acción es irreversible.`)) return;
+            await api(`/saas/gimnasios/${id}`, { method: "DELETE" });
+            cargarTodo();
+        }
+
+        function abrirModalPlan(plan = null) {
+            document.getElementById("modal-plan-titulo").textContent = plan ? "Editar plan" : "Nuevo plan";
+            document.getElementById("plan-edit-id").value = plan ? plan.id : "";
+            document.getElementById("plan-nombre").value = plan ? plan.nombre : "";
+            document.getElementById("plan-precio").value = plan ? plan.precio_mensual : 0;
+            document.getElementById("plan-max-clientes").value = plan ? plan.max_clientes : 50;
+            document.getElementById("plan-max-productos").value = plan ? plan.max_productos : 20;
+            document.getElementById("plan-max-rutinas").value = plan ? plan.max_rutinas : 10;
+            document.getElementById("plan-max-staff").value = plan ? plan.max_usuarios_staff : 1;
+            document.getElementById("plan-nutricion").checked = plan ? plan.nutricion_habilitada : false;
+            document.getElementById("plan-reportes").checked = plan ? plan.reportes_avanzados : false;
+            document.getElementById("modal-plan").classList.add("active");
+        }
+
+        async function editarPlan(id) {
+            const planes = await api("/saas/planes");
+            const plan = planes.find(p => p.id === id);
+            if (plan) abrirModalPlan(plan);
+        }
+
+        async function guardarPlan() {
+            const editId = document.getElementById("plan-edit-id").value;
+            const datos = {
+                nombre: document.getElementById("plan-nombre").value,
+                precio_mensual: parseFloat(document.getElementById("plan-precio").value),
+                max_clientes: parseInt(document.getElementById("plan-max-clientes").value),
+                max_productos: parseInt(document.getElementById("plan-max-productos").value),
+                max_rutinas: parseInt(document.getElementById("plan-max-rutinas").value),
+                max_usuarios_staff: parseInt(document.getElementById("plan-max-staff").value),
+                nutricion_habilitada: document.getElementById("plan-nutricion").checked,
+                reportes_avanzados: document.getElementById("plan-reportes").checked,
+            };
+            if (editId) {
+                await api(`/saas/planes/${editId}`, { method: "PUT", body: JSON.stringify(datos) });
+            } else {
+                await api("/saas/planes", { method: "POST", body: JSON.stringify(datos) });
+            }
+            cerrarModal("modal-plan");
+            cargarTodo();
+        }
+
+        cargarTodo();
+    </script>
+</body>
+</html>

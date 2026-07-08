@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pagos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .filtros-pagos { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:16px 20px; }
+        .resumen-grid { display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; justify-content:space-between; }
+        .resumen-dato { text-align:center; }
+        .resumen-dato .rd-label { margin:0; font-size:0.82em; color:var(--color-texto-secundario); }
+        .resumen-dato .rd-valor { font-size:1.3em; font-weight:700; }
+        .servicios-layout { display:grid; grid-template-columns:260px 1fr; gap:0; min-height:420px; }
+        @media (max-width:900px) { .servicios-layout { grid-template-columns:1fr; } }
+        .busq-wrap { position:relative; }
+        .busq-dropdown { position:absolute; top:100%; left:0; right:0; background:var(--color-blanco); border:1px solid var(--color-borde); border-radius:8px; box-shadow:var(--sombra); max-height:240px; overflow-y:auto; z-index:30; display:none; margin-top:4px; }
+        .busq-dropdown.activo { display:block; }
+        .busq-item { padding:8px 12px; cursor:pointer; font-size:0.85em; border-bottom:1px solid var(--color-borde); }
+        .busq-item:last-child { border-bottom:none; }
+        .busq-item:hover { background:var(--color-fondo); }
+        .busq-item-sub { font-size:0.75em; color:var(--color-texto-secundario); }
+        .busq-vacio { padding:10px 12px; font-size:0.8em; color:var(--color-texto-secundario); }
+        .lista-servicios { border-right:1px solid var(--color-borde); padding:14px; }
+        .item-servicio { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:0.88em; }
+        .item-servicio:hover { background:var(--color-fondo); }
+        .item-servicio.activo { background:var(--color-primario); color:#fff; }
+        .item-servicio .badge-deuda { font-size:0.68em; }
+        .panel-cargos { padding:18px 22px; }
+        .deuda-total-card { background:var(--color-fondo); border-radius:10px; padding:14px 18px; margin:0 20px 16px; display:flex; justify-content:space-between; align-items:center; }
+        .dias-semana-chips { display:flex; flex-wrap:wrap; gap:6px; }
+        .dias-semana-chips label { display:flex; align-items:center; gap:4px; font-size:0.82em; background:var(--color-fondo); padding:6px 10px; border-radius:14px; cursor:pointer; }
+        .dias-semana-chips input { width:auto; }
+        .recurrente-hint { font-size:0.75em; color:var(--color-texto-secundario); margin:-4px 0 0; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Pagos</h1><p class="header-subtitle">Gestiona el pago de Staff, Profesores y Servicios/Deudas</p></div>
+        </div>
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab active" id="tabbtn-staff" onclick="cambiarTabPagos('staff', this)">🧾 Staff</button>
+                <button class="tab" id="tabbtn-profesores" onclick="cambiarTabPagos('profesores', this)">🏫 Profesores</button>
+                <button class="tab" id="tabbtn-servicios" onclick="cambiarTabPagos('servicios', this)">🧰 Servicios</button>
+            </div>
+
+            <!-- ================= TAB STAFF ================= -->
+            <div id="tab-pagos-staff">
+                <div class="filtros-pagos">
+                    <div class="form-group busq-wrap" style="margin:0;flex:1;min-width:220px;">
+                        <label>Trabajador</label>
+                        <input type="text" id="st-empleado-buscar" placeholder="Buscar por nombre..." autocomplete="off" oninput="filtrarEmpleadoStaff()" onfocus="mostrarDropdownEmpleado('st')" onblur="setTimeout(()=>ocultarDropdown('st-empleado-resultados'),150)">
+                        <input type="hidden" id="st-empleado">
+                        <div id="st-empleado-resultados" class="busq-dropdown"></div>
+                    </div>
+                    <div class="form-group" style="margin:0;"><label>Año</label><input type="number" id="st-anio" style="width:100px;"></div>
+                    <div class="form-group" style="margin:0;">
+                        <label>Mes</label>
+                        <select id="st-mes">
+                            <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                            <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                            <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                            <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="verDetalleStaff()">Ver detalle</button>
+                </div>
+
+                <div id="resumen-staff" style="display:none;padding:0 20px 20px;">
+                    <div class="card" style="background:var(--color-fondo);">
+                        <div class="card-body resumen-grid">
+                            <div>
+                                <p style="margin:0;font-size:0.85em;color:var(--color-texto-secundario);">Trabajador</p>
+                                <strong id="st-res-nombre" style="font-size:1.1em;"></strong>
+                                <p id="st-res-periodo" style="margin:6px 0 0;font-size:0.8em;color:var(--color-texto-secundario);"></p>
+                            </div>
+                            <div class="resumen-dato"><p class="rd-label">Sueldo fijo</p><div class="rd-valor" id="st-res-sueldo"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Comisión membresías</p><div class="rd-valor" id="st-res-com-mem"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Comisión productos</p><div class="rd-valor" id="st-res-com-prod"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Total del mes</p><div class="rd-valor" style="color:var(--color-primario);" id="st-res-total"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Pagado</p><div class="rd-valor" id="st-res-pagado"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Deuda actual</p><div class="rd-valor" style="color:var(--color-error);" id="st-res-pendiente"></div></div>
+                            <button class="btn btn-success" id="st-btn-pagar" onclick="abrirModalPagoPlanilla('staff')">💵 Registrar pago</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card-header"><h3 class="card-title">Historial de pagos</h3></div>
+                <div class="table-container">
+                    <table class="table">
+                        <thead><tr><th>Fecha de pago</th><th>Periodo</th><th>Monto pagado</th><th>Notas</th><th>Acciones</th></tr></thead>
+                        <tbody id="st-tabla-historial"><tr class="empty-row"><td colspan="5">Selecciona un trabajador</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ================= TAB PROFESORES ================= -->
+            <div id="tab-pagos-profesores" style="display:none;">
+                <div class="filtros-pagos">
+                    <div class="form-group busq-wrap" style="margin:0;flex:1;min-width:220px;">
+                        <label>Profesor</label>
+                        <input type="text" id="pr-empleado-buscar" placeholder="Buscar por nombre..." autocomplete="off" oninput="filtrarEmpleadoProfesor()" onfocus="mostrarDropdownEmpleado('pr')" onblur="setTimeout(()=>ocultarDropdown('pr-empleado-resultados'),150)">
+                        <input type="hidden" id="pr-empleado">
+                        <div id="pr-empleado-resultados" class="busq-dropdown"></div>
+                    </div>
+                    <div class="form-group" style="margin:0;"><label>Desde</label><input type="date" id="pr-desde"></div>
+                    <div class="form-group" style="margin:0;"><label>Hasta</label><input type="date" id="pr-hasta"></div>
+                    <button class="btn btn-primary" onclick="verDetalleProfesor()">Ver detalle</button>
+                </div>
+
+                <div id="resumen-profesor" style="display:none;padding:0 20px 20px;">
+                    <div class="card" style="background:var(--color-fondo);">
+                        <div class="card-body resumen-grid">
+                            <div>
+                                <p style="margin:0;font-size:0.85em;color:var(--color-texto-secundario);">Profesor</p>
+                                <strong id="pr-res-nombre" style="font-size:1.1em;"></strong>
+                            </div>
+                            <div class="resumen-dato"><p class="rd-label">Clases dictadas</p><div class="rd-valor" id="pr-res-clases"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Total del periodo</p><div class="rd-valor" style="color:var(--color-primario);" id="pr-res-total"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Pagado</p><div class="rd-valor" id="pr-res-pagado"></div></div>
+                            <div class="resumen-dato"><p class="rd-label">Deuda actual</p><div class="rd-valor" style="color:var(--color-error);" id="pr-res-pendiente"></div></div>
+                            <button class="btn btn-success" id="pr-btn-pagar" onclick="abrirModalPagoPlanilla('profesor')">💵 Registrar pago</button>
+                        </div>
+                    </div>
+                    <div class="table-container" style="margin-top:14px;">
+                        <table class="table">
+                            <thead><tr><th>Fecha</th><th>Clase</th><th>Sala</th><th>Alumnos</th><th>Monto</th></tr></thead>
+                            <tbody id="pr-tabla-clases"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card-header"><h3 class="card-title">Historial de pagos</h3></div>
+                <div class="table-container">
+                    <table class="table">
+                        <thead><tr><th>Fecha de pago</th><th>Periodo</th><th>Clases</th><th>Monto pagado</th><th>Notas</th><th>Acciones</th></tr></thead>
+                        <tbody id="pr-tabla-historial"><tr class="empty-row"><td colspan="6">Selecciona un profesor</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ================= TAB SERVICIOS ================= -->
+            <div id="tab-pagos-servicios" style="display:none;">
+                <div class="deuda-total-card">
+                    <div>
+                        <p style="margin:0;font-size:0.8em;color:var(--color-texto-secundario);">Deuda total pendiente (todos los servicios)</p>
+                        <strong style="font-size:1.3em;color:var(--color-error);" id="sv-deuda-total">—</strong>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.82em;">
+                        <input type="checkbox" id="sv-solo-pendientes" style="width:auto;" checked onchange="cargarCargosServicio()"> Solo con saldo pendiente
+                    </label>
+                </div>
+                <div class="servicios-layout">
+                    <div class="lista-servicios">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                            <strong style="font-size:0.85em;">Servicios</strong>
+                            <button class="btn btn-sm btn-secondary" onclick="abrirModalServicio()">+ Nuevo</button>
+                        </div>
+                        <div id="sv-lista">Cargando...</div>
+                    </div>
+                    <div class="panel-cargos">
+                        <div id="sv-sin-seleccion" style="color:var(--color-texto-secundario);">Selecciona un servicio de la lista para ver sus cargos y pagos.</div>
+                        <div id="sv-detalle" style="display:none;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                                <h3 style="margin:0;" id="sv-detalle-titulo"></h3>
+                                <button class="btn btn-sm btn-primary" onclick="abrirModalCargo()">+ Nuevo cargo</button>
+                            </div>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead><tr><th>Periodo</th><th>Concepto</th><th>Monto</th><th>Pagado</th><th>Pendiente</th><th>Vencimiento</th><th>Acciones</th></tr></thead>
+                                    <tbody id="sv-tabla-cargos"><tr class="empty-row"><td colspan="7">Sin cargos registrados</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- Modal: registrar pago de planilla (staff o profesor) -->
+<div id="modal-pago-planilla" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Registrar pago</h3>
+            <button class="modal-close" onclick="cerrarModalPagoPlanilla()">✕</button>
+        </div>
+        <p style="font-size:0.85em;color:var(--color-texto-secundario);"><strong id="pp-nombre"></strong> · Pendiente: <strong id="pp-pendiente"></strong></p>
+        <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="pp-monto" step="0.01" min="0"></div>
+        <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">Puedes pagar menos del total para hacerlo en partes; no se puede superar el pendiente.</p>
+        <div class="form-group"><label>Notas (opcional)</label><input type="text" id="pp-notas" placeholder="ej. pago en efectivo"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPagoPlanilla()">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarPagoPlanilla()">Registrar y generar recibo</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: corregir pago de planilla (solo admin) -->
+<div id="modal-editar-pago-planilla" class="modal">
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Corregir pago</h3>
+            <button class="modal-close" onclick="cerrarModalEditarPagoPlanilla()">✕</button>
+        </div>
+        <p style="font-size:0.85em;color:var(--color-texto-secundario);" id="epp-detalle"></p>
+        <div class="form-group"><label>Monto pagado</label><input type="number" id="epp-monto" step="0.01" min="0"></div>
+        <div class="form-group"><label>Notas</label><input type="text" id="epp-notas"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalEditarPagoPlanilla()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarEdicionPagoPlanilla()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: nuevo servicio -->
+<div id="modal-servicio" class="modal">
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Nuevo Servicio</h3>
+            <button class="modal-close" onclick="cerrarModalServicio()">✕</button>
+        </div>
+        <div class="form-group"><label>Nombre *</label><input type="text" id="sv-nombre" placeholder="ej. Cable/TV"></div>
+        <div class="form-group"><label>Notas</label><input type="text" id="sv-notas"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalServicio()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarServicio()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: nuevo/editar cargo de servicio -->
+<div id="modal-cargo" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="cargo-modal-titulo">Nuevo cargo</h3>
+            <button class="modal-close" onclick="cerrarModalCargo()">✕</button>
+        </div>
+        <div class="form-row"><label>Concepto</label><input type="text" id="cg-concepto" placeholder="ej. Recibo de Julio"></div>
+        <div class="form-row"><label>Monto *</label><input type="number" id="cg-monto" step="0.01" min="0"></div>
+        <div class="form-row"><label>Año</label><input type="number" id="cg-anio"></div>
+        <div class="form-row"><label>Mes</label>
+            <select id="cg-mes">
+                <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+            </select>
+        </div>
+        <div class="form-row"><label>Vencimiento</label><input type="date" id="cg-vencimiento"></div>
+        <div class="form-row" id="cg-recurrente-row"><label>Recurrente</label>
+            <select id="cg-recurrente-tipo" onchange="_cgOnRecurrenteChange()">
+                <option value="">No, es un cargo unico</option>
+                <option value="semanal">Semanal</option>
+                <option value="mensual">Mensual</option>
+                <option value="anual">Anual</option>
+            </select>
+        </div>
+        <div class="form-row" id="cg-dias-row" style="display:none;"><label>Dias</label>
+            <div class="dias-semana-chips" id="cg-dias-semana-chips">
+                <label><input type="checkbox" value="lun"> L</label>
+                <label><input type="checkbox" value="mar"> M</label>
+                <label><input type="checkbox" value="mie"> M</label>
+                <label><input type="checkbox" value="jue"> J</label>
+                <label><input type="checkbox" value="vie"> V</label>
+                <label><input type="checkbox" value="sab"> S</label>
+                <label><input type="checkbox" value="dom"> D</label>
+            </div>
+        </div>
+        <p class="recurrente-hint" id="cg-recurrente-hint" style="display:none;"></p>
+        <div class="form-row"><label>Notas</label><input type="text" id="cg-notas"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalCargo()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarCargo()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: pagar cargo de servicio -->
+<div id="modal-pago-servicio" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Registrar pago</h3>
+            <button class="modal-close" onclick="cerrarModalPagoServicio()">✕</button>
+        </div>
+        <p style="font-size:0.85em;color:var(--color-texto-secundario);"><strong id="ps-titulo"></strong> · Pendiente: <strong id="ps-pendiente"></strong></p>
+        <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="ps-monto" step="0.01" min="0"></div>
+        <div class="form-group">
+            <label>Metodo de pago</label>
+            <select id="ps-metodo">
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="qr">QR</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Notas (opcional)</label><input type="text" id="ps-notas"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPagoServicio()">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarPagoServicio()">Registrar pago</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let moneda = "S/";
+
+    function cambiarTabPagos(nombre, el) {
+        document.querySelectorAll(".tabs .tab").forEach(t => t.classList.remove("active"));
+        el.classList.add("active");
+        document.getElementById("tab-pagos-staff").style.display = nombre === "staff" ? "block" : "none";
+        document.getElementById("tab-pagos-profesores").style.display = nombre === "profesores" ? "block" : "none";
+        document.getElementById("tab-pagos-servicios").style.display = nombre === "servicios" ? "block" : "none";
+        if (nombre === "servicios" && !serviciosCache.length) cargarServicios();
+    }
+
+    // ==================================================================
+    // STAFF
+    // ==================================================================
+    let empleadosStaffCache = [], resumenStaffActual = null;
+
+    async function initStaffTab() {
+        const config = await getConfiguracion(); moneda = config.moneda;
+        const empleados = await apiFetch("/empleados/");
+        empleadosStaffCache = empleados.filter(e => e.tipo === "staff_fijo");
+        const hoy = new Date();
+        document.getElementById("st-anio").value = hoy.getFullYear();
+        document.getElementById("st-mes").value = hoy.getMonth() + 1;
+    }
+
+    function ocultarDropdown(id) { document.getElementById(id).classList.remove("activo"); }
+
+    function mostrarDropdownEmpleado(prefijo) {
+        // Al enfocar el campo (sin borrar una seleccion ya hecha): muestra el dropdown filtrado por lo que ya haya escrito.
+        if (prefijo === "st") filtrarEmpleadoStaff(false); else filtrarEmpleadoProfesor(false);
+    }
+
+    function filtrarEmpleadoStaff(limpiarSeleccion = true) {
+        if (limpiarSeleccion) document.getElementById("st-empleado").value = "";
+        const termino = document.getElementById("st-empleado-buscar").value.trim().toLowerCase();
+        const resultados = termino
+            ? empleadosStaffCache.filter(e => e.nombre_completo.toLowerCase().includes(termino))
+            : empleadosStaffCache;
+        renderDropdownEmpleados("st-empleado-resultados", resultados, seleccionarEmpleadoStaff);
+    }
+
+    function seleccionarEmpleadoStaff(id, nombre) {
+        document.getElementById("st-empleado").value = id;
+        document.getElementById("st-empleado-buscar").value = nombre;
+        ocultarDropdown("st-empleado-resultados");
+    }
+
+    function renderDropdownEmpleados(contenedorId, lista, onClickFn) {
+        const cont = document.getElementById(contenedorId);
+        if (!lista.length) {
+            cont.innerHTML = '<div class="busq-vacio">Sin resultados</div>';
+        } else {
+            cont.innerHTML = lista.slice(0, 20).map(e => `
+                <div class="busq-item" onmousedown="event.preventDefault();${onClickFn.name}(${e.id}, '${(e.nombre_completo || "").replace(/'/g, "\\'")}')">
+                    <div>${e.nombre_completo}</div>
+                    ${e.puesto ? `<div class="busq-item-sub">${e.puesto}</div>` : ""}
+                </div>
+            `).join("");
+        }
+        cont.classList.add("activo");
+    }
+
+    async function verDetalleStaff() {
+        const id = document.getElementById("st-empleado").value;
+        const anio = parseInt(document.getElementById("st-anio").value);
+        const mes = parseInt(document.getElementById("st-mes").value);
+        if (!id) { showError("Selecciona un trabajador"); return; }
+        try {
+            const resumen = await apiFetch(`/planilla/staff/${id}?anio=${anio}&mes=${mes}`);
+            resumenStaffActual = resumen;
+            const NOMBRES_MES = ["", "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+            document.getElementById("st-res-nombre").textContent = resumen.nombre_empleado;
+            document.getElementById("st-res-periodo").textContent = `Sueldo de ${NOMBRES_MES[resumen.mes]} ${resumen.anio} + comisiones de ${NOMBRES_MES[resumen.mes_comision_mes]} ${resumen.mes_comision_anio}`;
+            document.getElementById("st-res-sueldo").textContent = formatCurrency(resumen.sueldo_fijo_mensual, moneda);
+            document.getElementById("st-res-com-mem").textContent = formatCurrency(resumen.comision_membresias, moneda);
+            document.getElementById("st-res-com-prod").textContent = formatCurrency(resumen.comision_productos, moneda);
+            document.getElementById("st-res-total").textContent = formatCurrency(resumen.total_a_pagar, moneda);
+            document.getElementById("st-res-pagado").textContent = formatCurrency(resumen.total_pagado, moneda);
+            document.getElementById("st-res-pendiente").textContent = formatCurrency(resumen.pendiente, moneda);
+            document.getElementById("st-btn-pagar").style.display = resumen.pendiente > 0.009 ? "inline-block" : "none";
+            document.getElementById("resumen-staff").style.display = "block";
+            cargarHistorialStaff();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarHistorialStaff() {
+        const id = document.getElementById("st-empleado").value;
+        if (!id) return;
+        const pagos = await apiFetch(`/pagos-planilla/?tipo=staff&empleado_id=${id}`);
+        pagosPlanillaCache = pagos;
+        const tbody = document.getElementById("st-tabla-historial");
+        if (!pagos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Sin pagos registrados aun</td></tr>'; return; }
+        const NOMBRES_MES = ["", "Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        tbody.innerHTML = pagos.map(p => `<tr>
+            <td>${formatFechaHora(p.fecha_pago)}</td>
+            <td>${NOMBRES_MES[p.mes]} ${p.anio}</td>
+            <td><strong>${formatCurrency(p.monto_total, moneda)}</strong></td>
+            <td>${p.notas || "—"}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-sm btn-secondary" onclick="apiDescargarArchivo('/pagos-planilla/${p.id}/recibo.pdf', 'recibo.pdf')">📄</button>
+                ${esAdministrador() ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditarPagoPlanilla(${p.id})">✏️</button>` : ""}
+                ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarPagoPlanilla(${p.id})">🗑️</button>` : ""}
+            </td>
+        </tr>`).join("");
+    }
+
+    // ==================================================================
+    // PROFESORES
+    // ==================================================================
+    let profesoresCache = [], resumenProfActual = null;
+
+    async function initProfesoresTab() {
+        const empleados = await apiFetch("/empleados/");
+        profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
+        const hoy = new Date();
+        document.getElementById("pr-desde").value = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split("T")[0];
+        document.getElementById("pr-hasta").value = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split("T")[0];
+    }
+
+    function filtrarEmpleadoProfesor(limpiarSeleccion = true) {
+        if (limpiarSeleccion) document.getElementById("pr-empleado").value = "";
+        const termino = document.getElementById("pr-empleado-buscar").value.trim().toLowerCase();
+        const resultados = termino
+            ? profesoresCache.filter(e => e.nombre_completo.toLowerCase().includes(termino))
+            : profesoresCache;
+        renderDropdownEmpleados("pr-empleado-resultados", resultados, seleccionarEmpleadoProfesor);
+    }
+
+    function seleccionarEmpleadoProfesor(id, nombre) {
+        document.getElementById("pr-empleado").value = id;
+        document.getElementById("pr-empleado-buscar").value = nombre;
+        ocultarDropdown("pr-empleado-resultados");
+    }
+
+    async function verDetalleProfesor() {
+        const id = document.getElementById("pr-empleado").value;
+        const desde = document.getElementById("pr-desde").value;
+        const hasta = document.getElementById("pr-hasta").value;
+        if (!id) { showError("Selecciona un profesor"); return; }
+        if (!desde || !hasta) { showError("Define el rango de fechas"); return; }
+        try {
+            const resumen = await apiFetch(`/planilla/profesor/${id}?desde=${desde}&hasta=${hasta}`);
+            resumenProfActual = resumen;
+            resumenProfActual.empleado_id = parseInt(id);
+            resumenProfActual.desde = desde;
+            resumenProfActual.hasta = hasta;
+            const fHasta = new Date(hasta + "T00:00:00");
+            resumenProfActual.anioMes = { anio: fHasta.getFullYear(), mes: fHasta.getMonth() + 1 };
+
+            document.getElementById("pr-res-nombre").textContent = resumen.nombre_profesor;
+            document.getElementById("pr-res-clases").textContent = resumen.cantidad_clases_dictadas;
+            document.getElementById("pr-res-total").textContent = formatCurrency(resumen.total_a_pagar, moneda);
+            document.getElementById("pr-res-pagado").textContent = formatCurrency(resumen.total_pagado, moneda);
+            document.getElementById("pr-res-pendiente").textContent = formatCurrency(resumen.pendiente, moneda);
+            document.getElementById("pr-btn-pagar").style.display = resumen.pendiente > 0.009 ? "inline-block" : "none";
+            document.getElementById("resumen-profesor").style.display = "block";
+
+            const tbody = document.getElementById("pr-tabla-clases");
+            tbody.innerHTML = !resumen.detalle_clases.length
+                ? '<tr class="empty-row"><td colspan="5">Sin clases dictadas en el periodo</td></tr>'
+                : resumen.detalle_clases.map(c => `<tr>
+                    <td>${formatFecha(c.fecha)}</td><td>${c.nombre_clase}</td><td>${c.sala || "—"}</td>
+                    <td>${c.cantidad_alumnos ?? "—"}</td>
+                    <td><strong>${c.monto_pagado !== null ? formatCurrency(c.monto_pagado, moneda) : "—"}</strong></td>
+                </tr>`).join("");
+
+            cargarHistorialProfesor();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarHistorialProfesor() {
+        const id = document.getElementById("pr-empleado").value;
+        if (!id) return;
+        const pagos = await apiFetch(`/pagos-planilla/?tipo=profesor&empleado_id=${id}`);
+        pagosPlanillaCache = pagos;
+        const tbody = document.getElementById("pr-tabla-historial");
+        if (!pagos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin pagos registrados aun</td></tr>'; return; }
+        tbody.innerHTML = pagos.map(p => `<tr>
+            <td>${formatFechaHora(p.fecha_pago)}</td>
+            <td>${p.desde && p.hasta ? formatFecha(p.desde) + " a " + formatFecha(p.hasta) : "—"}</td>
+            <td>${p.cantidad_clases ?? "—"}</td>
+            <td><strong>${formatCurrency(p.monto_total, moneda)}</strong></td>
+            <td>${p.notas || "—"}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-sm btn-secondary" onclick="apiDescargarArchivo('/pagos-planilla/${p.id}/recibo.pdf', 'recibo.pdf')">📄</button>
+                ${esAdministrador() ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditarPagoPlanilla(${p.id})">✏️</button>` : ""}
+                ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarPagoPlanilla(${p.id})">🗑️</button>` : ""}
+            </td>
+        </tr>`).join("");
+    }
+
+    // ---- Modal comun: registrar pago de planilla (staff / profesor) ----
+    let pagosPlanillaCache = [], pagoPlanillaEditando = null, contextoPagoActual = null;
+
+    function abrirModalPagoPlanilla(tipo) {
+        contextoPagoActual = tipo;
+        const resumen = tipo === "staff" ? resumenStaffActual : resumenProfActual;
+        if (!resumen) return;
+        const nombre = tipo === "staff" ? resumen.nombre_empleado : resumen.nombre_profesor;
+        document.getElementById("pp-nombre").textContent = nombre;
+        document.getElementById("pp-pendiente").textContent = formatCurrency(resumen.pendiente, moneda);
+        document.getElementById("pp-monto").value = resumen.pendiente > 0 ? resumen.pendiente : 0;
+        document.getElementById("pp-monto").max = resumen.pendiente;
+        document.getElementById("pp-notas").value = "";
+        document.getElementById("modal-pago-planilla").classList.add("active");
+    }
+    function cerrarModalPagoPlanilla() { document.getElementById("modal-pago-planilla").classList.remove("active"); }
+
+    async function confirmarPagoPlanilla() {
+        const monto = parseFloat(document.getElementById("pp-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        const esStaff = contextoPagoActual === "staff";
+        const resumen = esStaff ? resumenStaffActual : resumenProfActual;
+        if (monto > resumen.pendiente + 0.01) { showError(`El monto no puede superar el pendiente (${formatCurrency(resumen.pendiente, moneda)})`); return; }
+        const notas = document.getElementById("pp-notas").value.trim() || null;
+        try {
+            let body;
+            let empleadoTel, empleadoNombre, empleadoId;
+            if (esStaff) {
+                empleadoId = parseInt(document.getElementById("st-empleado").value);
+                const emp = empleadosStaffCache.find(e => e.id === empleadoId);
+                empleadoTel = emp ? emp.telefono : null; empleadoNombre = resumen.nombre_empleado;
+                body = {
+                    empleado_id: empleadoId, tipo: "staff", anio: resumen.anio, mes: resumen.mes,
+                    monto_sueldo_fijo: resumen.sueldo_fijo_mensual, monto_comision_membresias: resumen.comision_membresias,
+                    monto_comision_productos: resumen.comision_productos, monto_total: monto, notas,
+                };
+            } else {
+                empleadoId = resumen.empleado_id;
+                const emp = profesoresCache.find(e => e.id === empleadoId);
+                empleadoTel = emp ? emp.telefono : null; empleadoNombre = resumen.nombre_profesor;
+                body = {
+                    empleado_id: empleadoId, tipo: "profesor", anio: resumen.anioMes.anio, mes: resumen.anioMes.mes,
+                    desde: resumen.desde, hasta: resumen.hasta, cantidad_clases: resumen.cantidad_clases_dictadas,
+                    monto_clases: resumen.total_a_pagar, monto_total: monto, notas,
+                };
+            }
+            const pago = await apiFetch("/pagos-planilla/", { method: "POST", body: JSON.stringify(body) });
+            cerrarModalPagoPlanilla();
+            showSuccess("Pago registrado. Descargando recibo...");
+            await apiDescargarArchivo(`/pagos-planilla/${pago.id}/recibo.pdf`, `recibo_${empleadoNombre.replace(/\s+/g,"_")}.pdf`);
+            if (empleadoTel) {
+                const mensaje = `Hola ${empleadoNombre}, se registro tu pago de ${formatCurrency(monto, moneda)}. Te comparto el recibo adjunto (revisa tu carpeta de Descargas).`;
+                const url = linkWhatsApp(empleadoTel, mensaje);
+                if (url) window.open(url, "_blank");
+            } else {
+                showInfo("No hay telefono registrado; no se pudo abrir WhatsApp.");
+            }
+            if (esStaff) verDetalleStaff(); else verDetalleProfesor();
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirModalEditarPagoPlanilla(pagoId) {
+        pagoPlanillaEditando = pagosPlanillaCache.find(p => p.id === pagoId);
+        if (!pagoPlanillaEditando) return;
+        const p = pagoPlanillaEditando;
+        const periodo = (p.desde && p.hasta) ? `${formatFecha(p.desde)} a ${formatFecha(p.hasta)}` : `${p.mes}/${p.anio}`;
+        document.getElementById("epp-detalle").innerHTML = `Pago del periodo <strong>${periodo}</strong> · registrado el ${formatFechaHora(p.fecha_pago)}`;
+        document.getElementById("epp-monto").value = p.monto_total;
+        document.getElementById("epp-notas").value = p.notas || "";
+        document.getElementById("modal-editar-pago-planilla").classList.add("active");
+    }
+    function cerrarModalEditarPagoPlanilla() { document.getElementById("modal-editar-pago-planilla").classList.remove("active"); pagoPlanillaEditando = null; }
+
+    async function guardarEdicionPagoPlanilla() {
+        if (!pagoPlanillaEditando) return;
+        const monto = parseFloat(document.getElementById("epp-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        try {
+            await apiFetch(`/pagos-planilla/${pagoPlanillaEditando.id}`, { method: "PUT", body: JSON.stringify({
+                monto_total: monto, notas: document.getElementById("epp-notas").value.trim() || null,
+            })});
+            showSuccess("Pago corregido");
+            cerrarModalEditarPagoPlanilla();
+            if (pagoPlanillaEditando.tipo === "staff") { cargarHistorialStaff(); if (resumenStaffActual) verDetalleStaff(); }
+            else { cargarHistorialProfesor(); if (resumenProfActual) verDetalleProfesor(); }
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarPagoPlanilla(pagoId) {
+        if (!(await confirmDialog("¿Eliminar este pago? La deuda se recalculará sola."))) return;
+        const pago = pagosPlanillaCache.find(p => p.id === pagoId);
+        try {
+            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE" });
+            showSuccess("Pago eliminado");
+            if (pago && pago.tipo === "staff") { cargarHistorialStaff(); if (resumenStaffActual) verDetalleStaff(); }
+            else { cargarHistorialProfesor(); if (resumenProfActual) verDetalleProfesor(); }
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==================================================================
+    // SERVICIOS / DEUDAS
+    // ==================================================================
+    let serviciosCache = [], servicioSeleccionado = null, cargosServicioCache = [];
+
+    async function cargarServicios() {
+        serviciosCache = await apiFetch("/servicios/?solo_activos=false");
+        renderListaServicios();
+        cargarCargosServicio();
+    }
+
+    function renderListaServicios() {
+        const cont = document.getElementById("sv-lista");
+        if (!serviciosCache.length) { cont.innerHTML = '<p style="color:var(--color-texto-secundario);font-size:0.82em;">Sin servicios aun</p>'; return; }
+        cont.innerHTML = serviciosCache.filter(s => s.activo).map(s => {
+            const activo = servicioSeleccionado === s.id ? "activo" : "";
+            return `<div class="item-servicio ${activo}" onclick="seleccionarServicio(${s.id})">
+                <span>${s.nombre}</span>
+            </div>`;
+        }).join("");
+    }
+
+    function seleccionarServicio(id) {
+        servicioSeleccionado = id;
+        renderListaServicios();
+        const servicio = serviciosCache.find(s => s.id === id);
+        document.getElementById("sv-sin-seleccion").style.display = "none";
+        document.getElementById("sv-detalle").style.display = "block";
+        document.getElementById("sv-detalle-titulo").textContent = servicio ? servicio.nombre : "";
+        renderTablaCargos();
+    }
+
+    async function cargarCargosServicio() {
+        const soloPendientes = document.getElementById("sv-solo-pendientes").checked;
+        const params = new URLSearchParams();
+        if (soloPendientes) params.set("solo_pendientes", "true");
+        cargosServicioCache = await apiFetch(`/cargos-servicio/?${params.toString()}`);
+        document.getElementById("sv-deuda-total").textContent = formatCurrency(_calcularDeudaTotalProxima(), moneda);
+        if (servicioSeleccionado) renderTablaCargos();
+    }
+
+    // La "Deuda total pendiente" no debe sumar TODOS los cargos con
+    // saldo (con recurrencia, eso incluiria meses/semanas que todavia
+    // ni vencen): por cada servicio se cuenta solo su cargo pendiente
+    // mas proximo (el orden ya viene de mas actual a futuro desde el
+    // backend, asi que el primero de cada servicio es el mas proximo).
+    function _calcularDeudaTotalProxima() {
+        const vistos = new Set();
+        let total = 0;
+        for (const c of cargosServicioCache) {
+            if ((c.pendiente || 0) <= 0.009) continue;
+            if (vistos.has(c.servicio_id)) continue;
+            vistos.add(c.servicio_id);
+            total += c.pendiente;
+        }
+        return total;
+    }
+
+    function renderTablaCargos() {
+        const NOMBRES_MES = ["", "Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        const cargos = cargosServicioCache.filter(c => c.servicio_id === servicioSeleccionado);
+        const tbody = document.getElementById("sv-tabla-cargos");
+        const esAdmin = esAdministrador();
+        if (!cargos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Sin cargos para este filtro</td></tr>'; return; }
+        tbody.innerHTML = cargos.map(c => `<tr>
+            <td>${NOMBRES_MES[c.mes]} ${c.anio}</td>
+            <td>${c.concepto || "—"}</td>
+            <td>${formatCurrency(c.monto_total, moneda)}</td>
+            <td>${formatCurrency(c.total_pagado, moneda)}</td>
+            <td style="${c.pendiente > 0 ? 'color:var(--color-error);font-weight:600;' : ''}">${formatCurrency(c.pendiente, moneda)}</td>
+            <td>${c.fecha_vencimiento ? formatFecha(c.fecha_vencimiento) : "—"}</td>
+            <td style="white-space:nowrap;">
+                ${c.pendiente > 0.009 ? `<button class="btn btn-sm btn-success" onclick="abrirModalPagoServicio(${c.id})">💵</button>` : ""}
+                ${esAdmin ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalCargo(${c.id})">✏️</button>` : ""}
+                ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarCargo(${c.id})">🗑️</button>` : ""}
+            </td>
+        </tr>`).join("");
+    }
+
+    // ---- Modal: nuevo servicio ----
+    function abrirModalServicio() {
+        document.getElementById("sv-nombre").value = "";
+        document.getElementById("sv-notas").value = "";
+        document.getElementById("modal-servicio").classList.add("active");
+    }
+    function cerrarModalServicio() { document.getElementById("modal-servicio").classList.remove("active"); }
+
+    async function guardarServicio() {
+        const nombre = document.getElementById("sv-nombre").value.trim();
+        if (!nombre) { showError("El nombre es obligatorio"); return; }
+        try {
+            await apiFetch("/servicios/", { method: "POST", body: JSON.stringify({ nombre, notas: document.getElementById("sv-notas").value.trim() || null }) });
+            showSuccess("Servicio creado");
+            cerrarModalServicio();
+            await cargarServicios();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ---- Modal: nuevo / editar cargo ----
+    let cargoEditandoId = null;
+
+    function abrirModalCargo(cargoId) {
+        if (!servicioSeleccionado) return;
+        cargoEditandoId = cargoId || null;
+        const existente = cargoId ? cargosServicioCache.find(c => c.id === cargoId) : null;
+        document.getElementById("cargo-modal-titulo").textContent = existente ? "Editar cargo" : "Nuevo cargo";
+        const hoy = new Date();
+        document.getElementById("cg-concepto").value = existente ? (existente.concepto || "") : "";
+        document.getElementById("cg-monto").value = existente ? existente.monto_total : "";
+        document.getElementById("cg-anio").value = existente ? existente.anio : hoy.getFullYear();
+        document.getElementById("cg-mes").value = existente ? existente.mes : (hoy.getMonth() + 1);
+        document.getElementById("cg-vencimiento").value = existente ? (existente.fecha_vencimiento || "") : "";
+        document.getElementById("cg-notas").value = existente ? (existente.notas || "") : "";
+        // La recurrencia solo se define al CREAR (genera la serie de una
+        // vez); al editar un cargo puntual ya existente no tiene sentido
+        // (no vuelve a generar la serie), asi que se oculta.
+        document.getElementById("cg-recurrente-row").style.display = existente ? "none" : "flex";
+        document.getElementById("cg-recurrente-tipo").value = "";
+        document.querySelectorAll("#cg-dias-semana-chips input").forEach(chk => chk.checked = false);
+        _cgOnRecurrenteChange();
+        document.getElementById("modal-cargo").classList.add("active");
+    }
+    function cerrarModalCargo() { document.getElementById("modal-cargo").classList.remove("active"); cargoEditandoId = null; }
+
+    function _cgOnRecurrenteChange() {
+        const tipo = document.getElementById("cg-recurrente-tipo").value;
+        document.getElementById("cg-dias-row").style.display = tipo === "semanal" ? "flex" : "none";
+        const hint = document.getElementById("cg-recurrente-hint");
+        const hints = {
+            semanal: "Se crearan cargos en los dias marcados, empezando en la fecha de Vencimiento (o hoy si no la indicas), durante las proximas 12 ocurrencias.",
+            mensual: "Se crearan 12 cargos, uno por mes, con el mismo dia de vencimiento cada mes.",
+            anual: "Se crearan 5 cargos, uno por año, en la misma fecha.",
+        };
+        if (hints[tipo]) { hint.textContent = hints[tipo]; hint.style.display = "block"; }
+        else { hint.style.display = "none"; }
+    }
+
+    async function guardarCargo() {
+        const monto = parseFloat(document.getElementById("cg-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        const datos = {
+            servicio_id: servicioSeleccionado,
+            concepto: document.getElementById("cg-concepto").value.trim() || null,
+            monto_total: monto,
+            anio: parseInt(document.getElementById("cg-anio").value),
+            mes: parseInt(document.getElementById("cg-mes").value),
+            fecha_vencimiento: document.getElementById("cg-vencimiento").value || null,
+            notas: document.getElementById("cg-notas").value.trim() || null,
+        };
+        if (!cargoEditandoId) {
+            const tipoRecurrente = document.getElementById("cg-recurrente-tipo").value;
+            if (tipoRecurrente) {
+                datos.recurrente_tipo = tipoRecurrente;
+                if (tipoRecurrente === "semanal") {
+                    const dias = Array.from(document.querySelectorAll("#cg-dias-semana-chips input:checked")).map(c => c.value).join(",");
+                    if (!dias) { showError("Selecciona al menos un dia de la semana"); return; }
+                    datos.recurrente_dias_semana = dias;
+                }
+            }
+        }
+        try {
+            if (cargoEditandoId) await apiFetch(`/cargos-servicio/${cargoEditandoId}`, { method: "PUT", body: JSON.stringify(datos) });
+            else await apiFetch("/cargos-servicio/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess(datos.recurrente_tipo ? "Serie de cargos recurrentes creada" : "Cargo guardado");
+            cerrarModalCargo();
+            cargarCargosServicio();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarCargo(cargoId) {
+        if (!(await confirmDialog("¿Eliminar este cargo y sus pagos asociados?"))) return;
+        try {
+            await apiFetch(`/cargos-servicio/${cargoId}`, { method: "DELETE" });
+            showSuccess("Cargo eliminado");
+            cargarCargosServicio();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ---- Modal: pagar cargo ----
+    let cargoAPagar = null;
+
+    function abrirModalPagoServicio(cargoId) {
+        cargoAPagar = cargosServicioCache.find(c => c.id === cargoId);
+        if (!cargoAPagar) return;
+        const servicio = serviciosCache.find(s => s.id === cargoAPagar.servicio_id);
+        document.getElementById("ps-titulo").textContent = `${servicio ? servicio.nombre : ""}${cargoAPagar.concepto ? " — " + cargoAPagar.concepto : ""}`;
+        document.getElementById("ps-pendiente").textContent = formatCurrency(cargoAPagar.pendiente, moneda);
+        document.getElementById("ps-monto").value = cargoAPagar.pendiente;
+        document.getElementById("ps-metodo").value = "efectivo";
+        document.getElementById("ps-notas").value = "";
+        document.getElementById("modal-pago-servicio").classList.add("active");
+    }
+    function cerrarModalPagoServicio() { document.getElementById("modal-pago-servicio").classList.remove("active"); cargoAPagar = null; }
+
+    async function confirmarPagoServicio() {
+        if (!cargoAPagar) return;
+        const monto = parseFloat(document.getElementById("ps-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        if (monto > cargoAPagar.pendiente + 0.01) { showError(`El monto no puede superar el pendiente (${formatCurrency(cargoAPagar.pendiente, moneda)})`); return; }
+        try {
+            await apiFetch("/pagos-servicio/", { method: "POST", body: JSON.stringify({
+                cargo_id: cargoAPagar.id, monto,
+                metodo_pago: document.getElementById("ps-metodo").value,
+                notas: document.getElementById("ps-notas").value.trim() || null,
+            })});
+            showSuccess("Pago registrado");
+            cerrarModalPagoServicio();
+            cargarCargosServicio();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==================================================================
+    // INIT
+    // ==================================================================
+    initStaffTab();
+    initProfesoresTab();
+</script>
+</body>
+</html>

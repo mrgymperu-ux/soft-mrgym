@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .stat-card.clickeable { cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s, transform 0.1s; }
+        .stat-card.clickeable:hover { border-color: var(--color-advertencia); transform: translateY(-2px); }
+
+        .panel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start; }
+        @media (max-width: 1100px) { .panel-grid { grid-template-columns: 1fr; } }
+
+        .panel-card { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); overflow: hidden; display: flex; flex-direction: column; }
+        .panel-card-header { padding: 16px 18px; border-bottom: 1px solid var(--color-borde); font-weight: 600; font-size: 0.95em; }
+        .panel-card-body { padding: 14px 18px; }
+
+        .bi-input { width: 100%; padding: 10px 12px; border: 1px solid var(--color-borde); background: var(--color-fondo); color: var(--color-texto); border-radius: 8px; font-size: 0.88em; box-sizing: border-box; }
+        .intent-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .intent-chip { display: flex; align-items: center; gap: 5px; font-size: 0.74em; padding: 5px 10px; border-radius: 14px; background: var(--color-fondo); color: var(--color-texto-secundario); cursor: pointer; user-select: none; }
+        .intent-chip input { margin: 0; }
+        .intent-chip.activo { background: var(--color-primario); color: #fff; }
+
+        .bi-resultados { max-height: 340px; overflow-y: auto; }
+        .bi-item { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
+        .bi-item:hover { background: var(--color-fondo); }
+        .bi-item-info { flex: 1; min-width: 0; }
+        .bi-item-nombre { font-size: 0.85em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bi-item-sub { font-size: 0.72em; color: var(--color-texto-secundario); }
+
+        /* ---- Ficha de asistencia ampliada ---- */
+        .ficha-asistencia { padding: 16px 18px; border-top: 1px solid var(--color-borde); }
+        .ficha-header { display:flex; align-items:center; gap:14px; margin-bottom:12px; }
+        .ficha-header .resultado-avatar { width:78px; height:78px; font-size:1.8em; flex-shrink:0; border-radius:50%; }
+        .ficha-header-info { flex:1; min-width:0; }
+        .ficha-nombre { font-size:1em; font-weight:700; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .ficha-plan-badge { display:inline-block; font-size:0.82em; padding:0; font-weight:600; margin-bottom:3px; background:none !important; color:var(--color-texto-secundario); }
+        .ficha-vencimiento { font-size:0.72em; color:var(--color-texto-secundario); }
+        .ficha-montos { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin:10px 0; }
+        .ficha-monto-item { background:var(--color-fondo); border-radius:8px; padding:8px; text-align:center; }
+        .ficha-monto-label { font-size:0.62em; color:var(--color-texto-secundario); margin-bottom:2px; }
+        .ficha-monto-valor { font-size:0.88em; font-weight:700; }
+        .ficha-monto-item.saldo .ficha-monto-valor { color:var(--color-error); }
+        .ficha-monto-item.pagado .ficha-monto-valor { color:var(--color-exito); }
+        .ficha-monto-item.precio .ficha-monto-valor { color:var(--color-primario); }
+        .ficha-prox-pago { font-size:0.75em; color:var(--color-texto-secundario); text-align:center; margin-bottom:10px; }
+        .ficha-prox-pago.vencido { color:var(--color-error); font-weight:600; }
+        .ficha-asistencia-badge { font-size:0.62em; padding:2px 8px; border-radius:10px; font-weight:600; }
+
+        .ui-item { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--color-borde); }
+        .ui-item-info { flex: 1; min-width: 0; }
+        .ui-btn-salida { min-width: 26px; height: 26px; padding: 0 5px; border: 1px solid var(--color-borde); background: var(--color-blanco); border-radius: 6px; cursor: pointer; font-size: 0.8em; flex-shrink: 0; }
+        .ui-btn-salida:hover { background: var(--color-fondo); }
+
+        .vr-cliente-badge { padding: 10px 18px; background: var(--color-primario-tinte); display: flex; align-items: center; justify-content: space-between; font-size: 0.8em; border-bottom: 1px solid var(--color-borde); }
+        .vr-cliente-badge .nombre-cliente { color: var(--color-primario-tinte-texto); font-weight: 600; }
+        .vr-cliente-badge.vacio { background: var(--color-fondo); color: var(--color-texto-secundario); }
+        .vr-lista-productos { max-height: 220px; overflow-y: auto; }
+        .vr-prod-item { display: flex; align-items: center; gap: 10px; padding: 8px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
+        .vr-prod-item:hover { background: var(--color-fondo); }
+        .vr-prod-item.agotado { opacity: 0.4; cursor: not-allowed; }
+        .vr-prod-icono { width: 30px; height: 30px; border-radius: 8px; background: var(--color-fondo); display: flex; align-items: center; justify-content: center; font-size: 1em; flex-shrink: 0; }
+        .vr-prod-nombre { flex: 1; font-size: 0.82em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .vr-carrito { border-top: 1px solid var(--color-borde); }
+        .vr-carrito-item { display: flex; align-items: center; gap: 6px; padding: 6px 18px; font-size: 0.8em; }
+        .vr-ci-btn { width: 20px; height: 20px; border: 1px solid var(--color-borde); background: var(--color-blanco); border-radius: 5px; cursor: pointer; font-size: 0.85em; padding: 0; line-height: 1; }
+        .vr-footer { padding: 14px 18px; border-top: 1px solid var(--color-borde); }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">Panel</h1>
+                <p class="header-subtitle">Resumen general del gimnasio</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span id="hora-actual" style="font-size:1.65em;color:var(--color-texto);font-weight:bold;"></span>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon blue">👥</div>
+                <div>
+                    <div class="stat-label">Clientes Activos</div>
+                    <div class="stat-value" id="stat-clientes-activos">—</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">🎫</div>
+                <div>
+                    <div class="stat-label">Ingresos Hoy · Membresías</div>
+                    <div class="stat-value" id="stat-ingresos-membresias">—</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange">⚡</div>
+                <div>
+                    <div class="stat-label">Ingresos Hoy · Venta Rápida</div>
+                    <div class="stat-value" id="stat-ingresos-ventarapida">—</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green">💵</div>
+                <div>
+                    <div class="stat-label">Balance Efectivo (hoy)</div>
+                    <div class="stat-value" id="stat-balance-efectivo">—</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon blue">💳</div>
+                <div>
+                    <div class="stat-label">Balance Cuenta (hoy)</div>
+                    <div class="stat-value" id="stat-balance-cuenta">—</div>
+                </div>
+            </div>
+            <div class="stat-card clickeable" onclick="window.location.href='clientes.html?filtro=por_vencer&dias=30&orden=vencer'" title="Ver clientes por vencer">
+                <div class="stat-icon" style="background:#FFF8E6;">⏳</div>
+                <div>
+                    <div class="stat-label">Membresías por Vencer</div>
+                    <div class="stat-value" id="stat-por-vencer" style="color:#B7860B;">—</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3 paneles -->
+        <div class="panel-grid">
+
+            <!-- Panel 1: Busqueda inteligente -->
+            <div class="panel-card">
+                <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>🔎 Busqueda inteligente</span>
+                    <button class="btn btn-primary btn-sm" onclick="abrirModalClienteNuevo(_panelFcTerminado)">+ Cliente</button>
+                </div>
+                <div class="panel-card-body">
+                    <input type="text" class="bi-input" id="bi-input" placeholder="Nombre, DNI o email..." oninput="onBusquedaInput()">
+                    <div class="intent-chips" id="intent-chips">
+                        <label class="intent-chip" data-intent="marcar_asistencia">
+                            <input type="checkbox" onclick="onIntentClick(event,'marcar_asistencia')"> Asistencia
+                        </label>
+                        <label class="intent-chip" data-intent="reingreso">
+                            <input type="checkbox" onclick="onIntentClick(event,'reingreso')"> Reingreso
+                        </label>
+                        <label class="intent-chip" data-intent="clase_dia">
+                            <input type="checkbox" onclick="onIntentClick(event,'clase_dia')"> Por día
+                        </label>
+                    </div>
+                </div>
+                <div id="bi-resultados-wrap">
+                    <div class="bi-resultados" id="bi-resultados"></div>
+                </div>
+            </div>
+
+            <!-- Panel 2: Ingresos de hoy -->
+            <div class="panel-card">
+                <div class="panel-card-header">🟢 Ingresos de hoy</div>
+                <div id="ui-lista" style="max-height:420px;overflow-y:auto;">
+                    <p style="text-align:center;color:#636E72;padding:20px;">Cargando...</p>
+                </div>
+            </div>
+
+            <!-- Panel 3: Venta rapida mini -->
+            <div class="panel-card">
+                <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>⚡ Venta rapida</span>
+                    <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.85em;line-height:1;" title="Abrir Venta Rápida completa (con el cliente seleccionado, si hay uno)" onclick="irAVentaRapidaCompleta()">🔗</button>
+                </div>
+                <div class="vr-cliente-badge vacio" id="vr-cliente-badge">
+                    <span id="vr-cliente-texto" class="nombre-cliente">Sin cliente seleccionado</span>
+                    <span id="vr-cliente-quitar" style="display:none;cursor:pointer;color:var(--color-primario);font-size:0.82em;" onclick="limpiarClienteVenta()">quitar ×</span>
+                </div>
+                <div class="panel-card-body" style="padding-bottom:8px;">
+                    <input type="text" class="bi-input" id="vr-buscar" placeholder="Buscar producto..." oninput="filtrarProductosMini()">
+                </div>
+                <div class="vr-lista-productos" id="vr-lista-productos">
+                    <p style="text-align:center;color:#636E72;padding:20px;">Cargando...</p>
+                </div>
+                <div class="vr-carrito" id="vr-carrito"></div>
+                <div class="vr-footer">
+                    <div class="form-group" style="margin-bottom:10px;">
+                        <label style="font-size:0.78em;">Metodo de pago</label>
+                        <select id="vr-metodo" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.85em;" onchange="renderCarritoMini()">
+                            <option value="efectivo">Efectivo</option>
+                            <option value="tarjeta">Tarjeta</option>
+                            <option value="qr">QR</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:0.95em;margin-bottom:10px;">
+                        <span>Total</span>
+                        <strong id="vr-total" style="color:var(--color-primario);">S/ 0.00</strong>
+                    </div>
+                    <button class="btn btn-primary" style="width:100%;" onclick="confirmarVentaMini()">✅ Pagar</button>
+                </div>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+<!-- Modal de pago de saldo de membresía -->
+<div id="modal-pago-saldo" class="modal">
+    <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-title">💳 Pago de saldo</h3>
+            <button class="modal-close" onclick="cerrarModalPagoSaldo()">✕</button>
+        </div>
+        <!-- Detalle del cliente y la membresía -->
+        <div id="mps-detalle" style="background:var(--color-fondo);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:0.85em;"></div>
+        <!-- Resumen de montos -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Precio</div>
+                <div id="mps-precio" style="font-weight:700;color:var(--color-primario);">—</div>
+            </div>
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Pagado</div>
+                <div id="mps-pagado" style="font-weight:700;color:var(--color-exito);">—</div>
+            </div>
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Saldo</div>
+                <div id="mps-saldo" style="font-weight:700;color:var(--color-error);">—</div>
+            </div>
+        </div>
+        <div class="form-row"><label>Monto a pagar</label><input type="number" id="mps-monto" step="0.01" min="0.01"></div>
+        <div class="form-row">
+            <label>Método de pago</label>
+            <select id="mps-metodo">
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="qr">QR</option>
+            </select>
+        </div>
+        <div class="form-row"><label>Notas</label><input type="text" id="mps-notas" placeholder="Opcional"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPagoSaldo()">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarPagoSaldo()">✅ Registrar pago</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/flujo-cliente.js"></script>
+<script>
+    function _panelFcTerminado(cliente) {
+        // Se llama cuando termina el flujo compartido "Nuevo Cliente ->
+        // Asignar Membresia -> Cobro y Contrato" desde el boton +Cliente.
+        if (cliente && cliente.id) seleccionarClienteParaVenta(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`.trim());
+        cargarDashboard();
+    }
+
+    // ============================================================
+    // Reloj y stats
+    // ============================================================
+    function actualizarHora() {
+        document.getElementById("hora-actual").textContent =
+            new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    actualizarHora();
+    setInterval(actualizarHora, 1000);
+
+    async function cargarDashboard() {
+        try {
+            const config = await getConfiguracion();
+            const stats = await apiFetch("/dashboard/stats");
+
+            document.getElementById("stat-clientes-activos").textContent = stats.clientes_activos;
+            document.getElementById("stat-ingresos-membresias").textContent = formatCurrency(stats.ingresos_hoy_membresias, config.moneda);
+            document.getElementById("stat-ingresos-ventarapida").textContent = formatCurrency(stats.ingresos_hoy_venta_rapida, config.moneda);
+            document.getElementById("stat-balance-efectivo").textContent = formatCurrency(stats.balance_efectivo_hoy, config.moneda);
+            document.getElementById("stat-balance-cuenta").textContent = formatCurrency(stats.balance_cuenta_hoy, config.moneda);
+            document.getElementById("stat-por-vencer").textContent = stats.membresias_por_vencer;
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // ============================================================
+    // Panel 1: Busqueda inteligente
+    // ============================================================
+    let intentActivo = null;
+    let busquedaTimeout = null;
+
+    function onIntentClick(evt, intent) {
+        const input = evt.target;
+        document.querySelectorAll(".intent-chip").forEach((chip) => {
+            chip.classList.remove("activo");
+            const chipInput = chip.querySelector("input");
+            if (chipInput !== input) chipInput.checked = false;
+        });
+
+        if (input.checked) {
+            intentActivo = intent;
+            input.closest(".intent-chip").classList.add("activo");
+        } else {
+            intentActivo = null;
+        }
+
+        if (intentActivo) {
+            document.getElementById("bi-resultados").innerHTML = "";
+        }
+        onBusquedaInput();
+    }
+
+    function onBusquedaInput() {
+        clearTimeout(busquedaTimeout);
+        busquedaTimeout = setTimeout(ejecutarBusquedaInteligente, 250);
+    }
+
+    async function ejecutarBusquedaInteligente() {
+        const termino = document.getElementById("bi-input").value.trim();
+        const contenedor = document.getElementById("bi-resultados");
+
+        if (!termino) {
+            contenedor.innerHTML = "";
+            return;
+        }
+
+        if (intentActivo === "reingreso") {
+            await buscarClientesHistoricos(termino);
+            return;
+        }
+
+        try {
+            const filtroMembresia = intentActivo === "marcar_asistencia" ? "&solo_con_membresia_activa=true" : "";
+            const clientes = await apiFetch(`/clientes/?buscar=${encodeURIComponent(termino)}&limit=8${filtroMembresia}`);
+            if (!clientes.length) {
+                const mensaje = intentActivo === "marcar_asistencia"
+                    ? "Sin resultados entre clientes con membresia activa"
+                    : "Sin resultados";
+                contenedor.innerHTML = `<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">${mensaje}</p>`;
+                return;
+            }
+            contenedor.innerHTML = clientes.map((c) => `
+                <div class="bi-item" onclick="onClienteEncontradoClick(${c.id}, '${escapeAttr(c.nombre + " " + (c.apellidos || ""))}')">
+                    ${avatarHtml(c.nombre + " " + (c.apellidos || ""), c.foto_url)}
+                    <div class="bi-item-info">
+                        <div class="bi-item-nombre">${c.nombre} ${c.apellidos || ""}</div>
+                        <div class="bi-item-sub">${c.dni || "Sin DNI"}</div>
+                    </div>
+                </div>
+            `).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function buscarClientesHistoricos(termino) {
+        const contenedor = document.getElementById("bi-resultados");
+        if (termino.length < 2) {
+            contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">Escribe al menos 2 letras</p>';
+            return;
+        }
+        try {
+            // 1) Primero busca entre los CLIENTES ACTIVOS: la mayoria de
+            // bases antiguas se importan directo aqui (Reportes > Importar
+            // clientes), no a la tabla separada de historicos. Estos son
+            // los candidatos tipicos a "reingreso": tienen nombre pero
+            // puede faltarles DNI/celular/nacimiento/membresia vigente.
+            const activos = await apiFetch(`/clientes/?buscar=${encodeURIComponent(termino)}&limit=8`);
+            if (activos.length) {
+                contenedor.innerHTML = activos.map((c) => {
+                    const nombre = `${c.nombre} ${c.apellidos || ""}`.trim();
+                    return `
+                        <div class="bi-item" onclick="onClienteActivoParaReingreso(${c.id})">
+                            ${avatarHtml(nombre, c.foto_url)}
+                            <div class="bi-item-info">
+                                <div class="bi-item-nombre">${nombre}</div>
+                                <div class="bi-item-sub">${c.dni || "Sin DNI"}${c.membresia_texto ? " · " + c.membresia_texto : ""}${c.fecha_vencimiento ? " · venció " + formatFecha(c.fecha_vencimiento) : ""}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+                return;
+            }
+
+            // 2) Si no aparece entre los activos, recien busca en la base
+            // historica clasica (clientes_historicos), por si la usas.
+            const resultados = await apiFetch(`/clientes-historicos/?buscar=${encodeURIComponent(termino)}&limit=8`);
+            if (!resultados.length) {
+                contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">Sin resultados</p>';
+                return;
+            }
+            contenedor.innerHTML = resultados.map((h) => `
+                <div class="bi-item" onclick="onHistoricoClick(${h.id})">
+                    ${avatarHtml(h.nombre_completo, null)}
+                    <div class="bi-item-info">
+                        <div class="bi-item-nombre">${h.nombre_completo}</div>
+                        <div class="bi-item-sub">${h.plan_texto || "Sin plan"} ${h.fecha_vencimiento ? "· vencio " + formatFecha(h.fecha_vencimiento) : ""}</div>
+                    </div>
+                </div>
+            `).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // Se llama al elegir un cliente ACTIVO (ya existente en la base,
+    // por ejemplo importado) desde la intencion "Reingreso". Si le
+    // faltan datos basicos, abre el formulario para completarlos
+    // primero; si ya esta completo, va directo a Asignar Membresia.
+    async function onClienteActivoParaReingreso(clienteId) {
+        try {
+            const cliente = await apiFetch(`/clientes/${clienteId}`);
+            document.getElementById("bi-input").value = "";
+            document.getElementById("bi-resultados").innerHTML = "";
+            const nombreCompleto = `${cliente.nombre} ${cliente.apellidos || ""}`.trim();
+            const faltanDatos = !cliente.dni || !cliente.telefono || !cliente.fecha_nacimiento;
+            if (faltanDatos) {
+                abrirModalClienteCompletar(cliente, _panelFcTerminado);
+            } else {
+                await abrirAsignarMembresiaPara(cliente.id, nombreCompleto, _panelFcTerminado);
+            }
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function onHistoricoClick(historicoId) {
+        try {
+            const cliente = await apiFetch(`/clientes-historicos/${historicoId}/reingresar`, { method: "POST" });
+            showSuccess(`Cliente reingresado: ${cliente.nombre} ${cliente.apellidos || ""}`);
+            document.getElementById("bi-input").value = "";
+            document.getElementById("bi-resultados").innerHTML = "";
+            seleccionarClienteParaVenta(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`);
+            await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    function escapeAttr(str) {
+        return (str || "").replace(/'/g, "\\'");
+    }
+
+    async function onClienteEncontradoClick(clienteId, nombre) {
+        if (intentActivo === "marcar_asistencia") {
+            await mostrarFichaParaAsistencia(clienteId);
+        } else if (intentActivo === "clase_dia") {
+            await mostrarFichaClaseDia(clienteId, nombre);
+        } else {
+            seleccionarClienteParaVenta(clienteId, nombre);
+        }
+    }
+
+    async function mostrarFichaParaAsistencia(clienteId) {
+        const contenedor = document.getElementById("bi-resultados");
+        try {
+            const [ficha, config] = await Promise.all([
+                apiFetch(`/clientes/${clienteId}/ficha`),
+                getConfiguracion(),
+            ]);
+            const m = ficha.membresia_actual;
+            const moneda = config.moneda;
+
+            // ---- badge de plan ----
+            let planBadge, montosHtml = "", proxPagoHtml = "", btnPagoHtml = "";
+            if (m) {
+                const precio  = m.precio || 0;
+                const pagado  = m.monto_pagado || 0;
+                const saldo   = Math.max(precio - pagado, 0);
+                planBadge = `<span class="ficha-plan-badge">${m.nombre}</span>`;
+
+                montosHtml = `
+                    <div class="ficha-montos">
+                        <div class="ficha-monto-item precio">
+                            <div class="ficha-monto-label">Precio</div>
+                            <div class="ficha-monto-valor">${formatCurrency(precio, moneda)}</div>
+                        </div>
+                        <div class="ficha-monto-item pagado">
+                            <div class="ficha-monto-label">Pagado</div>
+                            <div class="ficha-monto-valor">${formatCurrency(pagado, moneda)}</div>
+                        </div>
+                        <div class="ficha-monto-item saldo">
+                            <div class="ficha-monto-label">Saldo</div>
+                            <div class="ficha-monto-valor">${saldo > 0 ? formatCurrency(saldo, moneda) : '<span style="color:var(--color-exito)">✅ Al día</span>'}</div>
+                        </div>
+                    </div>`;
+
+                if (m.fecha_pago_saldo && saldo > 0) {
+                    const hoy = new Date().toISOString().split("T")[0];
+                    const vencido = m.fecha_pago_saldo <= hoy;
+                    proxPagoHtml = `<div class="ficha-prox-pago ${vencido ? 'vencido' : ''}">` +
+                        (vencido ? '⚠️ Pago vencío el ' : '📅 Próximo pago: ') +
+                        `${formatFecha(m.fecha_pago_saldo)}</div>`;
+                    btnPagoHtml = `<button class="btn ${vencido ? 'btn-danger' : 'btn-warning'}" style="width:100%;margin-bottom:8px;" onclick="abrirModalPagoSaldo(${clienteId})">💳 ${vencido ? 'Pago VENCIDO' : 'Registrar pago de saldo'}</button>`;
+                } else if (saldo > 0) {
+                    btnPagoHtml = `<button class="btn btn-secondary" style="width:100%;margin-bottom:8px;" onclick="abrirModalPagoSaldo(${clienteId})">💳 Cobrar saldo pendiente</button>`;
+                }
+            } else {
+                planBadge = `<span class="ficha-plan-badge" style="color:var(--color-error);">Sin membresía activa</span>`;
+            }
+
+            const ultimoIngreso = ficha.ultimos_ingresos[0]
+                ? `Último ingreso: ${formatFechaHora(ficha.ultimos_ingresos[0].fecha_hora_entrada)}`
+                : "Sin ingresos previos";
+
+            contenedor.innerHTML = `
+                <div class="ficha-asistencia">
+                    <div class="ficha-header">
+                        ${avatarHtml(ficha.nombre_completo, ficha.foto_url)}
+                        <div class="ficha-header-info">
+                            <div class="ficha-nombre">${ficha.nombre_completo}</div>
+                            ${planBadge}
+                            ${m ? `<div class="ficha-vencimiento">Vence ${formatFecha(m.fecha_fin)}</div>` : ""}
+                        </div>
+                    </div>
+                    ${montosHtml}
+                    ${proxPagoHtml}
+                    <div style="font-size:0.72em;color:var(--color-texto-secundario);text-align:center;margin-bottom:12px;">${ultimoIngreso}</div>
+                    ${btnPagoHtml}
+                    <button class="btn btn-success" style="width:100%;" onclick="confirmarIngreso(${clienteId})">✅ Confirmar ingreso</button>
+                </div>
+            `;
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function confirmarIngreso(clienteId) {
+        try {
+            await apiFetch("/asistencias/", { method: "POST", body: JSON.stringify({ cliente_id: clienteId }) });
+            showSuccess("Ingreso registrado ✅");
+            document.getElementById("bi-input").value = "";
+            document.getElementById("bi-resultados").innerHTML = "";
+            await cargarUltimosIngresos();
+            await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // ============================================================
+    // Intencion "Por dia": el cliente paga el paquete de UN dia
+    // (tarifas con duracion_dias=1 del catalogo de Membresias) y se
+    // le marca la asistencia en el mismo paso. Segun la hora actual
+    // se preselecciona el paquete de la mañana (antes de las 14:00)
+    // o el de la tarde.
+    // ============================================================
+    let paquetesDiaCache = null;
+
+    async function _getPaquetesDia() {
+        if (!paquetesDiaCache) {
+            const todas = await apiFetch("/membresias/");
+            paquetesDiaCache = todas.filter((m) => m.duracion_dias === 1);
+        }
+        return paquetesDiaCache;
+    }
+
+    function _paquetePreferidoPorHora(paquetes) {
+        const esManana = new Date().getHours() < 14;
+        const buscado = esManana ? ["manan", "ma\u00f1an"] : ["tard"];
+        const preferido = paquetes.find((m) => {
+            const n = m.nombre.toLowerCase();
+            return buscado.some((b) => n.includes(b));
+        });
+        return preferido || paquetes[0];
+    }
+
+    async function mostrarFichaClaseDia(clienteId, nombre) {
+        const contenedor = document.getElementById("bi-resultados");
+        try {
+            const paquetes = await _getPaquetesDia();
+            if (!paquetes.length) {
+                contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">No hay tarifas de 1 día en el catálogo. Crea en Membresías los paquetes "Día mañana" y "Día tarde" (duración: 1 día).</p>';
+                return;
+            }
+            const preferido = _paquetePreferidoPorHora(paquetes);
+            const esManana = new Date().getHours() < 14;
+            contenedor.innerHTML = `
+                <div class="ficha-asistencia">
+                    <div style="font-size:0.85em;font-weight:600;margin-bottom:8px;">☀️ Paquete por día · ${nombre}</div>
+                    <div style="font-size:0.72em;color:#636E72;margin-bottom:8px;">Son las ${new Date().toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"})}: se sugiere el turno ${esManana ? "MA\u00d1ANA" : "TARDE"}.</div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <select id="cd-paquete" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.82em;">
+                            ${paquetes.map((m) => `<option value="${m.id}" data-precio="${m.precio}" ${m.id === preferido.id ? "selected" : ""}>${m.nombre} · ${formatCurrency(m.precio)}</option>`).join("")}
+                        </select>
+                    </div>
+                    <button class="btn btn-success" style="width:100%;" onclick="confirmarClaseDia(${clienteId})">✅ Cobrar día y registrar ingreso</button>
+                </div>
+            `;
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function confirmarClaseDia(clienteId) {
+        const select = document.getElementById("cd-paquete");
+        const membresiaId = parseInt(select.value);
+        const precio = parseFloat(select.selectedOptions[0].dataset.precio);
+        try {
+            // 1. Cobro del paquete: membresia de 1 dia pagada completa
+            await apiFetch(`/clientes/${clienteId}/membresias`, { method: "POST", body: JSON.stringify({
+                cliente_id: clienteId, membresia_id: membresiaId, monto_pagado: precio,
+            })});
+            // 2. Pasa a asistencia: ingreso registrado
+            await apiFetch("/asistencias/", { method: "POST", body: JSON.stringify({ cliente_id: clienteId }) });
+            showSuccess(`Día cobrado (${formatCurrency(precio)}) e ingreso registrado ✅`);
+            document.getElementById("bi-input").value = "";
+            document.getElementById("bi-resultados").innerHTML = "";
+            await cargarUltimosIngresos();
+            await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // ============================================================
+    // Panel 2: Ingresos de hoy
+    // ============================================================
+    async function cargarUltimosIngresos() {
+        const contenedor = document.getElementById("ui-lista");
+        try {
+            const asistencias = await apiFetch("/asistencias/hoy");
+            if (!asistencias.length) {
+                contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">No hay ingresos hoy</p>';
+                return;
+            }
+            contenedor.innerHTML = asistencias.map((a) => {
+                const nombre = a.cliente ? `${a.cliente.nombre} ${a.cliente.apellidos || ""}` : "Desconocido";
+                const enCurso = !a.fecha_hora_salida;
+                const accionSalida = enCurso
+                    ? `<button class="ui-btn-salida" title="Registrar salida" onclick="event.stopPropagation();registrarSalida(${a.id})">🏃‍➡️</button>`
+                    : `<span class="badge badge-info" style="font-size:0.62em;" title="Salio a las ${formatHora(a.fecha_hora_salida)}">✅</span>`;
+                return `
+                    <div class="ui-item" ondblclick="window.location.href='clientes.html?ver=${a.cliente_id}'" style="cursor:pointer;" title="Doble clic para ver la ficha del cliente">
+                        ${avatarHtml(nombre, a.cliente ? a.cliente.foto_url : null)}
+                        <div class="ui-item-info">
+                            <div style="font-size:0.8em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${nombre}</div>
+                            <div style="font-size:0.68em;color:#636E72;">${formatHora(a.fecha_hora_entrada)}</div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" style="padding:5px 10px;font-size:0.72em;" onclick="event.stopPropagation();seleccionarClienteParaVenta(${a.cliente_id}, '${escapeAttr(nombre)}')">Vender</button>
+                        ${accionSalida}
+                    </div>
+                `;
+            }).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function registrarSalida(asistenciaId) {
+        try {
+            await apiFetch("/asistencias/registrar-salida", { method: "PUT", body: JSON.stringify({ asistencia_id: asistenciaId }) });
+            showSuccess("Salida registrada");
+            await cargarUltimosIngresos();
+            await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // ============================================================
+    // Panel 3: Venta rapida mini
+    // ============================================================
+    let productosMiniCache = [];
+    let carritoMini = [];
+    let clienteSeleccionadoVenta = null;
+
+    async function cargarProductosMini() {
+        try {
+            const items = await apiFetch("/productos/mas-vendidos?limit=40");
+            productosMiniCache = items;
+            renderProductosMini(productosMiniCache);
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    function renderProductosMini(items) {
+        const contenedor = document.getElementById("vr-lista-productos");
+        if (!items.length) {
+            contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">No hay productos</p>';
+            return;
+        }
+        contenedor.innerHTML = items.map(({ producto: p }) => `
+            <div class="vr-prod-item ${p.stock <= 0 ? "agotado" : ""}" onclick="${p.stock > 0 ? `agregarProductoMini(${p.id})` : ""}">
+                <div class="vr-prod-icono">${p.foto_url ? `<img src="${urlFoto(p.foto_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">` : (p.icono || "📦")}</div>
+                <div class="vr-prod-nombre">${p.nombre}</div>
+                <strong style="font-size:0.8em;color:var(--color-primario);flex-shrink:0;">${formatCurrency(p.precio_venta)}</strong>
+            </div>
+        `).join("");
+    }
+
+    function filtrarProductosMini() {
+        const termino = document.getElementById("vr-buscar").value.toLowerCase();
+        const filtrados = productosMiniCache.filter(({ producto: p }) =>
+            p.nombre.toLowerCase().includes(termino) || (p.categoria && p.categoria.toLowerCase().includes(termino))
+        );
+        renderProductosMini(filtrados);
+    }
+
+    function agregarProductoMini(productoId) {
+        const entrada = productosMiniCache.find(({ producto: p }) => p.id === productoId);
+        if (!entrada || entrada.producto.stock <= 0) return;
+        const prod = entrada.producto;
+
+        const existente = carritoMini.find((i) => i.id === productoId);
+        if (existente) {
+            if (existente.cantidad >= prod.stock) { showError("Stock insuficiente"); return; }
+            existente.cantidad++;
+        } else {
+            carritoMini.push({ id: productoId, nombre: prod.nombre, precio: prod.precio_venta, cantidad: 1 });
+        }
+        renderCarritoMini();
+    }
+
+    function cambiarCantidadMini(id, delta) {
+        const idx = carritoMini.findIndex((i) => i.id === id);
+        if (idx === -1) return;
+        carritoMini[idx].cantidad += delta;
+        if (carritoMini[idx].cantidad <= 0) carritoMini.splice(idx, 1);
+        renderCarritoMini();
+    }
+
+    async function renderCarritoMini() {
+        const contenedor = document.getElementById("vr-carrito");
+        if (!carritoMini.length) {
+            contenedor.innerHTML = "";
+            document.getElementById("vr-total").textContent = formatCurrency(0);
+            return;
+        }
+        contenedor.innerHTML = carritoMini.map((item) => `
+            <div class="vr-carrito-item">
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.nombre}</span>
+                <button class="vr-ci-btn" onclick="cambiarCantidadMini(${item.id}, -1)">−</button>
+                <span style="min-width:16px;text-align:center;">${item.cantidad}</span>
+                <button class="vr-ci-btn" onclick="cambiarCantidadMini(${item.id}, 1)">+</button>
+                <strong style="min-width:60px;text-align:right;">${formatCurrency(item.precio * item.cantidad)}</strong>
+            </div>
+        `).join("");
+
+        const subtotal = carritoMini.reduce((s, i) => s + i.precio * i.cantidad, 0);
+        const metodo = document.getElementById("vr-metodo").value;
+        const config = await getConfiguracion();
+        let comision = 0;
+        if (metodo === "tarjeta") comision = config.comision_tarjeta;
+        else if (metodo === "qr") comision = config.comision_qr;
+        const total = subtotal;
+        document.getElementById("vr-total").textContent = formatCurrency(total);
+    }
+
+    function seleccionarClienteParaVenta(clienteId, nombre) {
+        clienteSeleccionadoVenta = { id: clienteId, nombre };
+        const badge = document.getElementById("vr-cliente-badge");
+        badge.classList.remove("vacio");
+        document.getElementById("vr-cliente-texto").innerHTML = `<span class="nombre-cliente">👤 ${nombre}</span>`;
+        document.getElementById("vr-cliente-quitar").style.display = "inline";
+    }
+
+    function limpiarClienteVenta() {
+        clienteSeleccionadoVenta = null;
+        const badge = document.getElementById("vr-cliente-badge");
+        badge.classList.add("vacio");
+        document.getElementById("vr-cliente-texto").textContent = "Sin cliente seleccionado";
+        document.getElementById("vr-cliente-quitar").style.display = "none";
+    }
+
+    // Lleva a la ventana de Venta Rapida COMPLETA (venta-rapida.html),
+    // con el cliente ya seleccionado en el panel mini (si hay uno), y
+    // le indica que al cobrar debe regresar de vuelta a este Panel.
+    function irAVentaRapidaCompleta() {
+        const clienteId = clienteSeleccionadoVenta ? clienteSeleccionadoVenta.id : "";
+        window.location.href = `venta-rapida.html?volver=panel${clienteId ? `&cliente=${clienteId}` : ""}`;
+    }
+
+    async function confirmarVentaMini() {
+        if (!carritoMini.length) { showError("Selecciona al menos un producto"); return; }
+        const metodo = document.getElementById("vr-metodo").value;
+        const detalles = carritoMini.map((i) => ({
+            producto_id: i.id,
+            cantidad: i.cantidad,
+            precio_unitario: i.precio,
+        }));
+        try {
+            await apiFetch("/ventas/", {
+                method: "POST",
+                body: JSON.stringify({
+                    cliente_id: clienteSeleccionadoVenta ? clienteSeleccionadoVenta.id : null,
+                    metodo_pago: metodo,
+                    es_venta_rapida: true,
+                    detalles,
+                }),
+            });
+            showSuccess("Venta registrada ✅");
+            carritoMini = [];
+            renderCarritoMini();
+            limpiarClienteVenta();
+            await cargarProductosMini();
+            await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    // ============================================================
+    // Modal de pago de saldo de membresía
+    // Se abre desde la ficha de asistencia cuando hay saldo pendiente.
+    // Carga la membresía activa del cliente y permite registrar el
+    // pago parcial o total usando PUT /cliente-membresias/{cm_id}.
+    // ============================================================
+    let _pagoSaldoCtx = null; // { clienteId, cmId, precio, pagado, saldo }
+
+    async function abrirModalPagoSaldo(clienteId) {
+        try {
+            const [ficha, config] = await Promise.all([
+                apiFetch(`/clientes/${clienteId}/ficha`),
+                getConfiguracion(),
+            ]);
+            const m = ficha.membresia_actual;
+            if (!m) { showError("El cliente no tiene membresía activa"); return; }
+
+            const precio = m.precio || 0;
+            const pagado = m.monto_pagado || 0;
+            const saldo  = Math.max(precio - pagado, 0);
+
+            _pagoSaldoCtx = { clienteId, cmId: m.cm_id, precio, pagado, saldo, moneda: config.moneda };
+
+            document.getElementById("mps-detalle").innerHTML =
+                `<strong>${ficha.nombre_completo}</strong><br>` +
+                `<span style="font-size:0.88em;color:var(--color-texto-secundario);">${m.nombre} · vence ${formatFecha(m.fecha_fin)}</span>`;
+            document.getElementById("mps-precio").textContent = formatCurrency(precio, config.moneda);
+            document.getElementById("mps-pagado").textContent = formatCurrency(pagado, config.moneda);
+            document.getElementById("mps-saldo").textContent  = formatCurrency(saldo, config.moneda);
+            document.getElementById("mps-monto").value  = saldo.toFixed(2);
+            document.getElementById("mps-monto").max    = saldo;
+            document.getElementById("mps-notas").value  = "";
+            document.getElementById("mps-metodo").value = "efectivo";
+
+            document.getElementById("modal-pago-saldo").classList.add("active");
+        } catch (e) { showError(e.message); }
+    }
+
+    function cerrarModalPagoSaldo() {
+        document.getElementById("modal-pago-saldo").classList.remove("active");
+        _pagoSaldoCtx = null;
+    }
+
+    async function confirmarPagoSaldo() {
+        if (!_pagoSaldoCtx) return;
+        const monto = parseFloat(document.getElementById("mps-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto válido"); return; }
+        if (monto > _pagoSaldoCtx.saldo + 0.01) {
+            showError(`El monto (${formatCurrency(monto)}) supera el saldo pendiente (${formatCurrency(_pagoSaldoCtx.saldo)})`); return;
+        }
+        try {
+            const nuevoPagado = _pagoSaldoCtx.pagado + monto;
+            const notas = document.getElementById("mps-notas").value.trim() || null;
+            const metodoPago = document.getElementById("mps-metodo").value;
+            await apiFetch(`/cliente-membresias/${_pagoSaldoCtx.cmId}`, {
+                method: "PUT",
+                body: JSON.stringify({
+                    monto_pagado: Math.min(nuevoPagado, _pagoSaldoCtx.precio),
+                    metodo_pago: metodoPago,
+                    // Si queda saldo 0, limpiar la fecha de pago programada
+                    fecha_pago_saldo: nuevoPagado >= _pagoSaldoCtx.precio ? null : undefined,
+                }),
+            });
+            showSuccess(`Pago de ${formatCurrency(monto, _pagoSaldoCtx.moneda)} registrado ✅`);
+            cerrarModalPagoSaldo();
+            // Refrescar la ficha para que el panel muestre los nuevos datos
+            await mostrarFichaParaAsistencia(_pagoSaldoCtx.clienteId);
+        } catch (e) { showError(e.message); }
+    }
+
+    // ============================================================
+    // Init
+    // ============================================================
+    cargarDashboard();
+    cargarUltimosIngresos();
+    cargarProductosMini();
+    setInterval(cargarDashboard, 120000);
+    setInterval(cargarUltimosIngresos, 60000);
+</script>
+</body>
+</html>

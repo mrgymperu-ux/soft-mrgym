@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agenda - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .semana-nav { display:flex;align-items:center;gap:16px;margin-bottom:16px; }
+        .semana-nav button { background:none;border:1px solid var(--color-borde);border-radius:8px;padding:8px 14px;cursor:pointer;color:var(--color-texto); }
+        .semana-nav button:hover { background:var(--color-fondo); }
+
+        .leyenda { display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;font-size:0.78em;color:var(--color-texto-secundario); }
+        .leyenda-item { display:flex;align-items:center;gap:5px; }
+        .leyenda-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
+
+        .grilla-wrap { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:auto; }
+        .grilla { display:grid;grid-template-columns:56px repeat(6,1fr);min-width:900px; }
+        .grilla-header-hueco { border-bottom:1px solid var(--color-borde); }
+        .grilla-header-dia { padding:10px 4px;text-align:center;font-size:0.8em;font-weight:600;border-bottom:1px solid var(--color-borde);border-left:1px solid var(--color-borde); }
+        .grilla-header-dia.hoy { color:var(--color-primario); }
+        .grilla-header-dia .num { display:block;font-size:1.2em;font-weight:bold;margin-top:2px; }
+
+        .col-horas { position:relative; }
+        .hora-label { position:absolute;right:6px;transform:translateY(-50%);font-size:0.68em;color:var(--color-texto-secundario); }
+
+        .col-dia { position:relative;border-left:1px solid var(--color-borde);background-image:repeating-linear-gradient(to bottom, transparent, transparent calc(var(--alto-hora) - 1px), var(--color-borde) calc(var(--alto-hora) - 1px), var(--color-borde) var(--alto-hora)); }
+
+        .evento {
+            position:absolute;left:3px;right:3px;border-radius:7px;padding:4px 6px;
+            font-size:0.72em;color:#fff;cursor:pointer;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.15);
+            line-height:1.25;
+        }
+        .evento .ev-profesor { font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .evento .ev-clase { font-weight:600;opacity:0.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .evento .ev-meta { opacity:0.9;font-size:0.95em; }
+        .evento.no-dictada { opacity:0.88; }
+        .evento.pasada-sin-dictar { outline:2px dashed rgba(255,255,255,0.6);outline-offset:-2px; }
+
+        .radio-alcance { display:flex;gap:16px;margin:10px 0 4px;font-size:0.85em; }
+        .radio-alcance label { display:flex;align-items:center;gap:6px;cursor:pointer; }
+
+        .repetir-dias { display:flex;gap:6px;flex-wrap:wrap;margin-top:6px; }
+        .chip-dia { border:1px solid var(--color-borde);border-radius:8px;padding:6px 10px;font-size:0.8em;cursor:pointer;user-select:none;color:var(--color-texto); }
+        .chip-dia.activo { background:var(--color-primario);color:#fff;border-color:var(--color-primario); }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">Agenda</h1>
+                <p class="header-subtitle">Clases programadas de la semana (lunes a sabado)</p>
+            </div>
+            <button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar Clase</button>
+        </div>
+
+        <div class="semana-nav">
+            <button onclick="cambiarSemana(-1)">← Anterior</button>
+            <strong id="rango-semana" style="flex:1;text-align:center;"></strong>
+            <button onclick="cambiarSemana(1)">Siguiente →</button>
+            <button class="btn btn-secondary btn-sm" onclick="irHoy()">Hoy</button>
+        </div>
+
+        <div class="leyenda" id="leyenda"></div>
+
+        <div class="grilla-wrap">
+            <div class="grilla" id="grilla"></div>
+        </div>
+    </main>
+</div>
+
+<!-- Modal agendar clase -->
+<div id="modal-clase" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Agendar Clase</h3>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="form-group"><label>Profesor *</label><select id="f-profesor"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group"><label>Nombre de la clase *</label><input type="text" id="f-nombre-clase" placeholder="Salsa Intermedio"></div>
+        <div class="form-group"><label>Sala</label><input type="text" id="f-sala" placeholder="Sala A"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="form-group"><label>Fecha *</label><input type="date" id="f-fecha-clase"></div>
+            <div class="form-group"><label>Hora inicio *</label><input type="time" id="f-hora-inicio"></div>
+            <div class="form-group"><label>Hora fin</label><input type="time" id="f-hora-fin"></div>
+        </div>
+        <div class="form-group"><label>Notas</label><textarea id="f-notas-clase" rows="2"></textarea></div>
+
+        <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="f-repetir" style="width:auto;" onchange="toggleRepetir()"> Repetir semanalmente
+            </label>
+            <div id="bloque-repetir" style="display:none;margin-top:8px;">
+                <p style="font-size:0.8em;margin:0 0 4px;">Dias de la semana</p>
+                <div class="repetir-dias" id="repetir-dias"></div>
+                <div class="form-group" style="margin-top:10px;max-width:200px;">
+                    <label>Repetir por (semanas)</label>
+                    <input type="number" id="f-semanas" min="1" value="4">
+                </div>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarClase()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal detalle / acciones de una clase -->
+<div id="modal-detalle" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Detalle de clase</h3>
+            <button class="modal-close" onclick="cerrarModalDetalle()">✕</button>
+        </div>
+        <div id="detalle-info" style="margin-bottom:14px;font-size:0.9em;"></div>
+
+        <div id="seccion-marcar-dictada">
+            <h4 style="font-size:0.85em;margin-bottom:6px;">Marcar como dictada</h4>
+            <div class="form-group"><label>Cantidad de alumnos que asistieron</label><input type="number" id="f-alumnos" min="0" placeholder="0"></div>
+            <button class="btn btn-primary btn-sm" onclick="confirmarDictada()">Confirmar asistencia</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--color-borde);margin:16px 0;">
+
+        <h4 style="font-size:0.85em;margin-bottom:6px;">Profesor de reemplazo (solo esta fecha)</h4>
+        <div class="form-group" style="display:flex;gap:8px;">
+            <select id="f-reemplazo" style="flex:1;"><option value="">-- Sin reemplazo --</option></select>
+            <button class="btn btn-secondary btn-sm" onclick="guardarReemplazo()">Guardar</button>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--color-borde);margin:16px 0;">
+
+        <h4 style="font-size:0.85em;margin-bottom:6px;color:var(--color-error);">Eliminar clase</h4>
+        <div class="radio-alcance">
+            <label><input type="radio" name="alcance" value="una" checked> Solo esta clase</label>
+            <label id="opcion-futuras" style="display:none;"><input type="radio" name="alcance" value="futuras"> Esta y todas las futuras (misma serie)</label>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="eliminarClase()">Eliminar</button>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    const HORA_INICIO = 6;   // 6:00
+    const HORA_FIN = 22;     // 22:00
+    const ALTO_HORA = 52;    // px por hora
+    const DIAS_NOMBRE = ["Lun","Mar","Mie","Jue","Vie","Sab"];
+    const COLORES_PROFESOR = ["#7566B8","#4E7096","#5F7F63","#AD7645","#AD6E7C","#7C4155","#3B7A75","#8C6E3F","#5B6B8C","#8C5A5A"];
+
+    let fechaBase = new Date();
+    let profesoresCache = [];
+    let claseSeleccionada = null;
+    let moneda = "S/";
+    let clasesSemana = [];
+
+    function formatMonedaSinDecimales(monto) {
+        return `${moneda} ${Math.round(monto || 0)}`;
+    }
+
+    function colorProfesor(id) {
+        return COLORES_PROFESOR[id % COLORES_PROFESOR.length];
+    }
+
+    function lunes(fecha) {
+        const d = new Date(fecha);
+        const dia = d.getDay();
+        const diff = dia === 0 ? -6 : 1 - dia;
+        d.setDate(d.getDate() + diff);
+        d.setHours(0,0,0,0);
+        return d;
+    }
+
+    function cambiarSemana(delta) {
+        fechaBase.setDate(fechaBase.getDate() + delta * 7);
+        cargarSemana();
+    }
+
+    function irHoy() { fechaBase = new Date(); cargarSemana(); }
+
+    function horaDecimal(isoString) {
+        const d = new Date(isoString);
+        return d.getHours() + d.getMinutes() / 60;
+    }
+
+    async function cargarSemana() {
+        const config = await getConfiguracion();
+        moneda = config.moneda;
+
+        if (!profesoresCache.length) {
+            const empleados = await apiFetch("/empleados/");
+            profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
+        }
+        renderLeyenda();
+
+        const inicio = lunes(fechaBase);
+        const fin = new Date(inicio);
+        fin.setDate(fin.getDate() + 5); // sabado
+
+        const desde = inicio.toISOString().split("T")[0];
+        const hasta = fin.toISOString().split("T")[0];
+
+        document.getElementById("rango-semana").textContent =
+            `${inicio.toLocaleDateString("es-PE",{day:"2-digit",month:"long"})} – ${fin.toLocaleDateString("es-PE",{day:"2-digit",month:"long",year:"numeric"})}`;
+
+        clasesSemana = await apiFetch(`/clases/?desde=${desde}&hasta=${hasta}`);
+        renderGrilla(inicio);
+    }
+
+    function renderLeyenda() {
+        const cont = document.getElementById("leyenda");
+        cont.innerHTML = profesoresCache.map(p => `
+            <span class="leyenda-item"><span class="leyenda-dot" style="background:${colorProfesor(p.id)};"></span>${p.nombre_completo}</span>
+        `).join("");
+    }
+
+    function renderGrilla(inicio) {
+        const hoy = new Date().toISOString().split("T")[0];
+        const grilla = document.getElementById("grilla");
+        const alturaTotal = (HORA_FIN - HORA_INICIO) * ALTO_HORA;
+
+        let html = `<div class="grilla-header-hueco"></div>`;
+        for (let i = 0; i < 6; i++) {
+            const fechaDia = new Date(inicio);
+            fechaDia.setDate(fechaDia.getDate() + i);
+            const fechaStr = fechaDia.toISOString().split("T")[0];
+            const esHoy = fechaStr === hoy;
+            html += `<div class="grilla-header-dia ${esHoy ? "hoy" : ""}">${DIAS_NOMBRE[i]}<span class="num">${fechaDia.getDate()}</span></div>`;
+        }
+
+        // columna de horas
+        html += `<div class="col-horas" style="height:${alturaTotal}px;">`;
+        for (let h = HORA_INICIO; h <= HORA_FIN; h++) {
+            const top = (h - HORA_INICIO) * ALTO_HORA;
+            html += `<span class="hora-label" style="top:${top}px;">${h}:00</span>`;
+        }
+        html += `</div>`;
+
+        // columnas de dias
+        for (let i = 0; i < 6; i++) {
+            const fechaDia = new Date(inicio);
+            fechaDia.setDate(fechaDia.getDate() + i);
+            const fechaStr = fechaDia.toISOString().split("T")[0];
+            const clasesDelDia = clasesSemana.filter(c => c.fecha === fechaStr);
+
+            let eventosHtml = "";
+            clasesDelDia.forEach(c => {
+                const inicioH = Math.max(horaDecimal(c.hora_inicio), HORA_INICIO);
+                const finH = c.hora_fin ? Math.max(horaDecimal(c.hora_fin), inicioH + 0.5) : inicioH + 1;
+                const top = (inicioH - HORA_INICIO) * ALTO_HORA;
+                const alto = Math.max((finH - inicioH) * ALTO_HORA, 30);
+
+                const tieneReemplazo = !!c.profesor_reemplazo;
+                const responsable = tieneReemplazo ? c.profesor_reemplazo : c.profesor;
+                const colorId = responsable ? responsable.id : c.profesor_id;
+                const nombreResponsable = responsable ? responsable.nombre_completo : "—";
+
+                const esPasada = fechaStr < hoy;
+                const claseEstado = c.dictada ? "" : (esPasada ? "no-dictada pasada-sin-dictar" : "no-dictada");
+
+                const metaHtml = c.dictada
+                    ? `<div class="ev-meta">${c.cantidad_alumnos ?? 0} Alumnos - ${formatMonedaSinDecimales(c.monto_pagado)}</div>`
+                    : `<div class="ev-meta">${formatHora(c.hora_inicio)}${c.hora_fin ? "-" + formatHora(c.hora_fin) : ""}</div>`;
+
+                eventosHtml += `
+                    <div class="evento ${claseEstado}" style="top:${top}px;height:${alto}px;background:${colorProfesor(colorId)};" onclick='abrirDetalle(${c.id})'>
+                        <div class="ev-profesor">${nombreResponsable}${tieneReemplazo ? " (reemplazo)" : ""}</div>
+                        <div class="ev-clase">${c.nombre_clase}</div>
+                        ${metaHtml}
+                    </div>
+                `;
+            });
+
+            html += `<div class="col-dia" style="--alto-hora:${ALTO_HORA}px;height:${alturaTotal}px;">${eventosHtml}</div>`;
+        }
+
+        grilla.style.setProperty("--alto-hora", `${ALTO_HORA}px`);
+        grilla.innerHTML = html;
+    }
+
+    // ================= Detalle / acciones =================
+
+    function abrirDetalle(claseId) {
+        claseSeleccionada = clasesSemana.find(c => c.id === claseId);
+        if (!claseSeleccionada) return;
+
+        const c = claseSeleccionada;
+        document.getElementById("detalle-info").innerHTML = `
+            <p style="margin:0 0 4px;"><strong>${c.nombre_clase}</strong></p>
+            <p style="margin:0 0 4px;color:var(--color-texto-secundario);">${formatFecha(c.fecha)} · ${formatHora(c.hora_inicio)}${c.hora_fin ? "-" + formatHora(c.hora_fin) : ""} ${c.sala ? "· " + c.sala : ""}</p>
+            <p style="margin:0;">Profesor: <strong>${c.profesor ? c.profesor.nombre_completo : "—"}</strong>${c.profesor_reemplazo ? ` (reemplazado por <strong>${c.profesor_reemplazo.nombre_completo}</strong> en esta fecha)` : ""}</p>
+        `;
+
+        document.getElementById("seccion-marcar-dictada").style.display = c.dictada ? "none" : "block";
+        document.getElementById("f-alumnos").value = "";
+
+        const selReemplazo = document.getElementById("f-reemplazo");
+        const opciones = profesoresCache.filter(p => p.id !== c.profesor_id);
+        selReemplazo.innerHTML = '<option value="">-- Sin reemplazo --</option>' +
+            opciones.map(p => `<option value="${p.id}" ${c.profesor_reemplazo_id === p.id ? "selected" : ""}>${p.nombre_completo}</option>`).join("");
+
+        document.getElementById("opcion-futuras").style.display = c.serie_id ? "flex" : "none";
+        document.querySelector('input[name="alcance"][value="una"]').checked = true;
+
+        document.getElementById("modal-detalle").classList.add("active");
+    }
+
+    function cerrarModalDetalle() {
+        document.getElementById("modal-detalle").classList.remove("active");
+        claseSeleccionada = null;
+    }
+
+    async function confirmarDictada() {
+        const cantidad = parseInt(document.getElementById("f-alumnos").value);
+        if (isNaN(cantidad) || cantidad < 0) { showError("Cantidad invalida"); return; }
+        try {
+            await apiFetch(`/clases/${claseSeleccionada.id}/marcar-dictada`, {
+                method: "PUT",
+                body: JSON.stringify({ cantidad_alumnos: cantidad }),
+            });
+            showSuccess("Clase marcada como dictada");
+            cerrarModalDetalle();
+            cargarSemana();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function guardarReemplazo() {
+        const valor = document.getElementById("f-reemplazo").value;
+        try {
+            await apiFetch(`/clases/${claseSeleccionada.id}/reemplazo`, {
+                method: "PUT",
+                body: JSON.stringify({ profesor_reemplazo_id: valor ? parseInt(valor) : null }),
+            });
+            showSuccess(valor ? "Reemplazo asignado" : "Reemplazo quitado");
+            cerrarModalDetalle();
+            cargarSemana();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarClase() {
+        const alcance = document.querySelector('input[name="alcance"]:checked').value;
+        const mensaje = alcance === "futuras" ? "¿Eliminar esta clase y todas las futuras de la misma serie?" : "¿Eliminar esta clase?";
+        if (!(await confirmDialog(mensaje))) return;
+        try {
+            await apiFetch(`/clases/${claseSeleccionada.id}?alcance=${alcance}`, { method: "DELETE" });
+            showSuccess("Clase(s) eliminada(s)");
+            cerrarModalDetalle();
+            cargarSemana();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================= Agendar =================
+
+    let diasSeleccionados = new Set();
+
+    async function abrirModalClase() {
+        if (!profesoresCache.length) {
+            const empleados = await apiFetch("/empleados/");
+            profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
+        }
+        const sel = document.getElementById("f-profesor");
+        sel.innerHTML = '<option value="">Seleccionar...</option>' +
+            profesoresCache.map(p => `<option value="${p.id}">${p.nombre_completo}</option>`).join("");
+
+        document.getElementById("f-fecha-clase").value = new Date().toISOString().split("T")[0];
+        ["nombre-clase","sala","hora-inicio","hora-fin","notas-clase"].forEach(f => {
+            const el = document.getElementById(`f-${f}`);
+            if (el) el.value = "";
+        });
+        document.getElementById("f-repetir").checked = false;
+        document.getElementById("f-semanas").value = 4;
+        diasSeleccionados = new Set();
+        document.getElementById("repetir-dias").innerHTML = DIAS_NOMBRE.map((n, i) => `
+            <span class="chip-dia" data-dia="${i}" onclick="toggleDia(${i})">${n}</span>
+        `).join("");
+        toggleRepetir();
+        document.getElementById("modal-clase").classList.add("active");
+    }
+
+    function toggleRepetir() {
+        document.getElementById("bloque-repetir").style.display = document.getElementById("f-repetir").checked ? "block" : "none";
+    }
+
+    function toggleDia(i) {
+        const chip = document.querySelector(`.chip-dia[data-dia="${i}"]`);
+        if (diasSeleccionados.has(i)) { diasSeleccionados.delete(i); chip.classList.remove("activo"); }
+        else { diasSeleccionados.add(i); chip.classList.add("activo"); }
+    }
+
+    function cerrarModal() { document.getElementById("modal-clase").classList.remove("active"); }
+
+    async function guardarClase() {
+        const fecha = document.getElementById("f-fecha-clase").value;
+        const horaInicio = document.getElementById("f-hora-inicio").value;
+        if (!fecha || !horaInicio) { showError("Fecha y hora de inicio son obligatorias"); return; }
+        if (!document.getElementById("f-profesor").value) { showError("Selecciona un profesor"); return; }
+        if (!document.getElementById("f-nombre-clase").value.trim()) { showError("El nombre de la clase es obligatorio"); return; }
+
+        const repetir = document.getElementById("f-repetir").checked;
+        if (repetir && diasSeleccionados.size === 0) { showError("Selecciona al menos un dia para repetir"); return; }
+
+        const horaFin = document.getElementById("f-hora-fin").value;
+        const datos = {
+            profesor_id: parseInt(document.getElementById("f-profesor").value),
+            nombre_clase: document.getElementById("f-nombre-clase").value.trim(),
+            sala: document.getElementById("f-sala").value.trim() || null,
+            fecha,
+            hora_inicio: `${fecha}T${horaInicio}:00`,
+            hora_fin: horaFin ? `${fecha}T${horaFin}:00` : null,
+            notas: document.getElementById("f-notas-clase").value.trim() || null,
+            dias_semana: repetir ? Array.from(diasSeleccionados) : [],
+            semanas: repetir ? (parseInt(document.getElementById("f-semanas").value) || 1) : 1,
+        };
+
+        try {
+            const creadas = await apiFetch("/clases/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess(creadas.length > 1 ? `${creadas.length} clases agendadas` : "Clase agendada");
+            cerrarModal();
+            cargarSemana();
+        } catch (e) { showError(e.message); }
+    }
+
+    cargarSemana();
+</script>
+</body>
+</html>

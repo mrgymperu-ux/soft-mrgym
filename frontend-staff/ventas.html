@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ventas - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .item-venta { display:grid; grid-template-columns:1fr 80px 90px auto; gap:8px; align-items:center; margin-bottom:8px; }
+        .item-venta select,.item-venta input { padding:8px; border:1px solid var(--color-borde); border-radius:8px; width:100%; }
+        .btn-remove { background:none; border:none; cursor:pointer; font-size:1.1em; color:var(--color-error); }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Ventas</h1><p class="header-subtitle">Historial de ventas</p></div>
+            <button class="btn btn-primary" onclick="abrirModalVenta()">+ Nueva Venta</button>
+        </div>
+        <div class="card">
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Metodo</th><th>Tipo</th></tr></thead>
+                    <tbody id="tabla-ventas"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--color-borde);">
+                <button class="btn btn-secondary btn-sm" id="btn-anterior" onclick="cambiarPagina(-1)">← Anterior</button>
+                <span id="info-pagina" style="font-size:0.85em;color:#636E72;"></span>
+                <button class="btn btn-secondary btn-sm" id="btn-siguiente" onclick="cambiarPagina(1)">Siguiente →</button>
+            </div>
+        </div>
+    </main>
+</div>
+<div id="modal-venta" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header"><h3 class="modal-title">Nueva Venta</h3><button class="modal-close" onclick="cerrarModal()">✕</button></div>
+        <div class="form-group"><label>Cliente (opcional)</label><select id="f-cliente"><option value="">Sin cliente</option></select></div>
+        <div class="form-group"><label>Metodo de Pago *</label>
+            <select id="f-metodo" onchange="calcularTotal()">
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta (+ comision)</option>
+                <option value="qr">QR (+ comision)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Productos *</label>
+            <div id="items-venta"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="agregarItem()" style="margin-top:8px;">+ Agregar producto</button>
+        </div>
+        <div style="background:var(--color-fondo);border-radius:10px;padding:14px;margin-top:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:600;">Total a cobrar</span>
+                <strong id="total-venta" style="font-size:1.3em;color:var(--color-primario);">S/ 0.00</strong>
+            </div>
+            <p id="nota-comision" style="margin:4px 0 0;font-size:0.78em;color:#636E72;"></p>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarVenta()">Registrar Venta</button>
+        </div>
+    </div>
+</div>
+<div id="modal-detalle-venta" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header"><h3 class="modal-title">Detalle de Venta</h3><button class="modal-close" onclick="cerrarModalDetalle()">✕</button></div>
+        <div id="detalle-venta-contenido"></div>
+        <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModalDetalle()">Cerrar</button></div>
+    </div>
+</div>
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    const LIMIT = 50;
+    let paginaActual = 0, productosCache = [], clientesCache = [], config = null, moneda = "S/";
+
+    async function cargarDatos() {
+        config = await getConfiguracion(); moneda = config.moneda;
+        [productosCache, clientesCache] = await Promise.all([apiFetch("/productos/"), apiFetch("/clientes/?limit=200")]);
+    }
+
+    async function cargarVentas() {
+        const ventas = await apiFetch(`/ventas/?skip=${paginaActual*LIMIT}&limit=${LIMIT}`);
+        ventasCacheDetalle = ventas;
+        const tbody = document.getElementById("tabla-ventas");
+        if (!ventas.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No hay ventas</td></tr>'; }
+        else tbody.innerHTML = ventas.map(v => {
+            const c = clientesCache.find(x => x.id === v.cliente_id);
+            const prods = v.detalles ? v.detalles.map(d => `${d.cantidad}x ${d.producto ? d.producto.nombre : "#"+d.producto_id}`).join(", ") : "—";
+            return `<tr style="cursor:pointer;" onclick="verDetalleVenta(${v.id})">
+                <td>${formatFechaHora(v.fecha_venta)}</td>
+                <td>${c ? `<a href="clientes.html?ver=${c.id}" onclick="event.stopPropagation()" style="color:var(--color-primario);font-weight:600;text-decoration:none;">${c.nombre}</a>` : "Sin cliente"}</td>
+                <td style="font-size:0.82em;color:#636E72;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${prods}</td>
+                <td><strong>${formatCurrency(v.total,moneda)}</strong></td>
+                <td><span class="badge badge-info">${v.metodo_pago}</span></td>
+                <td>${v.es_venta_rapida ? '<span class="badge badge-success">⚡ Rapida</span>' : '<span class="badge">Normal</span>'}</td>
+            </tr>`;
+        }).join("");
+        document.getElementById("btn-anterior").disabled = paginaActual === 0;
+        document.getElementById("btn-siguiente").disabled = ventas.length < LIMIT;
+        document.getElementById("info-pagina").textContent = `Pagina ${paginaActual+1}`;
+    }
+
+    function cambiarPagina(d) { paginaActual = Math.max(0, paginaActual+d); cargarVentas(); }
+
+    let ventasCacheDetalle = [];
+
+    async function verDetalleVenta(id) {
+        const detalleReal = ventasCacheDetalle.find(v => v.id === id);
+        if (!detalleReal) return;
+        const c = clientesCache.find(x => x.id === detalleReal.cliente_id);
+        const filasProductos = detalleReal.detalles.map(d => `
+            <tr>
+                <td>${d.producto ? `<a href="productos.html?editar=${d.producto_id}" style="color:var(--color-primario);text-decoration:none;">${d.producto.nombre}</a>` : "#"+d.producto_id}</td>
+                <td>${d.cantidad}</td>
+                <td>${formatCurrency(d.precio_unitario, moneda)}</td>
+                <td>${formatCurrency(d.subtotal, moneda)}</td>
+            </tr>
+        `).join("");
+        document.getElementById("detalle-venta-contenido").innerHTML = `
+            <p><strong>Fecha:</strong> ${formatFechaHora(detalleReal.fecha_venta)}</p>
+            <p><strong>Cliente:</strong> ${c ? `<a href="clientes.html?ver=${c.id}" style="color:var(--color-primario);text-decoration:none;">${c.nombre} ${c.apellidos||""}</a>` : "Sin cliente"}</p>
+            <p><strong>Metodo de pago:</strong> ${detalleReal.metodo_pago}</p>
+            <table class="table" style="margin-top:10px;">
+                <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+                <tbody>${filasProductos}</tbody>
+            </table>
+            <div style="text-align:right;margin-top:10px;font-size:1.1em;"><strong>Total: ${formatCurrency(detalleReal.total, moneda)}</strong></div>
+        `;
+        document.getElementById("modal-detalle-venta").classList.add("active");
+    }
+
+    function cerrarModalDetalle() { document.getElementById("modal-detalle-venta").classList.remove("active"); }
+
+    async function abrirModalVenta() {
+        await cargarDatos();
+        document.getElementById("items-venta").innerHTML = "";
+        document.getElementById("total-venta").textContent = formatCurrency(0, moneda);
+        document.getElementById("nota-comision").textContent = "";
+        const sel = document.getElementById("f-cliente");
+        sel.innerHTML = '<option value="">Sin cliente</option>' + clientesCache.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos||""}</option>`).join("");
+        agregarItem();
+        document.getElementById("modal-venta").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-venta").classList.remove("active"); }
+
+    function agregarItem() {
+        const div = document.createElement("div");
+        div.className = "item-venta";
+        div.innerHTML = `
+            <select onchange="actualizarPrecio(this)">
+                <option value="">-- Producto --</option>
+                ${productosCache.map(p => `<option value="${p.id}" data-precio="${p.precio_venta}" data-stock="${p.stock}">${p.icono||"📦"} ${p.nombre} (${p.stock}) - ${formatCurrency(p.precio_venta,moneda)}</option>`).join("")}
+            </select>
+            <input type="number" value="1" min="1" placeholder="Cant." oninput="calcularTotal()">
+            <input type="number" step="0.01" placeholder="Precio" oninput="calcularTotal()">
+            <button class="btn-remove" onclick="this.parentElement.remove();calcularTotal();">✕</button>
+        `;
+        document.getElementById("items-venta").appendChild(div);
+    }
+
+    function actualizarPrecio(sel) {
+        const opt = sel.options[sel.selectedIndex];
+        if (opt.dataset.precio) sel.parentElement.querySelectorAll("input")[1].value = opt.dataset.precio;
+        calcularTotal();
+    }
+
+    function calcularTotal() {
+        let subtotal = 0;
+        document.querySelectorAll(".item-venta").forEach(item => {
+            subtotal += (parseFloat(item.querySelectorAll("input")[0].value)||0) * (parseFloat(item.querySelectorAll("input")[1].value)||0);
+        });
+        const metodo = document.getElementById("f-metodo").value;
+        let comision = 0;
+        if (config) { if (metodo==="tarjeta") comision=config.comision_tarjeta; else if (metodo==="qr") comision=config.comision_qr; }
+        const total = subtotal * (1 + comision/100);
+        document.getElementById("total-venta").textContent = formatCurrency(total, moneda);
+        document.getElementById("nota-comision").textContent = comision > 0 ? `Incluye comision ${comision}% por ${metodo}` : "";
+    }
+
+    async function guardarVenta() {
+        const detalles = [];
+        for (const item of document.querySelectorAll(".item-venta")) {
+            const sel = item.querySelector("select");
+            const productoId = parseInt(sel.value);
+            const cantidad = parseInt(item.querySelectorAll("input")[0].value);
+            const precio = parseFloat(item.querySelectorAll("input")[1].value);
+            if (!productoId || !cantidad || !precio) continue;
+            const prod = productosCache.find(p => p.id === productoId);
+            if (prod && cantidad > prod.stock) { showError(`Stock insuficiente: ${prod.nombre}`); return; }
+            detalles.push({ producto_id: productoId, cantidad, precio_unitario: precio });
+        }
+        if (!detalles.length) { showError("Agrega al menos un producto"); return; }
+        try {
+            await apiFetch("/ventas/", { method: "POST", body: JSON.stringify({
+                cliente_id: parseInt(document.getElementById("f-cliente").value) || null,
+                metodo_pago: document.getElementById("f-metodo").value,
+                es_venta_rapida: false, detalles,
+            })});
+            showSuccess("Venta registrada"); cerrarModal(); cargarVentas();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function init() { await cargarDatos(); await cargarVentas(); }
+    init();
+</script>
+</body>
+</html>

@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planilla Staff - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Planilla Staff</h1><p class="header-subtitle">Sueldo fijo + comisiones del mes anterior</p></div>
+            <button class="btn btn-primary" onclick="abrirModalEmpleado()">+ Nuevo Staff</button>
+        </div>
+
+        <!-- Filtros calculo -->
+        <div class="card" style="margin-bottom:20px;">
+            <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+                <div class="form-group" style="margin:0;flex:1;min-width:180px;">
+                    <label>Trabajador</label>
+                    <select id="f-staff"><option value="">-- Seleccionar --</option></select>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label>Año</label>
+                    <input type="number" id="f-anio" style="width:100px;">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label>Mes</label>
+                    <select id="f-mes">
+                        <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                        <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                        <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                        <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="calcularPlanilla()">Calcular</button>
+            </div>
+        </div>
+
+        <!-- Resumen -->
+        <div id="resumen-planilla" style="display:none;" class="card" style="margin-bottom:20px;">
+            <div class="card-body">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:20px;">
+                    <div>
+                        <p style="margin:0;font-size:0.85em;color:#636E72;">Trabajador</p>
+                        <strong id="res-nombre" style="font-size:1.1em;"></strong>
+                        <p id="res-detalle-mes" style="margin:10px 0 0;font-size:0.85em;color:#636E72;"></p>
+                    </div>
+                    <table class="table" style="width:auto;">
+                        <tbody>
+                            <tr><td>Sueldo fijo (mes actual)</td><td style="text-align:right;"><strong id="res-sueldo"></strong></td></tr>
+                            <tr><td>Comision membresias (mes anterior)</td><td style="text-align:right;"><strong id="res-com-mem"></strong></td></tr>
+                            <tr><td>Comision productos (mes anterior)</td><td style="text-align:right;"><strong id="res-com-prod"></strong></td></tr>
+                            <tr><td><strong>Total a pagar</strong></td><td style="text-align:right;"><strong id="res-total" style="color:var(--color-primario);font-size:1.15em;"></strong></td></tr>
+                            <tr><td>Ya pagado en este periodo</td><td style="text-align:right;" id="res-pagado"></td></tr>
+                            <tr><td><strong>Pendiente</strong></td><td style="text-align:right;"><strong id="res-pendiente" style="color:var(--color-error);"></strong></td></tr>
+                        </tbody>
+                    </table>
+                    <button class="btn btn-success" id="btn-registrar-pago" onclick="abrirModalPago()">💵 Registrar pago</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista empleados -->
+        <div class="card" style="margin-bottom:20px;">
+            <div class="card-header"><h3 class="card-title">Staff registrado</h3></div>
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Nombre</th><th>Puesto</th><th>Sueldo Fijo</th><th>Telefono</th><th>Usuario vinculado</th><th>Acciones</th></tr></thead>
+                    <tbody id="tabla-empleados"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Historial de pagos -->
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">Historial de pagos</h3></div>
+            <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;padding:16px 20px;border-bottom:1px solid var(--color-borde);">
+                <div class="form-group" style="margin:0;min-width:180px;">
+                    <label>Trabajador</label>
+                    <select id="h-staff"><option value="">Todos</option></select>
+                </div>
+                <div class="form-group" style="margin:0;"><label>Desde</label><input type="date" id="h-desde"></div>
+                <div class="form-group" style="margin:0;"><label>Hasta</label><input type="date" id="h-hasta"></div>
+                <button class="btn btn-secondary" onclick="cargarHistorialPagos()">Filtrar</button>
+            </div>
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Fecha de pago</th><th>Trabajador</th><th>Periodo</th><th>Monto pagado</th><th>Notas</th><th>Acciones</th></tr></thead>
+                    <tbody id="tabla-historial"><tr class="empty-row"><td colspan="6">Sin pagos registrados aun</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- Modal empleado -->
+<div id="modal-empleado" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="modal-titulo">Nuevo Staff</h3>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="form-group"><label>Nombre completo *</label><input type="text" id="e-nombre"></div>
+        <div class="form-group"><label>Puesto</label><input type="text" id="e-puesto" placeholder="Counter, Entrenador, etc."></div>
+        <div class="form-group"><label>Telefono (para el recibo por WhatsApp)</label><input type="text" id="e-telefono" placeholder="999999999"></div>
+        <div class="form-group"><label>Email</label><input type="email" id="e-email"></div>
+        <div class="form-group"><label>Sueldo fijo mensual</label><input type="number" id="e-sueldo" step="0.01" min="0" placeholder="2000.00"></div>
+        <p style="font-size:0.78em;color:var(--color-texto-secundario);">Para que las comisiones de este trabajador se calculen automaticamente, crea tambien su cuenta de acceso en <strong>Personal → Usuarios</strong> y vinculala a este empleado.</p>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarEmpleado()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal registrar pago -->
+<div id="modal-pago" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Registrar pago</h3>
+            <button class="modal-close" onclick="cerrarModalPago()">✕</button>
+        </div>
+        <p style="font-size:0.85em;color:var(--color-texto-secundario);">Trabajador: <strong id="pago-nombre"></strong> · Pendiente: <strong id="pago-pendiente"></strong></p>
+        <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="pago-monto" step="0.01" min="0"></div>
+        <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">Puedes pagar menos del total para hacerlo en partes; el pendiente se actualiza solo.</p>
+        <div class="form-group"><label>Notas (opcional)</label><input type="text" id="pago-notas" placeholder="ej. adelanto quincenal"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPago()">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarPago()">Registrar y generar recibo</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal editar pago (solo administrador) -->
+<div id="modal-editar-pago" class="modal">
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Corregir pago</h3>
+            <button class="modal-close" onclick="cerrarModalEditarPago()">✕</button>
+        </div>
+        <p style="font-size:0.85em;color:var(--color-texto-secundario);" id="ep-detalle"></p>
+        <div class="form-group"><label>Monto pagado</label><input type="number" id="ep-monto" step="0.01" min="0"></div>
+        <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">El servidor valida que el nuevo monto no supere el saldo del periodo.</p>
+        <div class="form-group"><label>Notas</label><input type="text" id="ep-notas"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalEditarPago()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarEdicionPago()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let moneda = "S/", empleadoEditando = null, staffCache = [], ultimoResumen = null;
+    const NOMBRES_MES = ["", "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+    function setPeriodoPorDefecto() {
+        const hoy = new Date();
+        document.getElementById("f-anio").value = hoy.getFullYear();
+        document.getElementById("f-mes").value = hoy.getMonth() + 1;
+    }
+
+    async function cargarEmpleados() {
+        const config = await getConfiguracion(); moneda = config.moneda;
+        const empleados = await apiFetch("/empleados/");
+        staffCache = empleados.filter(e => e.tipo === "staff_fijo");
+        const tbody = document.getElementById("tabla-empleados");
+        const opciones = '<option value="">-- Seleccionar --</option>' + staffCache.map(e => `<option value="${e.id}">${e.nombre_completo}</option>`).join("");
+        document.getElementById("f-staff").innerHTML = opciones;
+        document.getElementById("h-staff").innerHTML = '<option value="">Todos</option>' + staffCache.map(e => `<option value="${e.id}">${e.nombre_completo}</option>`).join("");
+
+        if (!staffCache.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No hay staff fijo registrado</td></tr>'; return; }
+
+        let usuarios = [];
+        try { usuarios = await apiFetch("/usuarios/"); } catch {}
+
+        tbody.innerHTML = staffCache.map(e => {
+            const usuarioVinculado = usuarios.find(u => u.empleado_id === e.id);
+            return `<tr>
+                <td><strong>${e.nombre_completo}</strong></td>
+                <td>${e.puesto || "—"}</td>
+                <td>${e.sueldo_fijo_mensual ? formatCurrency(e.sueldo_fijo_mensual, moneda) : "—"}</td>
+                <td>${e.telefono || "—"}</td>
+                <td>${usuarioVinculado ? `<span class="badge badge-success">${usuarioVinculado.username}</span>` : '<span class="badge badge-warning">Sin vincular</span>'}</td>
+                <td><button class="btn btn-sm btn-secondary" onclick="editarEmpleado(${e.id})">✏️</button></td>
+            </tr>`;
+        }).join("");
+    }
+
+    async function calcularPlanilla() {
+        const staffId = document.getElementById("f-staff").value;
+        const anio = parseInt(document.getElementById("f-anio").value);
+        const mes = parseInt(document.getElementById("f-mes").value);
+        if (!staffId) { showError("Selecciona un trabajador"); return; }
+        try {
+            const resumen = await apiFetch(`/planilla/staff/${staffId}?anio=${anio}&mes=${mes}`);
+            ultimoResumen = resumen;
+            document.getElementById("res-nombre").textContent = resumen.nombre_empleado;
+            document.getElementById("res-detalle-mes").textContent = `Sueldo de ${NOMBRES_MES[resumen.mes]} ${resumen.anio} + comisiones de ${NOMBRES_MES[resumen.mes_comision_mes]} ${resumen.mes_comision_anio}`;
+            document.getElementById("res-sueldo").textContent = formatCurrency(resumen.sueldo_fijo_mensual, moneda);
+            document.getElementById("res-com-mem").textContent = formatCurrency(resumen.comision_membresias, moneda);
+            document.getElementById("res-com-prod").textContent = formatCurrency(resumen.comision_productos, moneda);
+            document.getElementById("res-total").textContent = formatCurrency(resumen.total_a_pagar, moneda);
+            document.getElementById("res-pagado").textContent = formatCurrency(resumen.total_pagado, moneda);
+            document.getElementById("res-pendiente").textContent = formatCurrency(resumen.pendiente, moneda);
+            document.getElementById("btn-registrar-pago").style.display = resumen.pendiente > 0.009 ? "inline-block" : "none";
+            document.getElementById("resumen-planilla").style.display = "block";
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirModalPago() {
+        if (!ultimoResumen) return;
+        document.getElementById("pago-nombre").textContent = ultimoResumen.nombre_empleado;
+        document.getElementById("pago-pendiente").textContent = formatCurrency(ultimoResumen.pendiente, moneda);
+        document.getElementById("pago-monto").value = ultimoResumen.pendiente > 0 ? ultimoResumen.pendiente : 0;
+        document.getElementById("pago-monto").max = ultimoResumen.pendiente;
+        document.getElementById("pago-notas").value = "";
+        document.getElementById("modal-pago").classList.add("active");
+    }
+    function cerrarModalPago() { document.getElementById("modal-pago").classList.remove("active"); }
+
+    async function confirmarPago() {
+        const monto = parseFloat(document.getElementById("pago-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        if (monto > ultimoResumen.pendiente + 0.01) { showError(`El monto no puede superar el pendiente (${formatCurrency(ultimoResumen.pendiente, moneda)})`); return; }
+        try {
+            const pago = await apiFetch("/pagos-planilla/", { method: "POST", body: JSON.stringify({
+                empleado_id: ultimoResumen.empleado_id,
+                tipo: "staff",
+                anio: ultimoResumen.anio,
+                mes: ultimoResumen.mes,
+                monto_sueldo_fijo: ultimoResumen.sueldo_fijo_mensual,
+                monto_comision_membresias: ultimoResumen.comision_membresias,
+                monto_comision_productos: ultimoResumen.comision_productos,
+                monto_total: monto,
+                notas: document.getElementById("pago-notas").value.trim() || null,
+            })});
+            cerrarModalPago();
+            showSuccess("Pago registrado. Descargando recibo...");
+            await apiDescargarArchivo(`/pagos-planilla/${pago.id}/recibo.pdf`, `recibo_${ultimoResumen.nombre_empleado.replace(/\s+/g,"_")}.pdf`);
+            const empleado = staffCache.find(s => s.id === ultimoResumen.empleado_id);
+            if (empleado && empleado.telefono) {
+                const mensaje = `Hola ${empleado.nombre_completo}, se registro tu pago de ${formatCurrency(monto, moneda)} correspondiente a ${NOMBRES_MES[ultimoResumen.mes]} ${ultimoResumen.anio}. Te comparto el recibo adjunto (revisa tu carpeta de Descargas).`;
+                const url = linkWhatsApp(empleado.telefono, mensaje);
+                if (url) window.open(url, "_blank");
+            } else {
+                showInfo("Este trabajador no tiene telefono registrado; no se pudo abrir WhatsApp.");
+            }
+            calcularPlanilla();
+            cargarHistorialPagos();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarHistorialPagos() {
+        const params = new URLSearchParams({ tipo: "staff" });
+        const staffId = document.getElementById("h-staff").value;
+        const desde = document.getElementById("h-desde").value;
+        const hasta = document.getElementById("h-hasta").value;
+        if (staffId) params.set("empleado_id", staffId);
+        if (desde) params.set("desde", desde);
+        if (hasta) params.set("hasta", hasta);
+        try {
+            const pagos = await apiFetch(`/pagos-planilla/?${params.toString()}`);
+            const tbody = document.getElementById("tabla-historial");
+            if (!pagos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin pagos para estos filtros</td></tr>'; return; }
+            pagosCache = pagos;
+            tbody.innerHTML = pagos.map(p => `<tr>
+                <td>${formatFechaHora(p.fecha_pago)}</td>
+                <td>${p.empleado ? p.empleado.nombre_completo : "#" + p.empleado_id}</td>
+                <td>${NOMBRES_MES[p.mes]} ${p.anio}</td>
+                <td><strong>${formatCurrency(p.monto_total, moneda)}</strong></td>
+                <td>${p.notas || "—"}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm btn-secondary" onclick="apiDescargarArchivo('/pagos-planilla/${p.id}/recibo.pdf', 'recibo.pdf')">📄</button>
+                    ${esAdministrador() ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditarPago(${p.id})">✏️</button>` : ""}
+                    ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarPago(${p.id})">🗑️</button>` : ""}
+                </td>
+            </tr>`).join("");
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==============================================================
+    // Correccion administrativa de un pago ya registrado (solo
+    // admin): PUT /pagos-planilla/{id}, con revalidacion de saldo
+    // en el servidor.
+    // ==============================================================
+
+    let pagosCache = [], pagoEditando = null;
+
+    function abrirModalEditarPago(pagoId) {
+        pagoEditando = pagosCache.find(p => p.id === pagoId);
+        if (!pagoEditando) return;
+        const nombre = pagoEditando.empleado ? pagoEditando.empleado.nombre_completo : "#" + pagoEditando.empleado_id;
+        document.getElementById("ep-detalle").innerHTML = `Pago de <strong>${nombre}</strong> · ${NOMBRES_MES[pagoEditando.mes]} ${pagoEditando.anio} · registrado el ${formatFechaHora(pagoEditando.fecha_pago)}`;
+        document.getElementById("ep-monto").value = pagoEditando.monto_total;
+        document.getElementById("ep-notas").value = pagoEditando.notas || "";
+        document.getElementById("modal-editar-pago").classList.add("active");
+    }
+
+    function cerrarModalEditarPago() {
+        document.getElementById("modal-editar-pago").classList.remove("active");
+        pagoEditando = null;
+    }
+
+    async function guardarEdicionPago() {
+        if (!pagoEditando) return;
+        const monto = parseFloat(document.getElementById("ep-monto").value);
+        if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        try {
+            await apiFetch(`/pagos-planilla/${pagoEditando.id}`, { method: "PUT", body: JSON.stringify({
+                monto_total: monto,
+                notas: document.getElementById("ep-notas").value.trim() || null,
+            })});
+            showSuccess("Pago corregido");
+            cerrarModalEditarPago();
+            cargarHistorialPagos();
+            if (ultimoResumen) calcularPlanilla();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarPago(pagoId) {
+        if (!(await confirmDialog("¿Eliminar este pago? El pendiente del periodo se recalculará solo."))) return;
+        try {
+            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE" });
+            showSuccess("Pago eliminado");
+            cargarHistorialPagos();
+            if (ultimoResumen) calcularPlanilla();
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirModalEmpleado() {
+        empleadoEditando = null;
+        document.getElementById("modal-titulo").textContent = "Nuevo Staff";
+        ["nombre","puesto","telefono","email","sueldo"].forEach(f => { const el = document.getElementById(`e-${f}`); if (el) el.value = ""; });
+        document.getElementById("modal-empleado").classList.add("active");
+    }
+
+    async function editarEmpleado(id) {
+        empleadoEditando = staffCache.find(e => e.id === id);
+        if (!empleadoEditando) return;
+        document.getElementById("modal-titulo").textContent = "Editar Staff";
+        document.getElementById("e-nombre").value = empleadoEditando.nombre_completo;
+        document.getElementById("e-puesto").value = empleadoEditando.puesto || "";
+        document.getElementById("e-telefono").value = empleadoEditando.telefono || "";
+        document.getElementById("e-email").value = empleadoEditando.email || "";
+        document.getElementById("e-sueldo").value = empleadoEditando.sueldo_fijo_mensual || "";
+        document.getElementById("modal-empleado").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-empleado").classList.remove("active"); empleadoEditando = null; }
+
+    async function guardarEmpleado() {
+        const datos = {
+            nombre_completo: document.getElementById("e-nombre").value.trim(),
+            tipo: "staff_fijo",
+            puesto: document.getElementById("e-puesto").value.trim() || null,
+            telefono: document.getElementById("e-telefono").value.trim() || null,
+            email: document.getElementById("e-email").value.trim() || null,
+            sueldo_fijo_mensual: parseFloat(document.getElementById("e-sueldo").value) || null,
+        };
+        if (!datos.nombre_completo) { showError("El nombre es obligatorio"); return; }
+        try {
+            if (empleadoEditando) { await apiFetch(`/empleados/${empleadoEditando.id}`, { method: "PUT", body: JSON.stringify(datos) }); showSuccess("Staff actualizado"); }
+            else { await apiFetch("/empleados/", { method: "POST", body: JSON.stringify(datos) }); showSuccess("Staff creado"); }
+            cerrarModal(); cargarEmpleados();
+        } catch (e) { showError(e.message); }
+    }
+
+    setPeriodoPorDefecto();
+    cargarEmpleados();
+    cargarHistorialPagos();
+</script>
+</body>
+</html>

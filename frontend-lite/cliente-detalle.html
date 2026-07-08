@@ -1,0 +1,112 @@
+<section id="cliente-detalle" class="section">
+            <div class="content">
+                <button class="btn btn-secondary" onclick="showSection('clientes', document.querySelectorAll('.nav-item')[1])" style="margin-bottom: 20px;">
+                    ← Volver a Clientes
+                </button>
+
+                <div class="card">
+                    <div class="cliente-header">
+                        <div class="cliente-avatar" id="cliente-avatar-inicial">JP</div>
+                        <div class="cliente-info">
+                            <h2 class="cliente-nombre" id="cliente-nombre-detalle">Juan Pérez</h2>
+                            <p class="cliente-email" id="cliente-email-detalle">juan@email.com</p>
+                            <div class="cliente-stats">
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-membresias">0</div>
+                                    <div class="cliente-stat-label">Membresías</div>
+                                </div>
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-ventas">0</div>
+                                    <div class="cliente-stat-label">Ventas</div>
+                                </div>
+                                <div class="cliente-stat">
+                                    <div class="cliente-stat-value" id="cliente-progresos">0</div>
+                                    <div class="cliente-stat-label">Progresos</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active" onclick="showClienteTab('datos', this)">Datos del cliente</button>
+                        <button class="tab" onclick="showClienteTab('entrenamiento', this)">Entrenamiento</button>
+                        <button class="tab" onclick="showClienteTab('productos', this)">Productos</button>
+                        <button class="tab" onclick="showClienteTab('facturas', this)">Facturas</button>
+                        <button class="tab" onclick="showClienteTab('archivos', this)">Archivos y fotos</button>
+                    </div>
+
+                    <div id="cliente-tab-datos" class="cliente-tab-content">
+                        <div class="table-container">
+                            <table class="table">
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Nº de miembro del club</strong></td>
+                                        <td id="cliente-dni-detalle">22321234</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Nombre</strong></td>
+                                        <td id="cliente-nombre-tab">Diego</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Apellidos</strong></td>
+                                        <td id="cliente-apellidos">Perez</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Edad</strong></td>
+                                        <td id="cliente-edad">32</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Email</strong></td>
+                                        <td id="cliente-email-tab">diego@perez.com</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Número de teléfono</strong></td>
+                                        <td id="cliente-telefono-tab">987654321</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Dirección</strong></td>
+                                        <td id="cliente-direccion-tab">Av. Principal 123</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Detalles bancarios</strong></td>
+                                        <td>No registrado</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-entrenamiento" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">💪</div>
+                            <div class="empty-state-title">Sin entrenamientos asignados</div>
+                            <div class="empty-state-text">Asigna un plan de entrenamiento a este cliente</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-productos" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📦</div>
+                            <div class="empty-state-title">Sin productos</div>
+                            <div class="empty-state-text">Este cliente no tiene productos asignados</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-facturas" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">💰</div>
+                            <div class="empty-state-title">Sin facturas</div>
+                            <div class="empty-state-text">No hay facturas registradas para este cliente</div>
+                        </div>
+                    </div>
+
+                    <div id="cliente-tab-archivos" class="cliente-tab-content" style="display: none;">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📁</div>
+                            <div class="empty-state-title">Sin archivos</div>
+                            <div class="empty-state-text">No hay archivos o fotos subidos</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>

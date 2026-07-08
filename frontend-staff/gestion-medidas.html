@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestion de Medidas - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .gm-layout { display:grid; grid-template-columns: 1fr 1fr; gap:18px; align-items:start; }
+        @media (max-width: 900px) { .gm-layout { grid-template-columns: 1fr; } }
+        .gm-card { background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); overflow:hidden; }
+        .gm-card-header { padding:16px 20px; border-bottom:1px solid var(--color-borde); font-weight:600; }
+        .gm-grupo-titulo { font-size:0.72em; text-transform:uppercase; letter-spacing:.03em; color:var(--color-texto-secundario); font-weight:700; padding:12px 20px 6px; }
+        .gm-item { display:flex; align-items:flex-start; gap:10px; padding:8px 20px; font-size:0.88em; border-left:3px solid transparent; transition:background .15s, border-color .15s; }
+        .gm-item:hover { background:var(--color-fondo); }
+        .gm-item input[type=checkbox] { margin-top:3px; width:auto; }
+        .gm-item label { flex:1; cursor:pointer; }
+        .gm-item .gm-unidad { color:var(--color-texto-secundario); font-size:0.85em; }
+        .gm-item .gm-req { display:block; font-size:0.78em; color:var(--color-texto-secundario); margin-top:2px; }
+        .gm-nota { padding:14px 20px; font-size:0.82em; color:var(--color-texto-secundario); border-top:1px solid var(--color-borde); }
+        .gm-footer { padding:16px 20px; border-top:1px solid var(--color-borde); display:flex; justify-content:flex-end; gap:10px; }
+
+        /* "Vino tinto": una medida marcada aqui es porque un valor calculado
+           activo la necesita. Usamos el mismo tono que la paleta "Vino"
+           del sistema (#7C4155) para que se note claramente el vinculo. */
+        .gm-item.gm-requerido { background:color-mix(in srgb, #7C4155 16%, var(--color-blanco)); border-left-color:#7C4155; }
+        .gm-item.gm-requerido label { color:color-mix(in srgb, #7C4155 85%, var(--color-texto) 15%); font-weight:600; }
+        .gm-item.gm-requerido input[type=checkbox] { accent-color:#7C4155; }
+        .gm-leyenda { display:flex; align-items:center; gap:6px; font-size:0.76em; color:var(--color-texto-secundario); padding:10px 20px 0; }
+        .gm-leyenda .muestra { width:12px; height:12px; border-radius:3px; background:color-mix(in srgb, #7C4155 16%, var(--color-blanco)); border-left:3px solid #7C4155; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">📏 Gestión de Medidas</h1>
+                <p class="header-subtitle">Elige qué valores calculados quieres mostrar y qué datos toma el trainer</p>
+            </div>
+            <button class="btn btn-primary" onclick="guardarConfigMedidas()">💾 Guardar</button>
+        </div>
+
+        <div class="gm-layout">
+            <!-- Columna 1 (izquierda): valores calculados -->
+            <div class="gm-card">
+                <div class="gm-card-header">🧮 Valores importantes a calcular y mostrar</div>
+                <div id="lista-valores"></div>
+                <div class="gm-nota">Al marcar un valor calculado, se marcan automáticamente (y se pintan de <strong style="color:#7C4155;">vino tinto</strong>) las medidas que necesita para poder calcularse, en la columna de la derecha. Si luego desmarcas una de esas medidas obligatorias, el valor calculado se desmarca solo.</div>
+            </div>
+
+            <!-- Columna 2 (derecha): datos crudos (tabla de Medidas) -->
+            <div class="gm-card">
+                <div class="gm-card-header">📋 Datos que aparecen en la tabla de Medidas</div>
+                <div class="gm-leyenda"><span class="muestra"></span> Requerida por un valor calculado marcado</div>
+                <div id="lista-campos"></div>
+                <div class="gm-nota">Estos son los datos que el trainer toma cada cierto periodo (perímetros, peso, signos vitales, etc.). Solo los marcados aparecerán como campo en la ficha del cliente. Sexo y fecha de nacimiento no se piden aquí: se usan automáticamente desde el perfil del cliente.</div>
+            </div>
+        </div>
+
+        <div class="gm-footer" style="margin-top:18px;justify-content:flex-start;">
+            <button class="btn btn-secondary" onclick="restaurarValoresDefault()">↩️ Restaurar valores por defecto</button>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/medidas-catalogo.js"></script>
+<script>
+    let camposSeleccionados = new Set();
+    let valoresSeleccionados = new Set();
+
+    async function init() {
+        const config = await getConfiguracion();
+        camposSeleccionados = new Set((config.medidas_campos_visibles || "").split(",").filter(Boolean));
+        valoresSeleccionados = new Set((config.medidas_valores_visibles || "").split(",").filter(Boolean));
+        if (!camposSeleccionados.size) camposSeleccionados = new Set(CAMPOS_MEDIDAS_DEFAULT);
+        if (!valoresSeleccionados.size) valoresSeleccionados = new Set(VALORES_CALCULADOS_DEFAULT);
+        renderListas();
+    }
+
+    // Union de todos los campos requeridos por los valores calculados
+    // ACTUALMENTE marcados (para pintarlos de vino tinto en la columna
+    // de la derecha).
+    function _camposRequeridosActivos() {
+        const set = new Set();
+        VALORES_CALCULADOS.forEach(v => {
+            if (valoresSeleccionados.has(v.clave)) (v.requiere || []).forEach(c => set.add(c));
+        });
+        return set;
+    }
+
+    function renderListas() {
+        const requeridosActivos = _camposRequeridosActivos();
+
+        // ---- Valores calculados (columna izquierda) ----
+        document.getElementById("lista-valores").innerHTML = VALORES_CALCULADOS.map(v => {
+            const etiquetasReq = (v.requiere || []).map(clave => (CAMPOS_MEDIDAS.find(c => c.clave === clave) || {}).etiqueta || clave);
+            return `
+                <div class="gm-item">
+                    <input type="checkbox" id="valor-${v.clave}" ${valoresSeleccionados.has(v.clave) ? "checked" : ""} onchange="onToggleValor('${v.clave}', this.checked)">
+                    <label for="valor-${v.clave}">${v.etiqueta} ${v.unidad ? `<span class="gm-unidad">(${v.unidad})</span>` : ""}
+                        ${etiquetasReq.length ? `<span class="gm-req">Requiere: ${etiquetasReq.join(", ")}${v.requiereHistorial ? " · historial (2+ tomas)" : ""}</span>` : ""}
+                    </label>
+                </div>
+            `;
+        }).join("");
+
+        // ---- Campos crudos, agrupados (columna derecha) ----
+        const grupos = {};
+        CAMPOS_MEDIDAS.forEach(c => { (grupos[c.grupo] = grupos[c.grupo] || []).push(c); });
+        let html = "";
+        Object.entries(grupos).forEach(([grupo, campos]) => {
+            html += `<div class="gm-grupo-titulo">${grupo}</div>`;
+            html += campos.map(c => `
+                <div class="gm-item ${requeridosActivos.has(c.clave) ? "gm-requerido" : ""}">
+                    <input type="checkbox" id="campo-${c.clave}" ${camposSeleccionados.has(c.clave) ? "checked" : ""} onchange="onToggleCampo('${c.clave}', this.checked)">
+                    <label for="campo-${c.clave}">${c.etiqueta} ${c.unidad ? `<span class="gm-unidad">(${c.unidad})</span>` : ""}</label>
+                </div>
+            `).join("");
+        });
+        document.getElementById("lista-campos").innerHTML = html;
+    }
+
+    function onToggleCampo(clave, marcado) {
+        if (marcado) {
+            camposSeleccionados.add(clave);
+            renderListas();
+        } else {
+            camposSeleccionados.delete(clave);
+            // Si algun valor calculado activo necesitaba este campo, se desmarca solo.
+            VALORES_CALCULADOS.forEach(v => {
+                if (valoresSeleccionados.has(v.clave) && (v.requiere || []).includes(clave)) {
+                    valoresSeleccionados.delete(v.clave);
+                    showError(`"${v.etiqueta}" se desmarcó: necesitaba el dato que acabas de quitar`);
+                }
+            });
+            renderListas();
+        }
+    }
+
+    function onToggleValor(clave, marcado) {
+        const def = VALORES_CALCULADOS.find(v => v.clave === clave);
+        if (!def) return;
+        if (marcado) {
+            valoresSeleccionados.add(clave);
+            let algunoNuevo = false;
+            (def.requiere || []).forEach(campo => {
+                if (!camposSeleccionados.has(campo)) { camposSeleccionados.add(campo); algunoNuevo = true; }
+            });
+            if (algunoNuevo) showSuccess(`Se marcaron (en vino tinto) las medidas obligatorias para calcular "${def.etiqueta}"`);
+        } else {
+            valoresSeleccionados.delete(clave);
+        }
+        renderListas();
+    }
+
+    function restaurarValoresDefault() {
+        camposSeleccionados = new Set(CAMPOS_MEDIDAS_DEFAULT);
+        valoresSeleccionados = new Set(VALORES_CALCULADOS_DEFAULT);
+        renderListas();
+    }
+
+    async function guardarConfigMedidas() {
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({
+                medidas_campos_visibles: [...camposSeleccionados].join(","),
+                medidas_valores_visibles: [...valoresSeleccionados].join(","),
+            })});
+            showSuccess("Configuración de Medidas guardada ✅");
+        } catch (e) { showError(e.message); }
+    }
+
+    init();
+</script>
+</body>
+</html>

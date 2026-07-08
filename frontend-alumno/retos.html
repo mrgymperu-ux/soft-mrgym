@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="page">
+        <div class="page-header"><h1>🏆 Retos</h1><p>Desafios activos del gimnasio</p></div>
+        <div id="contenido"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+    </div>
+    <nav class="nav-bottom">
+        <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
+        <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+        <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
+        <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
+        <a href="retos.html" class="nav-btn activo"><span>🏆</span><span>Retos</span></a>
+        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+    </nav>
+    <script src="js/api.js"></script>
+    <script>
+        requireAuth();
+        async function cargar() {
+            const retos = await apiFetch("/portal-alumno/retos");
+            const contenedor = document.getElementById("contenido");
+            if (!retos || !retos.length) {
+                contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">🏆</div><p>No hay retos activos por ahora.</p></div>';
+                return;
+            }
+            contenedor.innerHTML = retos.map(r => `
+                <div class="reto-card">
+                    <div class="reto-icono">${r.icono || "🏆"}</div>
+                    <div class="reto-info">
+                        <div class="reto-titulo">${r.titulo}</div>
+                        <div class="reto-desc">${r.descripcion || ""}</div>
+                        <div class="reto-meta">
+                            ${r.duracion_dias ? `<span class="badge badge-morado">${r.duracion_dias} dias</span>` : ""}
+                            ${r.dificultad ? `<span class="badge badge-verde">${r.dificultad}</span>` : ""}
+                        </div>
+                    </div>
+                </div>
+            `).join("");
+        }
+        cargar();
+    </script>
+</body>
+</html>

@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resumen - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
+        .filtros-bar label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar select { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+
+        .chips-cat { display:flex; gap:6px; flex-wrap:wrap; }
+        .chip-cat { padding:5px 12px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.78em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); transition:.15s; user-select:none; }
+        .chip-cat.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:18px; }
+        .kpi-card { background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); padding:16px 18px; }
+        .kpi-label { font-size:0.74em; color:var(--color-texto-secundario); margin-bottom:6px; }
+        .kpi-valor { font-size:1.4em; font-weight:700; }
+        /* Colores ~20% menos intensos (mezclados con blanco) que la version anterior */
+        .kpi-card.ingresos .kpi-valor { color:#33C6A9; }
+        .kpi-card.egresos .kpi-valor { color:color-mix(in srgb, var(--color-error) 80%, white 20%); }
+        .kpi-card.balance .kpi-valor.positivo { color:#33C6A9; }
+        .kpi-card.balance .kpi-valor.negativo { color:color-mix(in srgb, var(--color-error) 80%, white 20%); }
+        .kpi-sub { font-size:0.7em; color:var(--color-texto-secundario); margin-top:2px; }
+
+        /* Acordeon: cada grafico/tabla usa <details> nativo (accesible, sin JS extra) */
+        details.chart-card { background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; overflow:hidden; }
+        details.chart-card > summary { list-style:none; cursor:pointer; padding:16px 20px; font-weight:600; font-size:0.95em; display:flex; align-items:center; justify-content:space-between; user-select:none; }
+        details.chart-card > summary::-webkit-details-marker { display:none; }
+        details.chart-card > summary .chev { transition:transform .2s; color:var(--color-texto-secundario); font-size:0.85em; }
+        details.chart-card[open] > summary .chev { transform:rotate(90deg); }
+        details.chart-card > summary:hover { background:var(--color-fondo); }
+        .chart-body { padding:0 20px 20px; }
+
+        /* Grafica de columnas simple, hecha con CSS (sin librerias), con lineas horizontales tenues de referencia */
+        .bar-chart {
+            display:flex; align-items:flex-end; gap:18px; height:220px; padding:0 8px;
+            background-image: repeating-linear-gradient(
+                to top,
+                color-mix(in srgb, var(--color-borde) 55%, transparent) 0,
+                color-mix(in srgb, var(--color-borde) 55%, transparent) 1px,
+                transparent 1px,
+                transparent 25%
+            );
+            background-position: 0 0; background-size: 100% 100%;
+        }
+        .bar-col { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; min-width:0; }
+        .bar-visual-wrap { flex:1; display:flex; align-items:flex-end; width:100%; justify-content:center; }
+        .bar-visual { width:60%; max-width:70px; border-radius:8px 8px 0 0; transition:height .3s; position:relative; min-height:2px; }
+        .bar-valor { font-size:0.74em; font-weight:700; margin-bottom:4px; white-space:nowrap; }
+        .bar-label { font-size:0.72em; color:var(--color-texto-secundario); margin-top:8px; text-align:center; }
+        .bar-ingreso { background:linear-gradient(180deg,#33E1B5,#33C6A9); }
+        .bar-egreso { background:linear-gradient(180deg, color-mix(in srgb, #FF7675 80%, white 20%), color-mix(in srgb, var(--color-error) 80%, white 20%)); }
+
+        .evol-chart { display:flex; align-items:flex-end; gap:6px; height:180px; padding:0 8px; overflow-x:auto;
+            background-image: repeating-linear-gradient(to top, color-mix(in srgb, var(--color-borde) 55%, transparent) 0, color-mix(in srgb, var(--color-borde) 55%, transparent) 1px, transparent 1px, transparent 25%); }
+        .evol-mes { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; min-width:46px; }
+        .evol-barras { display:flex; align-items:flex-end; gap:2px; flex:1; }
+        .evol-barra { width:14px; border-radius:4px 4px 0 0; min-height:2px; }
+        .evol-label { font-size:0.68em; color:var(--color-texto-secundario); margin-top:6px; }
+
+        .tabla-detalle-wrap { max-height:280px; overflow-y:auto; }
+        .fila-signo-ingreso { color:#33C6A9; font-weight:600; }
+        .fila-signo-egreso { color:color-mix(in srgb, var(--color-error) 80%, white 20%); font-weight:600; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">📈 Resumen</h1>
+                <p class="header-subtitle" id="subtitulo-rango">Cargando...</p>
+            </div>
+        </div>
+
+        <!-- Filtros -->
+        <div class="filtros-bar">
+            <label>Periodo
+                <select id="f-periodo" onchange="onPeriodoChange()">
+                    <option value="personalizado">Personalizado</option>
+                    <option value="mes_actual">Mes actual</option>
+                    <option value="anual">Año actual</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="chk-hoy" onchange="onCheckHoy()"> Hoy</label>
+            <label>Desde <input type="date" id="f-desde" onchange="onFechaChange()"></label>
+            <label>Hasta <input type="date" id="f-hasta" onchange="onFechaChange()"></label>
+            <div class="chips-cat" id="chips-cat">
+                <span class="chip-cat activo" data-cat="todos" onclick="onChipCat(this)">Todos</span>
+                <span class="chip-cat" data-cat="membresias" onclick="onChipCat(this)">🎫 Membresías</span>
+                <span class="chip-cat" data-cat="productos" onclick="onChipCat(this)">📦 Productos</span>
+                <span class="chip-cat" data-cat="otros" onclick="onChipCat(this)">💼 Otros</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="cargar()">🔄 Actualizar</button>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpi-grid">
+            <div class="kpi-card ingresos">
+                <div class="kpi-label">💰 Total Ingresos</div>
+                <div class="kpi-valor" id="kpi-ingresos">—</div>
+            </div>
+            <div class="kpi-card egresos">
+                <div class="kpi-label">📤 Total Egresos</div>
+                <div class="kpi-valor" id="kpi-egresos">—</div>
+            </div>
+            <div class="kpi-card balance">
+                <div class="kpi-label">⚖️ Balance</div>
+                <div class="kpi-valor" id="kpi-balance">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">🎫 Ingresos Membresías</div>
+                <div class="kpi-valor" id="kpi-mem" style="color:#3A9DE9;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">📦 Venta Productos</div>
+                <div class="kpi-valor" id="kpi-vprod" style="color:#3A9DE9;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">🛒 Compra Productos</div>
+                <div class="kpi-valor" id="kpi-cprod" style="color:#E78D77;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">👔 Pago Personal</div>
+                <div class="kpi-valor" id="kpi-personal" style="color:#897DEC;">—</div>
+            </div>
+            <!-- Fichas de caja: Efectivo vs Cuenta, para el rango seleccionado (solo ingresos) -->
+            <div class="kpi-card">
+                <div class="kpi-label">💵 Efectivo</div>
+                <div class="kpi-valor" id="kpi-efectivo" style="color:#33C6A9;">—</div>
+                <div class="kpi-sub">Ingresos cobrados en efectivo</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">💳 Cuenta</div>
+                <div class="kpi-valor" id="kpi-cuenta" style="color:#3A9DE9;">—</div>
+                <div class="kpi-sub">Tarjeta + QR, neto de comisión</div>
+            </div>
+        </div>
+
+        <!-- Grafica comparativa principal (acordeon) -->
+        <details class="chart-card" open>
+            <summary><span id="titulo-grafica-principal">Ingresos vs Egresos</span><span class="chev">▶</span></summary>
+            <div class="chart-body"><div class="bar-chart" id="grafica-principal"></div></div>
+        </details>
+
+        <!-- Grafica detallada por categoria (acordeon) -->
+        <details class="chart-card" open>
+            <summary><span>Detalle por categoría</span><span class="chev">▶</span></summary>
+            <div class="chart-body"><div class="bar-chart" id="grafica-detalle" style="height:260px;"></div></div>
+        </details>
+
+        <!-- Evolucion mensual (solo visible con Periodo = Año actual) -->
+        <details class="chart-card" id="card-evolucion-anual" open style="display:none;">
+            <summary><span>Evolución mensual del año</span><span class="chev">▶</span></summary>
+            <div class="chart-body"><div class="evol-chart" id="grafica-anual"></div></div>
+        </details>
+
+        <!-- Tabla resumen (acordeon) -->
+        <details class="chart-card" open>
+            <summary><span>Detalle de movimientos</span><span class="chev">▶</span></summary>
+            <div class="chart-body" style="padding-top:4px;">
+                <div class="tabla-detalle-wrap">
+                    <table class="table">
+                        <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Método</th><th style="text-align:right;">Monto</th></tr></thead>
+                        <tbody id="tabla-movimientos"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </details>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let catActiva = "todos";
+    let moneda = "S/";
+
+    function isoFecha(d) { return d.toISOString().split("T")[0]; }
+
+    function initFechas() {
+        const hoy = new Date();
+        const y = hoy.getFullYear(), m = hoy.getMonth();
+        document.getElementById("f-desde").value = isoFecha(new Date(y, m, 1));
+        document.getElementById("f-hasta").value = isoFecha(new Date(y, m + 1, 0));
+    }
+
+    function onPeriodoChange() {
+        const periodo = document.getElementById("f-periodo").value;
+        document.getElementById("card-evolucion-anual").style.display = periodo === "anual" ? "block" : "none";
+        const hoy = new Date();
+        if (periodo === "anual") {
+            document.getElementById("chk-hoy").checked = false;
+            document.getElementById("f-desde").value = isoFecha(new Date(hoy.getFullYear(), 0, 1));
+            document.getElementById("f-hasta").value = isoFecha(new Date(hoy.getFullYear(), 11, 31));
+        } else if (periodo === "mes_actual") {
+            document.getElementById("chk-hoy").checked = false;
+            document.getElementById("f-desde").value = isoFecha(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+            document.getElementById("f-hasta").value = isoFecha(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0));
+        }
+        cargar();
+    }
+
+    function onCheckHoy() {
+        const chk = document.getElementById("chk-hoy").checked;
+        document.getElementById("f-desde").disabled = chk;
+        document.getElementById("f-hasta").disabled = chk;
+        if (chk) document.getElementById("f-periodo").value = "personalizado";
+        cargar();
+    }
+    function onFechaChange() {
+        document.getElementById("chk-hoy").checked = false;
+        document.getElementById("f-desde").disabled = false;
+        document.getElementById("f-hasta").disabled = false;
+        document.getElementById("f-periodo").value = "personalizado";
+        document.getElementById("card-evolucion-anual").style.display = "none";
+        cargar();
+    }
+    function onChipCat(el) {
+        document.querySelectorAll(".chip-cat").forEach(c => c.classList.remove("activo"));
+        el.classList.add("activo");
+        catActiva = el.dataset.cat;
+        renderGraficaPrincipal(window._ing, window._egr);
+        renderTabla(window._ing, window._egr);
+    }
+
+    function barra(valor, maxValor, tipo, etiqueta) {
+        const alturaPct = maxValor > 0 ? Math.max((valor / maxValor) * 100, valor > 0 ? 4 : 0) : 0;
+        return `
+            <div class="bar-col">
+                <div class="bar-valor">${formatCurrency(valor, moneda)}</div>
+                <div class="bar-visual-wrap">
+                    <div class="bar-visual bar-${tipo}" style="height:${alturaPct}%;"></div>
+                </div>
+                <div class="bar-label">${etiqueta}</div>
+            </div>`;
+    }
+
+    function renderGraficaPrincipal(ing, egr) {
+        const cont = document.getElementById("grafica-principal");
+        const titulo = document.getElementById("titulo-grafica-principal");
+        let valIng, valEgr, labelIng, labelEgr;
+
+        if (catActiva === "todos") {
+            valIng = ing.total; valEgr = egr.total;
+            labelIng = "Ingresos totales"; labelEgr = "Egresos totales";
+            titulo.textContent = "Ingresos vs Egresos — Todos";
+        } else if (catActiva === "membresias") {
+            valIng = ing.membresias; valEgr = 0;
+            labelIng = "Ingresos por membresías"; labelEgr = "Sin egreso asociado";
+            titulo.textContent = "Membresías — solo generan ingreso";
+        } else if (catActiva === "productos") {
+            valIng = ing.productos; valEgr = egr.compras_producto;
+            labelIng = "Venta de productos"; labelEgr = "Compra de productos";
+            titulo.textContent = "Productos — Venta vs Compra";
+        } else { // otros
+            valIng = ing.otros; valEgr = egr.otros + egr.pago_staff + egr.pago_profesor;
+            labelIng = "Otros ingresos"; labelEgr = "Otros egresos (gastos + personal)";
+            titulo.textContent = "Otros — Entradas vs Salidas";
+        }
+
+        const maxValor = Math.max(valIng, valEgr, 1);
+        cont.innerHTML = barra(valIng, maxValor, "ingreso", "⬆️ " + labelIng) + barra(valEgr, maxValor, "egreso", "⬇️ " + labelEgr);
+    }
+
+    function renderGraficaDetalle(ing, egr) {
+        const cont = document.getElementById("grafica-detalle");
+        const items = [
+            { valor: ing.membresias, tipo:"ingreso", label:"🎫 Membresías" },
+            { valor: ing.productos,  tipo:"ingreso", label:"📦 Venta prod." },
+            { valor: ing.otros,      tipo:"ingreso", label:"💼 Otros ingr." },
+            { valor: egr.compras_producto, tipo:"egreso", label:"🛒 Compra prod." },
+            { valor: egr.pago_staff,       tipo:"egreso", label:"👔 Pago Staff" },
+            { valor: egr.pago_profesor,    tipo:"egreso", label:"🎓 Pago Prof." },
+            { valor: egr.otros,            tipo:"egreso", label:"💼 Otros gastos" },
+        ];
+        const maxValor = Math.max(...items.map(i => i.valor), 1);
+        cont.innerHTML = items.map(i => barra(i.valor, maxValor, i.tipo, i.label)).join("");
+    }
+
+    function renderTabla(ing, egr) {
+        const tbody = document.getElementById("tabla-movimientos");
+        let filas = [];
+
+        const incluirCat = (cat) => catActiva === "todos" || catActiva === cat ||
+            (catActiva === "otros" && ["otros","pago_staff","pago_profesor","comision"].includes(cat));
+
+        ing.detalle.forEach(d => { if (incluirCat(d.categoria) || (catActiva==="todos")) filas.push({ ...d, tipo:"ingreso" }); });
+        egr.detalle.forEach(d => {
+            const catNormalizada = d.categoria === "compra_producto" ? "productos" : d.categoria;
+            if (incluirCat(catNormalizada)) filas.push({ ...d, tipo:"egreso" });
+        });
+
+        if (catActiva !== "todos") {
+            filas = filas.filter(f => {
+                if (catActiva === "membresias") return f.categoria === "membresias";
+                if (catActiva === "productos") return f.categoria === "productos" || f.categoria === "compra_producto";
+                if (catActiva === "otros") return ["otros","pago_staff","pago_profesor","comision"].includes(f.categoria);
+                return true;
+            });
+        }
+
+        filas.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+
+        if (!filas.length) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin movimientos en el rango/categoría seleccionada</td></tr>';
+            return;
+        }
+
+        const ETIQ = { membresias:"Membresías", productos:"Venta producto", compra_producto:"Compra producto", pago_staff:"Pago Staff", pago_profesor:"Pago Profesor", pago_servicio:"Pago Servicio", comision:"Comisión pasarela", otros:"Otros" };
+        const ETIQ_METODO = { efectivo:"💵 Efectivo", tarjeta:"💳 Tarjeta", qr:"📱 QR" };
+
+        tbody.innerHTML = filas.slice(0, 300).map(f => `<tr>
+            <td style="white-space:nowrap;font-size:1.03em;">${formatFechaHora(f.fecha)}</td>
+            <td class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo === 'ingreso' ? '⬆️ Ingreso' : '⬇️ Egreso'}</td>
+            <td>${ETIQ[f.categoria] || f.categoria}</td>
+            <td style="font-size:0.85em;">${f.descripcion}</td>
+            <td style="font-size:0.82em;">${f.metodo_pago ? (ETIQ_METODO[f.metodo_pago] || f.metodo_pago) : "—"}</td>
+            <td style="text-align:right;font-weight:600;" class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo==='ingreso' ? '+' : '−'} ${formatCurrency(f.monto, moneda)}</td>
+        </tr>`).join("");
+    }
+
+    function calcularEfectivoCuenta(ing, config) {
+        let efectivo = 0, cuenta = 0;
+        (ing.detalle || []).forEach(d => {
+            const metodo = d.metodo_pago || "efectivo";
+            if (metodo === "efectivo") {
+                efectivo += d.monto;
+            } else {
+                const comisionPct = metodo === "tarjeta" ? (config.comision_tarjeta || 0) : (config.comision_qr || 0);
+                const comisionMonto = d.comision_gym || (d.monto * comisionPct / 100);
+                cuenta += d.monto - comisionMonto;
+            }
+        });
+        return { efectivo, cuenta };
+    }
+
+    async function cargarEvolucionAnual(anio) {
+        const cont = document.getElementById("grafica-anual");
+        cont.innerHTML = '<p style="color:var(--color-texto-secundario);padding:10px;">Cargando evolución del año...</p>';
+        const meses = [];
+        for (let m = 0; m < 12; m++) {
+            const desde = isoFecha(new Date(anio, m, 1));
+            const hasta = isoFecha(new Date(anio, m + 1, 0));
+            meses.push({ m, desde, hasta });
+        }
+        try {
+            const resultados = await Promise.all(meses.map(async ({ desde, hasta }) => {
+                const [ing, egr] = await Promise.all([
+                    apiFetch(`/ingresos/?desde=${desde}&hasta=${hasta}`),
+                    apiFetch(`/egresos/?desde=${desde}&hasta=${hasta}`),
+                ]);
+                return { ingresos: ing.total, egresos: egr.total };
+            }));
+            const maxValor = Math.max(...resultados.map(r => Math.max(r.ingresos, r.egresos)), 1);
+            const NOMBRES_MES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+            cont.innerHTML = resultados.map((r, i) => `
+                <div class="evol-mes">
+                    <div class="evol-barras">
+                        <div class="evol-barra bar-ingreso" style="height:${Math.max((r.ingresos/maxValor)*100, r.ingresos>0?3:0)}%;" title="Ingresos ${NOMBRES_MES[i]}: ${formatCurrency(r.ingresos, moneda)}"></div>
+                        <div class="evol-barra bar-egreso" style="height:${Math.max((r.egresos/maxValor)*100, r.egresos>0?3:0)}%;" title="Egresos ${NOMBRES_MES[i]}: ${formatCurrency(r.egresos, moneda)}"></div>
+                    </div>
+                    <div class="evol-label">${NOMBRES_MES[i]}</div>
+                </div>
+            `).join("");
+        } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
+    }
+
+    async function cargar() {
+        const cfg = await getConfiguracion(); moneda = cfg.moneda;
+        const chkHoy = document.getElementById("chk-hoy").checked;
+        const desde = document.getElementById("f-desde").value;
+        const hasta = document.getElementById("f-hasta").value;
+        const qs = chkHoy ? "solo_hoy=true" : `desde=${desde}&hasta=${hasta}`;
+
+        const [ing, egr] = await Promise.all([
+            apiFetch(`/ingresos/?${qs}`),
+            apiFetch(`/egresos/?${qs}`),
+        ]);
+        window._ing = ing; window._egr = egr;
+
+        const rangoTexto = chkHoy ? "hoy" : `del ${formatFecha(desde)} al ${formatFecha(hasta)}`;
+        document.getElementById("subtitulo-rango").textContent = `Resumen financiero ${rangoTexto}`;
+
+        const balance = ing.total - egr.total;
+        document.getElementById("kpi-ingresos").textContent = formatCurrency(ing.total, moneda);
+        document.getElementById("kpi-egresos").textContent = formatCurrency(egr.total, moneda);
+        const balEl = document.getElementById("kpi-balance");
+        balEl.textContent = formatCurrency(balance, moneda);
+        balEl.className = "kpi-valor " + (balance >= 0 ? "positivo" : "negativo");
+        document.getElementById("kpi-mem").textContent = formatCurrency(ing.membresias, moneda);
+        document.getElementById("kpi-vprod").textContent = formatCurrency(ing.productos, moneda);
+        document.getElementById("kpi-cprod").textContent = formatCurrency(egr.compras_producto, moneda);
+        document.getElementById("kpi-personal").textContent = formatCurrency(egr.pago_staff + egr.pago_profesor, moneda);
+
+        const { efectivo, cuenta } = calcularEfectivoCuenta(ing, cfg);
+        document.getElementById("kpi-efectivo").textContent = formatCurrency(efectivo, moneda);
+        document.getElementById("kpi-cuenta").textContent = formatCurrency(cuenta, moneda);
+
+        renderGraficaPrincipal(ing, egr);
+        renderGraficaDetalle(ing, egr);
+        renderTabla(ing, egr);
+
+        if (document.getElementById("f-periodo").value === "anual") {
+            cargarEvolucionAnual(new Date(desde).getFullYear());
+        }
+    }
+
+    initFechas();
+    cargar();
+</script>
+</body>
+</html>

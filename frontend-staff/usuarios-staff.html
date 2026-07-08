@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Usuarios Staff - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">Usuarios Staff</h1>
+                <p class="header-subtitle">Personal con acceso al software (recepción, administración, entrenadores)</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button id="btn-gestionar-puestos" class="btn btn-secondary" onclick="abrirModalPuestos()">⚙️ Puestos</button>
+                <button class="btn btn-primary" onclick="abrirModalNuevo()">+ Nuevo Staff</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr><th>Nombre</th><th>Puesto</th><th>DNI</th><th>Acceso</th><th>Estado</th><th>Acciones</th></tr>
+                    </thead>
+                    <tbody id="tabla-personal">
+                        <tr class="empty-row"><td colspan="6">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/personal.js"></script>
+<script>initPersonal("staff_fijo");</script>
+</body>
+</html>

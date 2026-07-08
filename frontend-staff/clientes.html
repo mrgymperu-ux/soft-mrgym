@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clientes - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .form-row.foto-row label { align-self:flex-start; margin-top:6px; }
+
+        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 20px; border-bottom:1px solid var(--color-borde); }
+        .filtros-bar label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar select { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+
+        .chips-filtro { display:flex; gap:6px; flex-wrap:wrap; }
+        .chip-filtro { padding:5px 12px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.78em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; }
+        .chip-filtro.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        .fila-cliente { cursor:pointer; }
+        .fila-cliente:hover { background:var(--color-hover-fila, var(--color-fondo)); }
+        .fila-vencido { color:var(--color-error); font-weight:600; }
+        .fila-porvencer { color:#B7860B; font-weight:600; }
+        .fila-saldo { color:var(--color-error); font-weight:600; }
+
+        /* Fila verde para clientes con membresia vigente del catalogo.
+           Se usa color-mix para que funcione bien en tema claro Y oscuro:
+           en claro queda un verde pastel suave, en oscuro un tono
+           oliva sutil que no encandila. */
+        .fila-vigente td { background: color-mix(in srgb, #5FA88C 10%, var(--color-blanco) 90%); }
+
+        /* Pestana Medidas: lista vertical de conceptos a la izquierda,
+           espaciado muy chico y lineas horizontales muy tenues. */
+        .medidas-layout { display:grid; grid-template-columns: 300px 1fr; gap:20px; align-items:start; }
+        @media (max-width: 900px) { .medidas-layout { grid-template-columns: 1fr; } }
+        .medidas-form-col { background:var(--color-fondo); border-radius:10px; padding:14px 16px; }
+        .medidas-grupo-titulo { font-size:0.68em; text-transform:uppercase; letter-spacing:.03em; color:var(--color-texto-secundario); font-weight:700; margin:10px 0 2px; }
+        .medidas-grupo-titulo:first-child { margin-top:0; }
+        .medidas-fila { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:3px 0; border-bottom:1px solid color-mix(in srgb, var(--color-borde) 45%, transparent); }
+        .medidas-fila:last-child { border-bottom:none; }
+        .medidas-fila label { font-size:0.78em; flex:1; color:var(--color-texto-secundario); }
+        .medidas-fila input, .medidas-fila select { width:96px; padding:4px 6px; font-size:0.8em; border:1px solid var(--color-borde); border-radius:6px; background:var(--color-blanco); color:var(--color-texto); text-align:right; }
+        .medidas-fila select { text-align:left; width:110px; }
+        .medidas-calc-col { display:flex; flex-direction:column; gap:10px; }
+        .medidas-calc-card { background:var(--color-fondo); border-radius:10px; padding:10px 14px; }
+        .medidas-calc-card .mc-label { font-size:0.68em; color:var(--color-texto-secundario); margin-bottom:3px; }
+        .medidas-calc-card .mc-valor { font-size:0.92em; font-weight:700; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Clientes</h1><p class="header-subtitle">Base de alumnos</p></div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary" onclick="abrirModalClienteNuevo(_clientesFcTerminado)">+ Nuevo Cliente</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="search-bar">
+                <input type="text" id="buscador" placeholder="Buscar por nombre o DNI..." oninput="debouncarBusqueda(this.value)">
+            </div>
+            <div class="filtros-bar">
+                <div class="chips-filtro" id="chips-filtro">
+                    <span class="chip-filtro" data-filtro="todos" onclick="onChipFiltro(this)">Todos</span>
+                    <span class="chip-filtro activo" data-filtro="activos" onclick="onChipFiltro(this)">Activos</span>
+                    <span class="chip-filtro" data-filtro="por_vencer" onclick="onChipFiltro(this)">Por vencer</span>
+                </div>
+                <label id="wrap-dias-vencer" style="display:none;">Dentro de <input type="number" id="f-dias-vencer" value="30" min="1" style="width:60px;padding:6px;border:1px solid var(--color-borde);border-radius:8px;background:var(--color-fondo);color:var(--color-texto);" onchange="cargarClientes()"> días</label>
+                <label>Registrados desde <input type="date" id="f-desde" onchange="cargarClientes()"></label>
+                <label>hasta <input type="date" id="f-hasta" onchange="cargarClientes()"></label>
+                <label style="margin-left:auto;">Ordenar por
+                    <select id="f-orden" onchange="cargarClientes()">
+                        <option value="">Nombre</option>
+                        <option value="vencer">Vencer [días]</option>
+                        <option value="deuda">Con deuda</option>
+                    </select>
+                </label>
+            </div>
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>#</th><th>Nombre</th><th>Vencimiento</th><th>Último plan</th><th style="text-align:right;">Costo</th><th style="text-align:right;">Pagado</th><th style="text-align:right;">Saldo</th><th style="text-align:right;">% Asist.</th><th></th></tr></thead>
+                    <tbody id="tabla-clientes"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid var(--color-borde);font-size:0.8em;color:var(--color-texto-secundario);" id="info-total"></div>
+        </div>
+        <div id="ficha-detalle" style="display:none;">
+            <button class="btn btn-secondary" onclick="cerrarFicha()" style="margin-bottom:16px;">← Volver</button>
+            <div class="card">
+                <div style="padding:24px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--color-borde);">
+                    <div id="ficha-avatar-wrap" style="width:67px;height:67px;flex-shrink:0;"></div>
+                    <div>
+                        <h2 id="ficha-nombre" style="margin:0;font-size:1.3em;"></h2>
+                        <p id="ficha-email" style="margin:4px 0 0;color:#636E72;font-size:0.88em;"></p>
+                    </div>
+                    <div style="margin-left:auto;display:flex;gap:8px;">
+                        <button class="btn btn-secondary btn-sm" onclick="abrirModalEditar()">✏️ Editar</button>
+                        <button class="btn btn-danger btn-sm" id="btn-eliminar-ficha" onclick="eliminarClienteActual()" style="display:none;">🗑️ Eliminar</button>
+                    </div>
+                </div>
+                <div class="tabs">
+                    <button class="tab active" onclick="showTab('datos',this)">Datos</button>
+                    <button class="tab" onclick="showTab('membresias',this)">Membresías</button>
+                    <button class="tab" onclick="showTab('medidas',this)">Medidas</button>
+                    <button class="tab" onclick="showTab('rutinas',this)">Rutinas</button>
+                    <button class="tab" onclick="showTab('progreso',this)">Progreso</button>
+                    <button class="tab" onclick="showTab('nutricion',this)">Plan Nutrición</button>
+                    <button class="tab" onclick="showTab('retos',this)">Retos</button>
+                </div>
+                <div id="tab-datos">
+                    <div class="table-container">
+                        <table class="table"><tbody>
+                            <tr><td width="200"><strong>DNI</strong></td><td id="d-dni"></td></tr>
+                            <tr><td><strong>Genero</strong></td><td id="d-genero"></td></tr>
+                            <tr><td><strong>Telefono</strong></td><td id="d-telefono"></td></tr>
+                            <tr><td><strong>Email</strong></td><td id="d-email"></td></tr>
+                            <tr><td><strong>Nacimiento</strong></td><td id="d-nacimiento"></td></tr>
+                            <tr><td><strong>Direccion</strong></td><td id="d-direccion"></td></tr>
+                            <tr><td><strong>Registrado</strong></td><td id="d-registro"></td></tr>
+                            <tr><td><strong>Membresia</strong></td><td id="d-membresia"></td></tr>
+                            <tr><td><strong>Fecha de renovacion</strong></td><td id="d-renovacion"></td></tr>
+                            <tr><td><strong>Fecha de vencimiento</strong></td><td id="d-vencimiento"></td></tr>
+                            <tr><td><strong>Asistencia</strong></td><td id="d-asistencias"></td></tr>
+                            <tr><td><strong>Codigo portal alumno</strong></td><td id="d-codigo"></td></tr>
+                        </tbody></table>
+                    </div>
+                </div>
+                <div id="tab-membresias" style="display:none;"><div id="contenido-membresias" style="padding:20px;"></div></div>
+                <div id="tab-progreso" style="display:none;"><div id="contenido-progreso" style="padding:20px;"></div></div>
+                <div id="tab-rutinas" style="display:none;"><div id="contenido-rutinas" style="padding:20px;"></div></div>
+                <div id="tab-medidas" style="display:none;"><div id="contenido-medidas" style="padding:20px;"></div></div>
+                <div id="tab-nutricion" style="display:none;"><div id="contenido-nutricion" style="padding:20px;"></div></div>
+                <div id="tab-retos" style="display:none;"><div id="contenido-retos" style="padding:20px;"></div></div>
+            </div>
+        </div>
+    </main>
+</div>
+<div id="modal-cliente" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="modal-titulo">Nuevo Cliente</h3>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="form-row"><label>Nombre *</label><input type="text" id="f-nombre" placeholder="Juan"></div>
+        <div class="form-row"><label>Apellidos</label><input type="text" id="f-apellidos" placeholder="Perez Garcia"></div>
+        <div class="form-row"><label>DNI</label><input type="text" id="f-dni" placeholder="12345678"></div>
+        <div class="form-row"><label>Género</label>
+            <select id="f-genero">
+                <option value="">-- Seleccionar --</option>
+                <option value="Masculino">Masculino</option>
+                <option value="Femenino">Femenino</option>
+                <option value="Otro">Otro</option>
+            </select>
+        </div>
+        <div class="form-row"><label>Dirección</label><input type="text" id="f-direccion"></div>
+        <div class="form-row"><label>Celular</label><input type="text" id="f-telefono" placeholder="987654321"></div>
+        <div class="form-row"><label>Email</label><input type="email" id="f-email" placeholder="juan@email.com"></div>
+        <div class="form-row"><label>Fecha de Nacimiento</label><input type="date" id="f-nacimiento"></div>
+        <div class="form-row"><label>Código acceso portal</label><input type="text" id="f-codigo" placeholder="1234" maxlength="6"></div>
+        <div class="form-row foto-row">
+            <label>Foto</label>
+            <div style="display:flex;align-items:center;gap:12px;flex:1;">
+                <div id="foto-preview-wrap" style="width:44px;height:44px;flex-shrink:0;"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('f-foto').click()">Seleccionar foto</button>
+                <span id="f-foto-nombre" style="font-size:0.78em;color:var(--color-texto-secundario);"></span>
+                <input type="file" id="f-foto" accept="image/jpeg,image/png,image/webp" onchange="previsualizarFoto(this)" style="display:none;">
+            </div>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarCliente()">Guardar</button>
+        </div>
+    </div>
+</div>
+<!-- Modal adaptar plan de nutricion del cliente -->
+<div id="modal-editar-nutricion" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Adaptar Plan de Nutrición</h3>
+            <button class="modal-close" onclick="cerrarModalEditarNutricion()">✕</button>
+        </div>
+        <div class="form-row"><label>Título</label><input type="text" id="en-titulo"></div>
+        <div class="form-row"><label>Descripción</label><input type="text" id="en-descripcion"></div>
+        <div class="form-row"><label>Calorías objetivo</label><input type="number" id="en-calorias" min="0"></div>
+
+        <p style="font-weight:600;margin:16px 0 8px;font-size:0.9em;">Alimentos por comida</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Desayuno</p>
+                <div id="en-items-desayuno"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="enAgregarAlimento('desayuno')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Almuerzo</p>
+                <div id="en-items-comida"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="enAgregarAlimento('comida')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Aperitivo</p>
+                <div id="en-items-aperitivo"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="enAgregarAlimento('aperitivo')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Cena</p>
+                <div id="en-items-cena"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="enAgregarAlimento('cena')">+ Agregar</button>
+            </div>
+        </div>
+        <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:10px;">Al guardar se crea un <strong>nuevo plan</strong> para este cliente; el plan anterior queda en su historial (no se borra).</p>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalEditarNutricion()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarPlanAdaptado()">Guardar como nuevo plan</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal editar membresia asignada (solo administrador) -->
+<div id="modal-cm" class="modal">
+    <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Editar Membresía Asignada</h3>
+            <button class="modal-close" onclick="cerrarModalCM()">✕</button>
+        </div>
+        <div class="form-row"><label>Plan</label><select id="cm-membresia"></select></div>
+        <div class="form-row"><label>Fecha inicio</label><input type="date" id="cm-inicio"></div>
+        <div class="form-row"><label>Fecha fin</label><input type="date" id="cm-fin"></div>
+        <div class="form-row"><label>Monto pagado</label><input type="number" id="cm-pagado" min="0" step="0.01"></div>
+        <div class="form-row"><label>Fecha pago del saldo</label><input type="date" id="cm-fecha-saldo"></div>
+        <div class="form-row"><label>Estado</label>
+            <select id="cm-activo"><option value="true">Activa</option><option value="false">Inactiva</option></select>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalCM()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarCM()">Guardar</button>
+        </div>
+    </div>
+</div>
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/flujo-cliente.js"></script>
+<script src="js/medidas-catalogo.js"></script>
+<script>
+    let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
+
+    function debouncarBusqueda(v) {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => { busquedaActual = v.trim(); cargarClientes(); }, 350);
+    }
+
+    function onChipFiltro(el) {
+        document.querySelectorAll(".chip-filtro").forEach(c => c.classList.remove("activo"));
+        el.classList.add("activo");
+        filtroActual = el.dataset.filtro;
+        document.getElementById("wrap-dias-vencer").style.display = filtroActual === "por_vencer" ? "flex" : "none";
+        cargarClientes();
+    }
+
+    function _diasRestantesTexto(dias) {
+        if (dias === null || dias === undefined) return "—";
+        if (dias < 0) return `<span class="fila-vencido">Vencido hace ${Math.abs(dias)}d</span>`;
+        if (dias <= 7) return `<span class="fila-vencido">${dias}d</span>`;
+        if (dias <= 30) return `<span class="fila-porvencer">${dias}d</span>`;
+        return `${dias}d`;
+    }
+
+    async function cargarClientes() {
+        const params = new URLSearchParams();
+        params.set("filtro", filtroActual);
+        if (filtroActual === "por_vencer") params.set("dias_vencimiento", document.getElementById("f-dias-vencer").value || "30");
+        const desde = document.getElementById("f-desde").value;
+        const hasta = document.getElementById("f-hasta").value;
+        if (desde) params.set("desde", desde);
+        if (hasta) params.set("hasta", hasta);
+        const orden = document.getElementById("f-orden").value;
+        if (orden) params.set("orden", orden);
+        if (busquedaActual) params.set("buscar", busquedaActual);
+
+        const clientes = await apiFetch(`/clientes/listado-completo?${params.toString()}`);
+        const cfg = await getConfiguracion();
+        const tbody = document.getElementById("tabla-clientes");
+        const puedeBorrar = puedeEliminar();
+
+        tbody.innerHTML = !clientes.length
+            ? '<tr class="empty-row"><td colspan="9">No se encontraron clientes</td></tr>'
+            : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" onclick="verCliente(${c.id})">
+                <td style="color:var(--color-texto-secundario);">${c.id}</td>
+                <td><strong>${c.nombre_completo}</strong>${!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : ""}</td>
+                <td>${c.fecha_vencimiento ? `${formatFecha(c.fecha_vencimiento)} · ${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
+                <td>${c.ultimo_plan || "—"}</td>
+                <td style="text-align:right;">${c.costo !== null ? formatCurrency(c.costo, cfg.moneda) : "—"}</td>
+                <td style="text-align:right;">${c.pagado !== null ? formatCurrency(c.pagado, cfg.moneda) : "—"}</td>
+                <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${c.saldo !== null ? formatCurrency(c.saldo, cfg.moneda) : "—"}</td>
+                <td style="text-align:right;">${c.porcentaje_asistencia !== null ? c.porcentaje_asistencia + "%" : "—"}</td>
+                <td onclick="event.stopPropagation();">
+                    ${puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : ""}
+                </td>
+            </tr>`).join("");
+        document.getElementById("info-total").textContent = `${clientes.length} cliente${clientes.length !== 1 ? "s" : ""}`;
+    }
+
+    async function verCliente(id) {
+        clienteActual = await apiFetch(`/clientes/${id}`);
+        document.querySelector(".card").style.display = "none";
+        document.getElementById("ficha-detalle").style.display = "block";
+        const nombre = `${clienteActual.nombre} ${clienteActual.apellidos || ""}`.trim();
+        document.getElementById("ficha-avatar-wrap").innerHTML = avatarHtml(nombre, clienteActual.foto_url, "width:67px;height:67px;font-size:1.4em;");
+        document.getElementById("ficha-nombre").textContent = nombre;
+        document.getElementById("ficha-email").textContent = clienteActual.email || "Sin email";
+        document.getElementById("d-dni").textContent = clienteActual.dni || "—";
+        document.getElementById("d-genero").textContent = clienteActual.genero || "—";
+        document.getElementById("d-telefono").textContent = clienteActual.telefono || "—";
+        document.getElementById("d-email").textContent = clienteActual.email || "—";
+        document.getElementById("d-nacimiento").textContent = clienteActual.fecha_nacimiento || "—";
+        document.getElementById("d-direccion").textContent = clienteActual.direccion || "—";
+        document.getElementById("d-registro").textContent = formatFecha(clienteActual.fecha_registro);
+        document.getElementById("d-membresia").textContent = clienteActual.membresia_texto || "—";
+        document.getElementById("d-renovacion").textContent = clienteActual.fecha_renovacion ? formatFecha(clienteActual.fecha_renovacion) : "—";
+        document.getElementById("d-vencimiento").textContent = clienteActual.fecha_vencimiento ? formatFecha(clienteActual.fecha_vencimiento) : "—";
+        document.getElementById("d-asistencias").textContent = (clienteActual.porcentaje_asistencia !== null && clienteActual.porcentaje_asistencia !== undefined) ? `${clienteActual.porcentaje_asistencia}% (dias asistidos / dias del ultimo plan)` : "Sin plan asignado aún";
+        document.getElementById("d-codigo").textContent = clienteActual.codigo_acceso || "Sin codigo";
+        document.getElementById("btn-eliminar-ficha").style.display = puedeEliminar() ? "inline-block" : "none";
+        showTab("datos", document.querySelector(".tab"));
+    }
+
+    function cerrarFicha() {
+        clienteActual = null;
+        document.querySelector(".card").style.display = "block";
+        document.getElementById("ficha-detalle").style.display = "none";
+    }
+
+    function showTab(nombre, el) {
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        el.classList.add("active");
+        document.getElementById("tab-datos").style.display = nombre === "datos" ? "block" : "none";
+        document.getElementById("tab-membresias").style.display = nombre === "membresias" ? "block" : "none";
+        document.getElementById("tab-progreso").style.display = nombre === "progreso" ? "block" : "none";
+        document.getElementById("tab-rutinas").style.display = nombre === "rutinas" ? "block" : "none";
+        document.getElementById("tab-medidas").style.display = nombre === "medidas" ? "block" : "none";
+        document.getElementById("tab-nutricion").style.display = nombre === "nutricion" ? "block" : "none";
+        document.getElementById("tab-retos").style.display = nombre === "retos" ? "block" : "none";
+        if (nombre === "progreso" && clienteActual) cargarProgreso();
+        if (nombre === "membresias" && clienteActual) cargarMembresiasCliente();
+        if (nombre === "rutinas" && clienteActual) cargarRutinasDelCliente();
+        if (nombre === "medidas" && clienteActual) cargarMedidasDelCliente();
+        if (nombre === "nutricion" && clienteActual) cargarNutricionDelCliente();
+        if (nombre === "retos" && clienteActual) cargarRetosDisponibles();
+    }
+
+    // ==============================================================
+    // Pestana Rutinas: resumen de solo lectura (viene de Ejercicios).
+    // La gestion completa (agregar/quitar ejercicios) se hace en la
+    // pantalla Ejercicios; aqui se muestra un resumen rapido.
+    // ==============================================================
+    async function cargarRutinasDelCliente() {
+        const cont = document.getElementById("contenido-rutinas");
+        cont.innerHTML = '<p style="color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const rutinas = await apiFetch(`/rutinas/cliente/${clienteActual.id}`);
+            const botonSugerir = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+                <button class="btn btn-sm btn-primary" onclick="sugerirRutinaAutomatica()">🤖 Sugerir rutina automática</button>
+                <button class="btn btn-sm btn-secondary" onclick="crearRutinaEnBlanco()">➕ Crear rutina en blanco</button>
+            </div>`;
+            if (!rutinas.length) {
+                cont.innerHTML = botonSugerir + '<p style="color:var(--color-texto-secundario);">Sin rutinas. Sugiere una automática basada en el perfil del cliente, o crea una en blanco.</p>';
+                return;
+            }
+            const grupoIconos = {"Pecho":"💪","Espalda":"🦴","Piernas":"🦵","Hombros":"🏋️","Biceps":"💪","Triceps":"💪","Core":"🧍","Gluteos":"🏃","Cuerpo completo":"⚡"};
+            cont.innerHTML = botonSugerir + rutinas.map(r => `
+                <div style="border:1px solid var(--color-borde);border-radius:12px;padding:18px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <span style="font-weight:700;">💪 ${r.nombre}</span>
+                        <div style="display:flex;gap:6px;">
+                            <button class="btn btn-sm btn-secondary" onclick="editarRutinaInline(${r.id})">✏️ Editar</button>
+                            <button class="btn btn-sm btn-danger" onclick="eliminarRutina(${r.id})">🗑️</button>
+                        </div>
+                    </div>
+                    ${(r.dias || []).map(d => `
+                        <div style="background:var(--color-fondo);border-radius:8px;padding:10px 14px;margin-bottom:6px;">
+                            <div style="font-weight:600;font-size:0.85em;margin-bottom:6px;">${d.nombre}</div>
+                            ${(d.ejercicios || []).map(ej => `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82em;border-bottom:1px solid rgba(0,0,0,0.04);">
+                                <span>${grupoIconos[ej.tipo_ejercicio?.grupo_muscular] || '▪️'} ${ej.nombre}</span>
+                                <span style="color:var(--color-texto-secundario);">${ej.series ? ej.series + 'x' : ''}${ej.repeticiones || ''} ${ej.peso || ''}</span>
+                            </div>`).join("") || '<span style="font-size:0.8em;color:var(--color-texto-secundario);">Sin ejercicios</span>'}
+                        </div>
+                    `).join("")}
+                </div>
+            `).join("");
+        } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
+    }
+
+    async function sugerirRutinaAutomatica() {
+        if (!clienteActual) return;
+        const genero = clienteActual.genero || "Masculino";
+        const edad = clienteActual.fecha_nacimiento ? Math.floor((Date.now() - new Date(clienteActual.fecha_nacimiento)) / (365.25*24*60*60*1000)) : 25;
+        // Determinar nivel segun edad
+        let nivel = "principiante";
+        if (edad >= 18 && edad <= 45) nivel = "intermedio";
+        // Determinar objetivo segun IMC si hay medidas
+        let objetivo = genero === "Femenino" ? "tonificar" : "ganar_masa";
+        try {
+            const medidas = await apiFetch(`/clientes/${clienteActual.id}/medidas`);
+            if (medidas.length && medidas[0].peso_kg && medidas[0].estatura_cm) {
+                const imc = medidas[0].peso_kg / ((medidas[0].estatura_cm/100)**2);
+                if (imc > 27) objetivo = "bajar_peso";
+                else if (imc < 20) objetivo = "ganar_masa";
+            }
+        } catch(e) {}
+        // Obtener ejercicios del catalogo filtrados
+        const todos = await apiFetch("/tipos-ejercicio/?filtro=activos");
+        const filtrar = (cat, cant) => {
+            let pool = todos.filter(e =>
+                e.categoria === cat &&
+                (e.genero_recomendado === "todos" || e.genero_recomendado === genero.toLowerCase()) &&
+                (e.nivel === nivel || e.nivel === "principiante")
+            );
+            if (objetivo) pool = pool.filter(e => !e.objetivo || e.objetivo === objetivo || e.objetivo === "tonificar");
+            pool.sort(() => Math.random() - 0.5);
+            return pool.slice(0, cant);
+        };
+        const calentamiento = filtrar("calentamiento", 3);
+        const fuerza = filtrar("fuerza", 6);
+        const cardio = filtrar("cardio", 2);
+        const estiramiento = filtrar("estiramiento", 2);
+        const funcional = filtrar("funcional", 2);
+        const dias = [
+            {nombre: "Dia 1 - Tren superior", ejercicios: [...calentamiento.slice(0,2), ...fuerza.filter(e => ["Pecho","Espalda","Hombros","Biceps","Triceps"].includes(e.grupo_muscular)).slice(0,4), ...estiramiento.slice(0,1)]},
+            {nombre: "Dia 2 - Tren inferior + Core", ejercicios: [...calentamiento.slice(0,2), ...fuerza.filter(e => ["Piernas","Gluteos","Core"].includes(e.grupo_muscular)).slice(0,4), ...cardio.slice(0,1), ...estiramiento.slice(0,1)]},
+            {nombre: "Dia 3 - Funcional + Cardio", ejercicios: [...calentamiento.slice(0,2), ...funcional.slice(0,3), ...cardio.slice(0,2), ...estiramiento.slice(0,1)]},
+        ];
+        const nombreRutina = `Rutina ${objetivo.replace('_',' ')} - ${genero} ${nivel}`;
+        try {
+            const rutina = await apiFetch("/rutinas/", {method:"POST", body: JSON.stringify({
+                cliente_id: clienteActual.id, nombre: nombreRutina, dias: dias.map((d,i) => ({
+                    nombre: d.nombre, orden: i,
+                    ejercicios: d.ejercicios.map((ej,j) => ({
+                        tipo_ejercicio_id: ej.id, nombre: ej.nombre,
+                        series: ej.categoria === "estiramiento" ? 1 : (ej.categoria === "calentamiento" ? 2 : 3),
+                        repeticiones: ej.categoria === "estiramiento" ? "30s" : (ej.categoria === "calentamiento" ? "15" : "12"),
+                    }))
+                }))
+            })});
+            showSuccess("Rutina sugerida creada: " + nombreRutina);
+            cargarRutinasDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function crearRutinaEnBlanco() {
+        if (!clienteActual) return;
+        try {
+            await apiFetch("/rutinas/", {method:"POST", body: JSON.stringify({
+                cliente_id: clienteActual.id, nombre: "Nueva rutina", dias: [
+                    {nombre: "Dia 1", orden: 0, ejercicios: []},
+                    {nombre: "Dia 2", orden: 1, ejercicios: []},
+                    {nombre: "Dia 3", orden: 2, ejercicios: []},
+                ]
+            })});
+            showSuccess("Rutina en blanco creada");
+            cargarRutinasDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function editarRutinaInline(rutinaId) {
+        window.location.href = `entrenamientos.html?rutina=${rutinaId}`;
+    }
+
+    async function eliminarRutina(rutinaId) {
+        if (!(await confirmDialog("¿Eliminar esta rutina?"))) return;
+        try {
+            await apiFetch(`/rutinas/${rutinaId}`, {method:"DELETE"});
+            showSuccess("Rutina eliminada");
+            cargarRutinasDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==============================================================
+    // Pestana Plan Nutricion: resumen (viene de Nutricion), con
+    // boton para generar/actualizar el plan AUTOMATICO segun las
+    // medidas (peso/estatura) y perfil (genero/edad) del cliente.
+    // ==============================================================
+    async function cargarNutricionDelCliente() {
+        const cont = document.getElementById("contenido-nutricion");
+        cont.innerHTML = '<p style="color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const planes = await apiFetch(`/nutricion/cliente/${clienteActual.id}`);
+            const botonAuto = `<div style="display:flex;gap:8px;margin-bottom:14px;"><button class="btn btn-sm btn-primary" onclick="generarPlanAutomaticoCliente()">🤖 Generar plan automático</button></div>`;
+            if (!planes.length) {
+                cont.innerHTML = botonAuto + '<p style="color:var(--color-texto-secundario);">Sin plan de nutrición. Genera uno automático (requiere fecha de nacimiento + peso/estatura en Medidas).</p>';
+                return;
+            }
+            const tiposLabel = { desayuno:"🍳 Desayuno", comida:"🍛 Almuerzo", aperitivo:"🍎 Aperitivo", cena:"🌙 Cena" };
+            const tiposBg = { desayuno:"#FFF8F0", comida:"#F0FFF4", aperitivo:"#FFFDE8", cena:"#F0F4FF" };
+            cont.innerHTML = botonAuto + planes.filter(p => p.activo).map(plan => {
+                const kcalObj = plan.calorias_objetivo || 0;
+                const kcalTotal = (plan.comidas || []).reduce((s,c) => s + (c.calorias || 0), 0);
+                const pctDiff = kcalObj > 0 ? Math.round((kcalTotal - kcalObj) / kcalObj * 100) : 0;
+                const pctColor = Math.abs(pctDiff) <= 10 ? "var(--color-exito)" : "var(--color-error)";
+                const porTipo = ["desayuno","comida","aperitivo","cena"].map(t => {
+                    const items = (plan.comidas || []).filter(c => c.tipo === t);
+                    if (!items.length) return "";
+                    const kcalComida = items.reduce((s,i) => s + (i.calorias || 0), 0);
+                    return `<div style="background:${tiposBg[t]};border-radius:10px;padding:14px 16px;flex:1;min-width:220px;">
+                        <div style="font-weight:600;font-size:0.88em;margin-bottom:8px;display:flex;justify-content:space-between;">
+                            <span>${tiposLabel[t]}</span><span style="color:var(--color-texto-secundario);font-weight:500;">${kcalComida} kcal</span>
+                        </div>
+                        ${items.map(i => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.05);font-size:0.84em;">
+                            <span>${i.nombre_alimento}</span>
+                            <span style="color:var(--color-texto-secundario);">${i.calorias || 0} kcal</span>
+                        </div>`).join("")}
+                    </div>`;
+                }).join("");
+                return `<div style="border:1px solid var(--color-borde);border-radius:12px;padding:18px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <div>
+                            <span style="font-weight:700;">🥗 ${plan.titulo}</span>
+                            ${plan.origen === "automatico" ? '<span class="badge badge-info" style="font-size:0.65em;margin-left:6px;">🤖 Auto</span>' : ""}
+                        </div>
+                        <button class="btn btn-sm btn-secondary" onclick="abrirEditorNutricionCliente(${plan.id})">✏️ Adaptar</button>
+                    </div>
+                    <div style="display:flex;gap:6px;margin-bottom:12px;font-size:0.82em;">
+                        <span style="background:var(--color-fondo);padding:4px 10px;border-radius:8px;">Objetivo: <strong>${kcalObj || '?'} kcal</strong></span>
+                        <span style="background:var(--color-fondo);padding:4px 10px;border-radius:8px;">Total: <strong>${kcalTotal} kcal</strong></span>
+                        ${kcalObj ? `<span style="padding:4px 10px;border-radius:8px;background:var(--color-fondo);color:${pctColor};font-weight:600;">${pctDiff > 0 ? '+' : ''}${pctDiff}%</span>` : ''}
+                    </div>
+                    ${plan.descripcion ? `<p style="font-size:0.78em;color:var(--color-texto-secundario);margin:0 0 10px;">${plan.descripcion}</p>` : ""}
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">${porTipo}</div>
+                </div>`;
+            }).join("") || '<p style="color:var(--color-texto-secundario);">No hay planes activos.</p>';
+        } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
+    }
+
+    async function generarPlanAutomaticoCliente() {
+        try {
+            await apiFetch(`/nutricion/generar-automatico/${clienteActual.id}`, { method: "POST" });
+            showSuccess("Plan automático generado ✅");
+            cargarNutricionDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ---- Adaptar el plan de un cliente: edita alimentos/cantidades y al
+    // guardar crea un NUEVO plan para el cliente (el anterior queda
+    // desactivado, pero no se borra: sigue en su historial). ----
+    let alimentosCacheNutricion = null;
+    let planAdaptandoOriginalId = null;
+
+    async function _getAlimentosNutricion() {
+        if (!alimentosCacheNutricion) alimentosCacheNutricion = await apiFetch("/alimentos/");
+        return alimentosCacheNutricion;
+    }
+
+    async function abrirEditorNutricionCliente(planId) {
+        const planes = await apiFetch(`/nutricion/cliente/${clienteActual.id}`);
+        const plan = planes.find(p => p.id === planId);
+        if (!plan) return;
+        await _getAlimentosNutricion();
+        planAdaptandoOriginalId = planId;
+        document.getElementById("en-titulo").value = `${plan.titulo} (adaptado)`;
+        document.getElementById("en-descripcion").value = plan.descripcion || "";
+        document.getElementById("en-calorias").value = plan.calorias_objetivo || "";
+        ["desayuno", "comida", "aperitivo", "cena"].forEach(t => document.getElementById(`en-items-${t}`).innerHTML = "");
+        (plan.comidas || []).forEach(c => enAgregarAlimento(c.tipo, c.alimento_id, c.cantidad_gramos));
+        document.getElementById("modal-editar-nutricion").classList.add("active");
+    }
+
+    function cerrarModalEditarNutricion() {
+        document.getElementById("modal-editar-nutricion").classList.remove("active");
+        planAdaptandoOriginalId = null;
+    }
+
+    function enAgregarAlimento(tipo, alimentoIdPreset, gramosPreset) {
+        const contenedor = document.getElementById(`en-items-${tipo}`);
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;";
+        div.innerHTML = `
+            <select class="en-item-alimento" style="flex:1;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_enActualizarKcal(this)">
+                ${alimentosCacheNutricion.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" ${alimentoIdPreset === a.id ? "selected" : ""}>${a.nombre}</option>`).join("")}
+            </select>
+            <input type="number" class="en-item-gramos" value="${gramosPreset || 100}" min="1" style="width:64px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_enActualizarKcal(this)">
+            <span style="font-size:0.72em;color:var(--color-texto-secundario);">g</span>
+            <span class="en-item-kcal-texto" style="font-size:0.72em;color:var(--color-texto-secundario);min-width:56px;"></span>
+            <button type="button" onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;color:var(--color-error);">✕</button>
+        `;
+        contenedor.appendChild(div);
+        _enActualizarKcal(div.querySelector(".en-item-gramos"));
+    }
+
+    function _enActualizarKcal(elDisparador) {
+        const fila = elDisparador.closest("div");
+        const sel = fila.querySelector(".en-item-alimento");
+        const gramosInput = fila.querySelector(".en-item-gramos");
+        const opt = sel.selectedOptions[0];
+        if (!opt) return;
+        const gramos = parseFloat(gramosInput.value) || 0;
+        const cal = parseFloat(opt.dataset.cal) || 0;
+        const porcion = parseFloat(opt.dataset.porcion) || 100;
+        const kcalTotal = Math.round(cal * gramos / porcion);
+        fila.querySelector(".en-item-kcal-texto").textContent = `${gramos} g · ${kcalTotal} kcal`;
+    }
+
+    async function guardarPlanAdaptado() {
+        const titulo = document.getElementById("en-titulo").value.trim();
+        if (!titulo) { showError("El título es obligatorio"); return; }
+        const tipos = ["desayuno", "comida", "aperitivo", "cena"];
+        const comidas = [];
+        tipos.forEach(tipo => {
+            document.querySelectorAll(`#en-items-${tipo} > div`).forEach(item => {
+                const sel = item.querySelector(".en-item-alimento");
+                const gramosInput = item.querySelector(".en-item-gramos");
+                if (!sel) return;
+                const opt = sel.selectedOptions[0];
+                const gramos = parseFloat(gramosInput.value) || 100;
+                const cal = parseFloat(opt.dataset.cal) || 0;
+                const porcion = parseFloat(opt.dataset.porcion) || 100;
+                const kcalTotal = Math.round(cal * gramos / porcion);
+                comidas.push({ tipo, alimento_id: parseInt(sel.value), nombre_alimento: `${opt.textContent} (${gramos}g)`, calorias: kcalTotal, cantidad_gramos: gramos });
+            });
+        });
+        if (!comidas.length) { showError("Agrega al menos un alimento"); return; }
+        const datos = {
+            cliente_id: clienteActual.id,
+            titulo,
+            descripcion: document.getElementById("en-descripcion").value.trim() || null,
+            calorias_objetivo: parseInt(document.getElementById("en-calorias").value) || null,
+            comidas,
+        };
+        try {
+            await apiFetch("/nutricion/", { method: "POST", body: JSON.stringify(datos) });
+            if (planAdaptandoOriginalId) {
+                await apiFetch(`/nutricion/${planAdaptandoOriginalId}`, { method: "PUT", body: JSON.stringify({ activo: false }) });
+            }
+            showSuccess("Nuevo plan adaptado creado para el cliente ✅");
+            cerrarModalEditarNutricion();
+            cargarNutricionDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==============================================================
+    // Pestana Retos: catalogo general disponible (viene de Retos).
+    // ==============================================================
+    async function cargarRetosDisponibles() {
+        const cont = document.getElementById("contenido-retos");
+        cont.innerHTML = '<p style="color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const retos = await apiFetch("/retos/");
+            if (!retos.length) {
+                cont.innerHTML = '<p style="color:var(--color-texto-secundario);">No hay retos disponibles aún. Créalos desde <a href="retos.html">Retos</a>.</p>';
+                return;
+            }
+            cont.innerHTML = `<p style="font-size:0.8em;color:var(--color-texto-secundario);margin-bottom:12px;">Retos disponibles en el gimnasio (catálogo general):</p>` +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;">' +
+                retos.map(r => `<div style="border:1px solid var(--color-borde);border-radius:10px;padding:14px;text-align:center;">
+                    <div style="font-size:1.8em;">${r.icono || "🏆"}</div>
+                    <div style="font-weight:700;font-size:0.88em;margin:6px 0 2px;">${r.titulo}</div>
+                    <div style="font-size:0.72em;color:var(--color-texto-secundario);">${r.duracion_dias ? r.duracion_dias + " días" : ""}${r.dificultad ? " · " + r.dificultad : ""}</div>
+                </div>`).join("") + '</div>' +
+                '<a href="retos.html" class="btn btn-sm btn-secondary" style="margin-top:12px;display:inline-block;">Gestionar en Retos →</a>';
+        } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
+    }
+
+    // ==============================================================
+    // Pestana Membresias: historial de planes asignados. El staff
+    // comun solo consulta; el administrador puede corregir (editar/
+    // eliminar) via PUT/DELETE /cliente-membresias/{cm_id}.
+    // ==============================================================
+
+    let catalogoMembresias = null; // cache de /membresias/?incluir_inactivas=true
+    let cmEditando = null;
+
+    async function _getCatalogoMembresias() {
+        if (!catalogoMembresias) catalogoMembresias = await apiFetch("/membresias/?incluir_inactivas=true");
+        return catalogoMembresias;
+    }
+
+    async function cargarMembresiasCliente() {
+        const cont = document.getElementById("contenido-membresias");
+        cont.innerHTML = '<p style="color:#636E72;">Cargando...</p>';
+        try {
+            const [historial, catalogo] = await Promise.all([
+                apiFetch(`/clientes/${clienteActual.id}/membresias`),
+                _getCatalogoMembresias(),
+            ]);
+            await getConfiguracion();
+            if (!historial.length) { cont.innerHTML = '<p style="color:#636E72;">Este cliente no tiene membresías asignadas</p>'; return; }
+
+            const esAdmin = esAdministrador();
+            cont.innerHTML = `<table class="table"><thead><tr>
+                <th>Plan</th><th>Inicio</th><th>Fin</th><th>Pagado</th><th>Saldo</th><th>Pago saldo</th><th>Estado</th><th>Acciones</th>
+            </tr></thead><tbody>
+            ${historial.map(cm => {
+                const plan = catalogo.find(m => m.id === cm.membresia_id);
+                const precio = plan ? plan.precio : 0;
+                const saldo = Math.max(precio - (cm.monto_pagado || 0), 0);
+                return `<tr>
+                    <td><strong>${plan ? plan.nombre : "Plan #" + cm.membresia_id}</strong></td>
+                    <td>${formatFecha(cm.fecha_inicio)}</td>
+                    <td>${cm.fecha_fin ? formatFecha(cm.fecha_fin) : "—"}</td>
+                    <td>${formatCurrency(cm.monto_pagado)}</td>
+                    <td>${saldo > 0 ? `<span style=\"color:var(--color-error);font-weight:600;\">${formatCurrency(saldo)}</span>` : formatCurrency(0)}</td>
+                    <td>${cm.fecha_pago_saldo ? formatFecha(cm.fecha_pago_saldo) : "—"}</td>
+                    <td><span class="badge ${cm.activo ? "badge-success" : "badge-error"}">${cm.activo ? "Activa" : "Inactiva"}</span></td>
+                    <td style="white-space:nowrap;">
+                        <button class="btn btn-sm btn-secondary" onclick="apiAbrirPdfEnNuevaPestana('/clientes/${clienteActual.id}/membresias/${cm.id}/recibo.pdf').catch(e=>showError(e.message))">🧾</button>
+                        ${esAdmin ? `
+                        <button class="btn btn-sm btn-secondary" onclick="abrirModalCM(${cm.id})">✏️</button>
+                        <button class="btn btn-sm btn-danger" onclick="eliminarCM(${cm.id})">🗑️</button>` : ""}
+                    </td>
+                </tr>`;
+            }).join("")}
+            </tbody></table>
+            ${esAdmin ? "" : '<p style="font-size:0.78em;color:#636E72;margin:10px 0 0;">Solo un administrador puede editar o eliminar membresías asignadas.</p>'}`;
+
+            cont.dataset.historial = JSON.stringify(historial);
+        } catch (e) {
+            cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`;
+        }
+    }
+
+    async function abrirModalCM(cmId) {
+        const historial = JSON.parse(document.getElementById("contenido-membresias").dataset.historial || "[]");
+        cmEditando = historial.find(cm => cm.id === cmId);
+        if (!cmEditando) return;
+
+        const catalogo = await _getCatalogoMembresias();
+        document.getElementById("cm-membresia").innerHTML = catalogo
+            .map(m => `<option value="${m.id}">${m.nombre} (${formatCurrency(m.precio)})${m.activo ? "" : " [inactiva]"}</option>`).join("");
+        document.getElementById("cm-membresia").value = cmEditando.membresia_id;
+        document.getElementById("cm-inicio").value = cmEditando.fecha_inicio || "";
+        document.getElementById("cm-fin").value = cmEditando.fecha_fin || "";
+        document.getElementById("cm-pagado").value = cmEditando.monto_pagado ?? 0;
+        document.getElementById("cm-fecha-saldo").value = cmEditando.fecha_pago_saldo || "";
+        document.getElementById("cm-activo").value = cmEditando.activo ? "true" : "false";
+        document.getElementById("modal-cm").classList.add("active");
+    }
+
+    function cerrarModalCM() {
+        document.getElementById("modal-cm").classList.remove("active");
+        cmEditando = null;
+    }
+
+    async function guardarCM() {
+        if (!cmEditando) return;
+        const datos = {
+            membresia_id: parseInt(document.getElementById("cm-membresia").value),
+            fecha_inicio: document.getElementById("cm-inicio").value || null,
+            fecha_fin: document.getElementById("cm-fin").value || null,
+            monto_pagado: parseFloat(document.getElementById("cm-pagado").value) || 0,
+            fecha_pago_saldo: document.getElementById("cm-fecha-saldo").value || null,
+            activo: document.getElementById("cm-activo").value === "true",
+        };
+        if (!datos.fecha_inicio) { showError("La fecha de inicio es obligatoria"); return; }
+        try {
+            await apiFetch(`/cliente-membresias/${cmEditando.id}`, { method: "PUT", body: JSON.stringify(datos) });
+            showSuccess("Membresía actualizada");
+            cerrarModalCM();
+            cargarMembresiasCliente();
+            verCliente(clienteActual.id); // refresca fechas de renovacion/vencimiento de la ficha
+            showTab("membresias", document.querySelectorAll(".tab")[1]);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarCM(cmId) {
+        if (!(await confirmDialog("¿Eliminar esta membresía asignada? Esta acción corrige el historial y no se puede deshacer."))) return;
+        try {
+            await apiFetch(`/cliente-membresias/${cmId}`, { method: "DELETE" });
+            showSuccess("Membresía eliminada");
+            cargarMembresiasCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarProgreso() {
+        const medidas = await apiFetch(`/clientes/${clienteActual.id}/medidas`);
+        const progreso = await apiFetch(`/progreso/cliente/${clienteActual.id}`);
+        const c = document.getElementById("contenido-progreso");
+        // Combinar datos de Medidas (mas completo) y Progreso (legacy)
+        let puntos = [];
+        medidas.forEach(m => {
+            puntos.push({fecha: m.fecha, peso: m.peso_kg, grasa: m.porcentaje_grasa_corporal, musculo: m.masa_muscular_kg});
+        });
+        progreso.forEach(p => {
+            if (!puntos.find(x => x.fecha === p.fecha?.split('T')[0])) {
+                puntos.push({fecha: p.fecha?.split('T')[0], peso: p.peso, grasa: p.porcentaje_grasa, musculo: p.porcentaje_musculo});
+            }
+        });
+        puntos.sort((a,b) => a.fecha?.localeCompare(b.fecha));
+        if (!puntos.length) { c.innerHTML = '<p style="color:var(--color-texto-secundario);">Sin registros de progreso. Registra medidas en la pestaña Medidas para ver la evolución aqui.</p>'; return; }
+
+        // Grafica SVG inline
+        const W = 600, H = 220, PAD = 40;
+        const n = puntos.length;
+        const maxPeso = Math.max(...puntos.map(p => p.peso || 0)) || 100;
+        const minPeso = Math.min(...puntos.filter(p => p.peso).map(p => p.peso)) || 0;
+        const rango = Math.max(maxPeso - minPeso, 5);
+        const xStep = n > 1 ? (W - PAD*2) / (n - 1) : 0;
+        const yScale = (v) => H - PAD - ((v - minPeso) / rango) * (H - PAD*2);
+
+        let pesoPath = '', grasaPath = '', musculoPath = '';
+        let pesoDots = '', grasaDots = '', musculoDots = '';
+        let labels = '';
+
+        // Escala secundaria para % grasa (0-50%) y musculo kg
+        const maxGrasa = Math.max(...puntos.map(p => p.grasa || 0), 1);
+        const maxMusculo = Math.max(...puntos.map(p => p.musculo || 0), 1);
+
+        puntos.forEach((p, i) => {
+            const x = PAD + i * xStep;
+            if (p.peso) {
+                const y = yScale(p.peso);
+                pesoPath += (pesoPath ? ' L' : 'M') + ` ${x} ${y}`;
+                pesoDots += `<circle cx="${x}" cy="${y}" r="4" fill="#5FA88C"><title>${formatFecha(p.fecha)}: ${p.peso} kg</title></circle>`;
+            }
+            if (p.grasa) {
+                const yg = H - PAD - (p.grasa / Math.max(maxGrasa*1.2,30)) * (H - PAD*2);
+                grasaPath += (grasaPath ? ' L' : 'M') + ` ${x} ${yg}`;
+                grasaDots += `<circle cx="${x}" cy="${yg}" r="3" fill="#C97B68"><title>${formatFecha(p.fecha)}: ${p.grasa}%</title></circle>`;
+            }
+            if (p.musculo) {
+                const ym = H - PAD - (p.musculo / Math.max(maxMusculo*1.2,50)) * (H - PAD*2);
+                musculoPath += (musculoPath ? ' L' : 'M') + ` ${x} ${ym}`;
+                musculoDots += `<circle cx="${x}" cy="${ym}" r="3" fill="#7C9CC4"><title>${formatFecha(p.fecha)}: ${p.musculo} kg</title></circle>`;
+            }
+            if (n <= 12 || i % Math.ceil(n/10) === 0) {
+                labels += `<text x="${x}" y="${H - 8}" text-anchor="middle" font-size="9" fill="var(--color-texto-secundario)">${p.fecha?.substring(5) || ''}</text>`;
+            }
+        });
+
+        const svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;height:auto;margin-bottom:14px;">
+            <rect width="${W}" height="${H}" fill="none"/>
+            ${pesoPath ? `<path d="${pesoPath}" fill="none" stroke="#5FA88C" stroke-width="2.5" stroke-linejoin="round"/>` : ''}
+            ${grasaPath ? `<path d="${grasaPath}" fill="none" stroke="#C97B68" stroke-width="1.5" stroke-dasharray="5,3" stroke-linejoin="round"/>` : ''}
+            ${musculoPath ? `<path d="${musculoPath}" fill="none" stroke="#7C9CC4" stroke-width="1.5" stroke-dasharray="5,3" stroke-linejoin="round"/>` : ''}
+            ${pesoDots}${grasaDots}${musculoDots}
+            ${labels}
+            <text x="${PAD}" y="16" font-size="10" fill="var(--color-texto-secundario)">Peso: ${minPeso.toFixed(1)}-${maxPeso.toFixed(1)} kg</text>
+        </svg>
+        <div style="display:flex;gap:16px;font-size:0.78em;margin-bottom:12px;">
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:14px;height:3px;background:#5FA88C;display:inline-block;border-radius:2px;"></span> Peso (kg)</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:14px;height:3px;background:#C97B68;display:inline-block;border-radius:2px;border:1px dashed #C97B68;"></span> % Grasa</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:14px;height:3px;background:#7C9CC4;display:inline-block;border-radius:2px;border:1px dashed #7C9CC4;"></span> Músculo (kg)</span>
+        </div>`;
+
+        c.innerHTML = svg + `<table class="table"><thead><tr><th>Fecha</th><th>Peso</th><th>% Grasa</th><th>Músculo</th><th>Notas</th></tr></thead><tbody>
+        ${puntos.map(r => `<tr><td>${formatFecha(r.fecha)}</td><td>${r.peso ? r.peso+" kg":"—"}</td><td>${r.grasa ? r.grasa+"%":"—"}</td><td>${r.musculo ? r.musculo+" kg":"—"}</td><td style="font-size:0.8em;color:var(--color-texto-secundario);"></td></tr>`).join("")}
+        </tbody></table>`;
+    }
+
+    // ==============================================================
+    // Pestana Medidas: toma antropometrica completa por fecha.
+    // Los campos que se muestran/piden se definen en Gestion > Medidas
+    // (Configuracion.medidas_campos_visibles/medidas_valores_visibles).
+    // Sexo y fecha de nacimiento NO se piden aqui: se toman del perfil
+    // del cliente (clienteActual.genero / clienteActual.fecha_nacimiento)
+    // e inyectan automaticamente al calcular.
+    // ==============================================================
+    let medidasConfigCache = null;
+    let medidasHistorialCache = [];
+
+    async function _getMedidasConfig() {
+        if (medidasConfigCache) return medidasConfigCache;
+        const cfg = await getConfiguracion();
+        const campos = (cfg.medidas_campos_visibles || "").split(",").filter(Boolean);
+        const valores = (cfg.medidas_valores_visibles || "").split(",").filter(Boolean);
+        medidasConfigCache = {
+            campos: campos.length ? campos : CAMPOS_MEDIDAS_DEFAULT,
+            valores: valores.length ? valores : VALORES_CALCULADOS_DEFAULT,
+        };
+        return medidasConfigCache;
+    }
+
+    // Sexo en formato "M"/"F" a partir de Cliente.genero ("Masculino"/"Femenino"/"Otro").
+    function _sexoDesdeCliente() {
+        const g = (clienteActual.genero || "").toLowerCase();
+        if (g.startsWith("masc")) return "M";
+        if (g.startsWith("fem")) return "F";
+        return null;
+    }
+
+    // Toma un registro de /medidas/ y le agrega sexo/fecha_nacimiento
+    // del perfil del cliente, para que las formulas de calculo
+    // (que siguen leyendo medida.sexo/medida.fecha_nacimiento) los
+    // reciban sin tener que pedirselos de nuevo al trainer.
+    function _conDatosCliente(m) {
+        return { ...m, sexo: _sexoDesdeCliente(), fecha_nacimiento: clienteActual.fecha_nacimiento };
+    }
+
+    async function cargarMedidasDelCliente() {
+        const cont = document.getElementById("contenido-medidas");
+        cont.innerHTML = '<p style="color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const [config, historial] = await Promise.all([
+                _getMedidasConfig(),
+                apiFetch(`/medidas/cliente/${clienteActual.id}`),
+            ]);
+            medidasHistorialCache = historial;
+            const camposActivos = CAMPOS_MEDIDAS.filter(c => config.campos.includes(c.clave));
+
+            cont.innerHTML = `
+                <p style="font-size:0.8em;color:var(--color-texto-secundario);margin:0 0 14px;">Los conceptos a medir y los valores calculados se configuran en <a href="gestion-medidas.html">Gestión &gt; Medidas</a>. Sexo y fecha de nacimiento se usan automáticamente del perfil del cliente (pestaña Datos).</p>
+                <div class="medidas-layout">
+                    <div class="medidas-form-col" id="medidas-form-col"></div>
+                    <div class="medidas-calc-col" id="medidas-calculados-wrap"></div>
+                </div>
+                <div class="table-container" style="margin-top:18px;">
+                    <table class="table"><thead><tr>
+                        <th>Fecha</th>
+                        ${camposActivos.map(c => `<th>${c.etiqueta}${c.unidad ? ` (${c.unidad})` : ""}</th>`).join("")}
+                        <th></th>
+                    </tr></thead>
+                    <tbody>
+                    ${historial.length ? historial.map(m => `<tr>
+                        <td>${formatFecha(m.fecha)}</td>
+                        ${camposActivos.map(c => `<td>${_valorCampoTexto(c, m[c.clave])}</td>`).join("")}
+                        <td style="white-space:nowrap;">
+                            <button class="btn btn-sm btn-secondary" onclick="abrirFormNuevaToma(${m.id})">✏️</button>
+                            ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarMedida(${m.id})">🗑️</button>` : ""}
+                        </td>
+                    </tr>`).join("") : `<tr class="empty-row"><td colspan="${camposActivos.length + 2}">Sin tomas registradas aún</td></tr>`}
+                    </tbody></table>
+                </div>`;
+
+            abrirFormNuevaToma();
+            renderValoresCalculados();
+        } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
+    }
+
+    function _valorCampoTexto(campoDef, valor) {
+        if (valor === null || valor === undefined || valor === "") return "—";
+        if (campoDef.tipo === "fecha") return formatFecha(valor);
+        return `${valor}${campoDef.unidad ? " " + campoDef.unidad : ""}`;
+    }
+
+    function renderValoresCalculados() {
+        const wrap = document.getElementById("medidas-calculados-wrap");
+        if (!wrap) return;
+        if (!medidasHistorialCache.length) {
+            wrap.innerHTML = '<p style="color:var(--color-texto-secundario);font-size:0.85em;">Registra la primera toma para ver los valores calculados.</p>';
+            return;
+        }
+        const historialConCliente = medidasHistorialCache.map(_conDatosCliente);
+        const ultima = historialConCliente[0];
+        const extraForm = _leerExtraFormulario();
+        const extra = { peso_objetivo_kg: extraForm.peso_objetivo_kg ?? ultima.peso_objetivo_kg, nivel_actividad: extraForm.nivel_actividad || "moderado", objetivo_calorico: extraForm.objetivo_calorico || "mantener" };
+        const valoresActivos = VALORES_CALCULADOS.filter(v => medidasConfigCache.valores.includes(v.clave));
+        wrap.innerHTML = `<div style="font-weight:600;font-size:0.9em;">🧮 Valores calculados</div>` +
+            (valoresActivos.length ? valoresActivos.map(v => {
+                const r = calcularValor(v.clave, ultima, historialConCliente, extra);
+                return `<div class="medidas-calc-card">
+                    <div class="mc-label">${v.etiqueta}</div>
+                    <div class="mc-valor">${r ? r.texto : "Faltan datos"}</div>
+                </div>`;
+            }).join("") : '<p style="color:var(--color-texto-secundario);font-size:0.85em;">Sin valores configurados en Gestión &gt; Medidas</p>');
+    }
+
+    function _leerExtraFormulario() {
+        const pesoObjEl = document.getElementById("mt-peso_objetivo_kg");
+        const nivelEl = document.getElementById("mt-nivel_actividad");
+        const objEl = document.getElementById("mt-objetivo_calorico");
+        return {
+            peso_objetivo_kg: pesoObjEl && pesoObjEl.value ? parseFloat(pesoObjEl.value) : null,
+            nivel_actividad: nivelEl ? nivelEl.value : null,
+            objetivo_calorico: objEl ? objEl.value : null,
+        };
+    }
+
+    let medidaEditandoId = null;
+
+    // Formulario de toma: lista VERTICAL y compacta a la izquierda
+    // (una fila por concepto, separadas por lineas horizontales muy
+    // tenues) - no una grilla. No incluye sexo ni fecha de nacimiento.
+    function abrirFormNuevaToma(medidaId) {
+        medidaEditandoId = medidaId || null;
+        const existente = medidaId ? medidasHistorialCache.find(m => m.id === medidaId) : null;
+        const camposActivos = CAMPOS_MEDIDAS.filter(c => medidasConfigCache.campos.includes(c.clave));
+        const grupos = {};
+        camposActivos.forEach(c => { (grupos[c.grupo] = grupos[c.grupo] || []).push(c); });
+
+        const campoInput = (c) => {
+            const val = existente ? (existente[c.clave] ?? "") : "";
+            if (c.tipo === "texto") return `<input type="text" id="mt-${c.clave}" value="${val}" placeholder="120/80" style="text-align:left;" oninput="renderValoresCalculados()">`;
+            return `<input type="number" step="0.1" id="mt-${c.clave}" value="${val}" oninput="renderValoresCalculados()">`;
+        };
+
+        const html = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
+                <strong style="font-size:0.88em;">${existente ? "Editar toma" : "Nueva toma"}</strong>
+                <input type="date" id="mt-fecha" value="${existente ? existente.fecha : new Date().toISOString().split('T')[0]}" style="padding:4px 6px;font-size:0.78em;border:1px solid var(--color-borde);border-radius:6px;">
+            </div>
+            ${Object.entries(grupos).map(([grupo, campos]) => `
+                <div class="medidas-grupo-titulo">${grupo}</div>
+                ${campos.map(c => `<div class="medidas-fila"><label for="mt-${c.clave}">${c.etiqueta}${c.unidad ? ` (${c.unidad})` : ""}</label>${campoInput(c)}</div>`).join("")}
+            `).join("")}
+            <div class="medidas-grupo-titulo">Para recomendaciones</div>
+            <div class="medidas-fila"><label for="mt-peso_objetivo_kg">Peso objetivo (kg)</label><input type="number" step="0.1" id="mt-peso_objetivo_kg" value="${existente ? (existente.peso_objetivo_kg ?? "") : ""}" oninput="renderValoresCalculados()"></div>
+            <div class="medidas-fila"><label for="mt-nivel_actividad">Nivel de actividad</label>
+                <select id="mt-nivel_actividad" onchange="renderValoresCalculados()">
+                    <option value="sedentario">Sedentario</option><option value="ligero">Ligero</option><option value="moderado" selected>Moderado</option><option value="activo">Activo</option><option value="muy_activo">Muy activo</option>
+                </select></div>
+            <div class="medidas-fila"><label for="mt-objetivo_calorico">Objetivo</label>
+                <select id="mt-objetivo_calorico" onchange="renderValoresCalculados()">
+                    <option value="perder">Perder peso</option><option value="mantener" selected>Mantener</option><option value="ganar">Ganar masa</option>
+                </select></div>
+            <div class="medidas-fila"><label for="mt-notas">Notas</label><input type="text" id="mt-notas" value="${existente ? (existente.notas || "") : ""}" style="text-align:left;width:140px;"></div>
+            <div class="form-actions" style="margin-top:10px;">
+                ${existente ? '<button class="btn btn-secondary btn-sm" onclick="abrirFormNuevaToma()">Cancelar edición</button>' : ""}
+                <button class="btn btn-primary btn-sm" onclick="guardarToma()">${existente ? "Guardar cambios" : "Guardar toma"}</button>
+            </div>`;
+        document.getElementById("medidas-form-col").innerHTML = html;
+        renderValoresCalculados();
+    }
+
+    async function guardarToma() {
+        const camposActivos = CAMPOS_MEDIDAS.filter(c => medidasConfigCache.campos.includes(c.clave));
+        const datos = { cliente_id: clienteActual.id, fecha: document.getElementById("mt-fecha").value || null };
+        camposActivos.forEach(c => {
+            const el = document.getElementById(`mt-${c.clave}`);
+            if (!el) return;
+            const v = el.value;
+            datos[c.clave] = v === "" ? null : (c.tipo === "num" ? parseFloat(v) : v);
+        });
+        const extraForm = _leerExtraFormulario();
+        datos.peso_objetivo_kg = extraForm.peso_objetivo_kg;
+        datos.notas = document.getElementById("mt-notas").value.trim() || null;
+        try {
+            if (medidaEditandoId) await apiFetch(`/medidas/${medidaEditandoId}`, { method: "PUT", body: JSON.stringify(datos) });
+            else await apiFetch("/medidas/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess("Toma de medidas guardada ✅");
+            medidaEditandoId = null;
+            cargarMedidasDelCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarMedida(id) {
+        if (!(await confirmDialog("¿Eliminar esta toma de medidas?"))) return;
+        try { await apiFetch(`/medidas/${id}`, { method: "DELETE" }); showSuccess("Toma eliminada"); cargarMedidasDelCliente(); }
+        catch (e) { showError(e.message); }
+    }
+
+    let archivoFotoSeleccionado = null;
+
+    function previsualizarFoto(input) {
+        archivoFotoSeleccionado = input.files && input.files[0] ? input.files[0] : null;
+        document.getElementById("f-foto-nombre").textContent = archivoFotoSeleccionado ? archivoFotoSeleccionado.name : "";
+        const wrap = document.getElementById("foto-preview-wrap");
+        if (archivoFotoSeleccionado) {
+            const url = URL.createObjectURL(archivoFotoSeleccionado);
+            wrap.innerHTML = `<div class="resultado-avatar" style="width:44px;height:44px;padding:0;overflow:hidden;"><img src="${url}" style="width:100%;height:100%;object-fit:cover;"></div>`;
+        }
+    }
+
+    function _clientesFcTerminado(cliente) {
+        // Se llama cuando termina el flujo compartido "Nuevo Cliente ->
+        // Asignar Membresia -> Cobro y Contrato" (abrirModalClienteNuevo).
+        cargarClientes();
+        if (cliente && cliente.id) verCliente(cliente.id);
+    }
+
+    function abrirModalEditar() {
+        if (!clienteActual) return;
+        modoEdicion = true;
+        archivoFotoSeleccionado = null;
+        document.getElementById("modal-titulo").textContent = "Editar Cliente";
+        document.getElementById("f-nombre").value = clienteActual.nombre || "";
+        document.getElementById("f-apellidos").value = clienteActual.apellidos || "";
+        document.getElementById("f-dni").value = clienteActual.dni || "";
+        document.getElementById("f-telefono").value = clienteActual.telefono || "";
+        document.getElementById("f-email").value = clienteActual.email || "";
+        document.getElementById("f-nacimiento").value = clienteActual.fecha_nacimiento || "";
+        document.getElementById("f-direccion").value = clienteActual.direccion || "";
+        document.getElementById("f-codigo").value = clienteActual.codigo_acceso || "";
+        document.getElementById("f-genero").value = clienteActual.genero || "";
+        document.getElementById("f-foto").value = "";
+        document.getElementById("f-foto-nombre").textContent = "";
+        const nombre = `${clienteActual.nombre} ${clienteActual.apellidos || ""}`.trim();
+        document.getElementById("foto-preview-wrap").innerHTML = avatarHtml(nombre, clienteActual.foto_url, "width:44px;height:44px;");
+        document.getElementById("modal-cliente").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-cliente").classList.remove("active"); }
+
+    async function guardarCliente() {
+        const datos = {
+            nombre: document.getElementById("f-nombre").value.trim(),
+            apellidos: document.getElementById("f-apellidos").value.trim() || null,
+            dni: document.getElementById("f-dni").value.trim() || null,
+            telefono: document.getElementById("f-telefono").value.trim() || null,
+            email: document.getElementById("f-email").value.trim() || null,
+            fecha_nacimiento: document.getElementById("f-nacimiento").value || null,
+            direccion: document.getElementById("f-direccion").value.trim() || null,
+            codigo_acceso: document.getElementById("f-codigo").value.trim() || null,
+            genero: document.getElementById("f-genero").value || null,
+        };
+        if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
+        try {
+            await apiFetch(`/clientes/${clienteActual.id}`, { method: "PUT", body: JSON.stringify(datos) });
+            if (archivoFotoSeleccionado) {
+                await apiUploadFile(`/clientes/${clienteActual.id}/foto`, archivoFotoSeleccionado);
+            }
+            showSuccess("Cliente actualizado");
+            cerrarModal();
+            verCliente(clienteActual.id);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarCliente(id) {
+        if (!(await confirmDialog("¿Eliminar este cliente?"))) return;
+        try { await apiFetch(`/clientes/${id}`, { method: "DELETE" }); showSuccess("Cliente eliminado"); cargarClientes(); }
+        catch (e) { showError(e.message); }
+    }
+
+    async function eliminarClienteActual() {
+        if (!clienteActual || !(await confirmDialog("¿Eliminar este cliente?"))) return;
+        try { await apiFetch(`/clientes/${clienteActual.id}`, { method: "DELETE" }); showSuccess("Eliminado"); cerrarFicha(); cargarClientes(); }
+        catch (e) { showError(e.message); }
+    }
+
+    // Soporta acceso directo con filtros por URL, ej. desde la
+    // tarjeta "Membresias por Vencer" del Panel:
+    // clientes.html?filtro=por_vencer&dias=30&orden=vencer
+    (function aplicarFiltrosDeUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const filtroUrl = params.get("filtro");
+        if (filtroUrl) {
+            filtroActual = filtroUrl;
+            const chip = document.querySelector(`.chip-filtro[data-filtro="${filtroUrl}"]`);
+            if (chip) {
+                document.querySelectorAll(".chip-filtro").forEach(c => c.classList.remove("activo"));
+                chip.classList.add("activo");
+            }
+            document.getElementById("wrap-dias-vencer").style.display = filtroUrl === "por_vencer" ? "flex" : "none";
+        }
+        const diasUrl = params.get("dias");
+        if (diasUrl) document.getElementById("f-dias-vencer").value = diasUrl;
+        const ordenUrl = params.get("orden");
+        if (ordenUrl) document.getElementById("f-orden").value = ordenUrl;
+    })();
+
+    cargarClientes();
+
+    const clienteVerUrl = new URLSearchParams(window.location.search).get("ver");
+    if (clienteVerUrl) verCliente(parseInt(clienteVerUrl));
+</script>
+</body>
+</html>

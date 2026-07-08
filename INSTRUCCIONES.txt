@@ -1,0 +1,112 @@
+========================================
+  Soft-MrGym - Sistema de Gestión
+========================================
+
+¡Hola! Ya tienes listo tu sistema de gestión para gimnasio.
+
+========================================
+📋 VERSIÓN RECOMENDADA: LITE
+========================================
+
+La versión LITE es la más fácil de usar y NO requiere instalación.
+
+✅ Para iniciar el sistema:
+   1. Haz doble clic en: start-lite.bat
+   2. O abre directamente: frontend-lite/index.html
+   3. El sistema se abrirá en tu navegador
+
+✅ Características:
+   - No necesitas instalar nada
+   - 100% gratuito
+   - Funciona sin internet
+   - Los datos se guardan automáticamente en tu navegador
+   - Interfaz moderna y fácil de usar
+
+========================================
+📦 VERSIÓN COMPLETA (con Python)
+========================================
+
+Si tienes Python instalado y quieres la versión completa con backend:
+
+1. Instala Python desde: https://www.python.org/downloads/
+   - IMPORTANTE: Marca "Add Python to PATH" durante la instalación
+
+2. Haz doble clic en: start.bat
+   - Instalará dependencias automáticamente
+   - Creará la base de datos
+   - Iniciará el servidor
+
+3. Abre: frontend/index.html
+
+========================================
+🎯 FUNCIONALIDADES DISPONIBLES
+========================================
+
+✅ Dashboard - Estadísticas en tiempo real
+✅ Clientes - Registro y gestión de alumnos
+✅ Membresías - Planes y precios
+✅ Productos - Inventario con control de stock
+✅ Ventas - Punto de venta con descuento automático de stock
+✅ Progreso - Registro de peso y medidas de alumnos
+
+========================================
+👤 DATOS DE ACCESO (Solo versión completa)
+========================================
+
+Usuario: admin
+Contraseña: admin123
+
+========================================
+💡 CONSEJOS DE USO
+========================================
+
+1. RESPALDO DE DATOS:
+   - Versión LITE: Los datos están en tu navegador (localStorage)
+   - Versión Completa: Copia el archivo "gimnasio.db" regularmente
+
+2. PRIMEROS PASOS:
+   - Crea tus membresías personalizadas
+   - Registra tus productos
+   - Agrega tus clientes
+   - Comienza a registrar ventas
+
+3. DATOS DE EJEMPLO:
+   - El sistema viene con 5 clientes de ejemplo
+   - 4 membresías de ejemplo
+   - 5 productos de ejemplo
+   - Puedes eliminarlos y crear los tuyos
+
+========================================
+🔧 SOLUCIÓN DE PROBLEMAS
+========================================
+
+Si la versión LITE no funciona:
+- Asegúrate de usar un navegador moderno (Chrome, Firefox, Edge)
+- Habilita JavaScript en tu navegador
+- No borres los datos del sitio (localStorage)
+
+Si la versión completa no funciona:
+- Verifica que Python esté instalado: python --version
+- Asegúrate de que el puerto 8000 esté libre
+- Revisa que todas las dependencias se instalaron correctamente
+
+========================================
+📞 SOPORTE
+========================================
+
+Este es un proyecto 100% gratuito y de código abierto.
+Puedes modificar el código fuente según tus necesidades.
+
+Estructura del proyecto:
+- frontend-lite/ - Versión sin instalación (RECOMENDADA)
+- frontend/ - Versión con backend Python
+- backend/ - API y servidor Python
+- README.md - Documentación completa
+
+========================================
+¡COMIENZA A USAR TU SISTEMA AHORA!
+========================================
+
+Doble clic en: start-lite.bat
+
+¡Disfruta tu nuevo sistema de gestión! 🏋️💪

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Progreso - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Progreso</h1><p class="header-subtitle">Seguimiento fisico de alumnos</p></div>
+            <button class="btn btn-primary" onclick="abrirModal()">+ Registrar Progreso</button>
+        </div>
+        <div class="card">
+            <div class="search-bar">
+                <select id="sel-cliente" onchange="cargarProgreso()">
+                    <option value="">-- Seleccionar alumno --</option>
+                </select>
+            </div>
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Fecha</th><th>Peso</th><th>Altura</th><th>% Grasa</th><th>% Musculo</th><th>Notas</th></tr></thead>
+                    <tbody id="tabla-progreso"><tr class="empty-row"><td colspan="6">Selecciona un alumno</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+<div id="modal-progreso" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3 class="modal-title">Registrar Progreso</h3><button class="modal-close" onclick="cerrarModal()">✕</button></div>
+        <div class="form-group"><label>Cliente *</label><select id="f-cliente"><option value="">Seleccionar...</option></select></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group"><label>Peso (kg)</label><input type="number" id="f-peso" step="0.1" placeholder="70.5"></div>
+            <div class="form-group"><label>Altura (cm)</label><input type="number" id="f-altura" step="0.1" placeholder="170"></div>
+            <div class="form-group"><label>% Grasa</label><input type="number" id="f-grasa" step="0.1" placeholder="15.5"></div>
+            <div class="form-group"><label>% Musculo</label><input type="number" id="f-musculo" step="0.1" placeholder="45.0"></div>
+        </div>
+        <div class="form-group"><label>Notas</label><textarea id="f-notas" rows="2"></textarea></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarProgreso()">Guardar</button>
+        </div>
+    </div>
+</div>
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    async function init() {
+        const clientes = await apiFetch("/clientes/?limit=200");
+        const opts = clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos||""}</option>`).join("");
+        document.getElementById("sel-cliente").innerHTML += opts;
+        document.getElementById("f-cliente").innerHTML = '<option value="">Seleccionar...</option>' + opts;
+    }
+
+    async function cargarProgreso() {
+        const id = document.getElementById("sel-cliente").value;
+        const tbody = document.getElementById("tabla-progreso");
+        if (!id) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Selecciona un alumno</td></tr>'; return; }
+        const progresos = await apiFetch(`/progreso/cliente/${id}`);
+        if (!progresos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin registros de progreso</td></tr>'; return; }
+        tbody.innerHTML = progresos.map(p => `<tr>
+            <td>${formatFecha(p.fecha)}</td>
+            <td>${p.peso ? p.peso+" kg":"—"}</td>
+            <td>${p.altura ? p.altura+" cm":"—"}</td>
+            <td>${p.porcentaje_grasa ? p.porcentaje_grasa+"%":"—"}</td>
+            <td>${p.porcentaje_musculo ? p.porcentaje_musculo+"%":"—"}</td>
+            <td style="font-size:0.85em;color:#636E72;">${p.notas||"—"}</td>
+        </tr>`).join("");
+    }
+
+    function abrirModal() {
+        ["peso","altura","grasa","musculo","notas"].forEach(f => document.getElementById(`f-${f}`).value = "");
+        const sel = document.getElementById("sel-cliente").value;
+        if (sel) document.getElementById("f-cliente").value = sel;
+        document.getElementById("modal-progreso").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-progreso").classList.remove("active"); }
+
+    async function guardarProgreso() {
+        const datos = {
+            cliente_id: parseInt(document.getElementById("f-cliente").value),
+            peso: parseFloat(document.getElementById("f-peso").value)||null,
+            altura: parseFloat(document.getElementById("f-altura").value)||null,
+            porcentaje_grasa: parseFloat(document.getElementById("f-grasa").value)||null,
+            porcentaje_musculo: parseFloat(document.getElementById("f-musculo").value)||null,
+            notas: document.getElementById("f-notas").value.trim()||null,
+        };
+        if (!datos.cliente_id) { showError("Selecciona un cliente"); return; }
+        try {
+            await apiFetch("/progreso/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess("Progreso registrado"); cerrarModal();
+            document.getElementById("sel-cliente").value = datos.cliente_id; cargarProgreso();
+        } catch (e) { showError(e.message); }
+    }
+
+    init();
+</script>
+</body>
+</html>

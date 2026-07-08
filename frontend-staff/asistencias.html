@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asistencias - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
+        .filtros-bar label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+
+        /* Selector de tipo: Alumnos / Staff / Profesores */
+        .chips-tipo-persona { display:flex; gap:6px; }
+        .chip-persona { padding:6px 14px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; font-weight:600; }
+        .chip-persona.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        /* Sub-tabs de vista (solo alumnos) */
+        .subtabs { display:flex; gap:6px; margin-bottom:16px; }
+        .subtab { padding:7px 14px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); user-select:none; }
+        .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        /* Vista general: filas simples, solo lectura */
+        .fila-asistencia { display:flex; align-items:center; gap:12px; padding:10px 18px; border-top:1px solid var(--color-borde); }
+        .fila-asistencia:first-child { border-top:none; }
+        .fila-info { flex:1; min-width:0; }
+        .fila-nombre { font-size:0.86em; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fila-sub { font-size:0.72em; color:var(--color-texto-secundario); }
+        .fila-hora { font-size:0.78em; color:var(--color-texto-secundario); text-align:right; flex-shrink:0; }
+        .fila-hora strong { color:var(--color-texto); display:block; font-size:1.05em; }
+
+        /* Vista por horario: mini-grafico de barras horizontales, compacto */
+        .horario-chart { display:flex; flex-direction:column-reverse; gap:3px; padding:4px 0; }
+        .horario-fila { display:flex; align-items:center; gap:10px; padding:3px 4px; border-radius:6px; }
+        .horario-fila:hover { background:var(--color-fondo); }
+        .horario-fila-label { width:78px; flex-shrink:0; font-size:0.76em; color:var(--color-texto-secundario); }
+        .horario-fila-barwrap { flex:1; background:color-mix(in srgb, var(--color-borde) 55%, transparent); border-radius:4px; height:14px; overflow:hidden; }
+        .horario-fila-bar { height:100%; background:var(--color-primario); border-radius:4px; min-width:2px; transition:width .25s; }
+        .horario-fila-count { width:26px; text-align:right; font-size:0.78em; font-weight:700; flex-shrink:0; }
+
+        /* Buscador por alumno / staff / profesor */
+        .bi-input { width:100%; padding:10px 12px; border:1px solid var(--color-borde); background:var(--color-fondo); color:var(--color-texto); border-radius:8px; font-size:0.88em; box-sizing:border-box; }
+        .resultado-busq { display:flex; align-items:center; gap:10px; padding:10px 14px; border-top:1px solid var(--color-borde); cursor:pointer; }
+        .resultado-busq:hover { background:var(--color-fondo); }
+
+        /* Ficha de la persona seleccionada */
+        .ficha-persona { display:flex; align-items:center; gap:14px; padding:16px 18px; background:var(--color-fondo); border-radius:10px; margin-bottom:16px; }
+        .ficha-persona-info { flex:1; min-width:0; }
+        .ficha-persona-nombre { font-weight:700; font-size:1em; margin-bottom:3px; }
+        .ficha-persona-sub { font-size:0.78em; color:var(--color-texto-secundario); }
+        .membresia-chip { display:inline-block; font-size:0.72em; padding:2px 10px; border-radius:10px; font-weight:600; margin-top:4px; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">✅ Asistencias</h1>
+                <p class="header-subtitle">Control de acceso al gimnasio</p>
+            </div>
+        </div>
+
+        <!-- Filtros de fecha + tipo de persona -->
+        <div class="filtros-bar">
+            <label><input type="checkbox" id="chk-hoy" checked onchange="onCheckHoy()"> Hoy</label>
+            <label>Desde <input type="date" id="f-desde" disabled></label>
+            <label>Hasta <input type="date" id="f-hasta" disabled></label>
+            <div class="chips-tipo-persona" id="chips-tipo-persona" style="margin-left:auto;">
+                <span class="chip-persona activo" data-tipo="alumnos" onclick="onChipPersona(this)">🧑‍🤝‍🧑 Alumnos</span>
+                <span class="chip-persona" data-tipo="staff" onclick="onChipPersona(this)">🔑 Staff</span>
+                <span class="chip-persona" data-tipo="profesores" onclick="onChipPersona(this)">🎓 Profesores</span>
+            </div>
+        </div>
+
+        <!-- Sub-tabs solo para Alumnos -->
+        <div class="subtabs" id="subtabs-alumnos">
+            <span class="subtab activo" data-vista="general" onclick="onSubtab(this)">📋 General</span>
+            <span class="subtab" data-vista="horario" onclick="onSubtab(this)">🕐 Por horario</span>
+            <span class="subtab" data-vista="alumno" onclick="onSubtab(this)">🔎 Por alumno</span>
+        </div>
+
+        <!-- ============== VISTA: GENERAL (alumnos) ============== -->
+        <div class="card" id="vista-general">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 class="card-title">Asistencia general</h3>
+                <span id="contador-general" style="font-size:0.82em;color:var(--color-texto-secundario);"></span>
+            </div>
+            <div id="lista-general" style="max-height:600px;overflow-y:auto;">
+                <p style="text-align:center;padding:30px;color:var(--color-texto-secundario);">Cargando...</p>
+            </div>
+        </div>
+
+        <!-- ============== VISTA: POR HORARIO (alumnos) ============== -->
+        <div class="card" id="vista-horario" style="display:none;">
+            <div class="card-header"><h3 class="card-title">Asistencia por horario</h3></div>
+            <div style="padding:14px 18px;" id="lista-horarios">
+                <p style="text-align:center;padding:30px;color:var(--color-texto-secundario);">Cargando...</p>
+            </div>
+        </div>
+
+        <!-- ============== VISTA: POR ALUMNO ============== -->
+        <div class="card" id="vista-alumno" style="display:none;">
+            <div class="card-header"><h3 class="card-title">Buscar alumno</h3></div>
+            <div style="padding:14px 18px;">
+                <input type="text" class="bi-input" id="buscar-alumno-input" placeholder="Nombre, DNI o email..." oninput="onBuscarPersona('alumno')">
+                <div id="resultados-alumno"></div>
+            </div>
+            <div id="ficha-alumno-wrap" style="display:none;padding:0 18px 18px;">
+                <div class="ficha-persona" id="ficha-alumno-contenido"></div>
+                <h4 style="font-size:0.9em;margin:0 0 8px;">Historial de asistencias en el rango</h4>
+                <div id="lista-asistencias-alumno" style="max-height:400px;overflow-y:auto;border:1px solid var(--color-borde);border-radius:10px;"></div>
+            </div>
+        </div>
+
+        <!-- ============== VISTA: STAFF ============== -->
+        <div class="card" id="vista-staff" style="display:none;">
+            <div class="card-header"><h3 class="card-title">Buscar personal (Staff)</h3></div>
+            <div style="padding:14px 18px;">
+                <input type="text" class="bi-input" id="buscar-staff-input" placeholder="Nombre..." oninput="onBuscarPersona('staff')">
+                <div id="resultados-staff"></div>
+            </div>
+            <div id="ficha-staff-wrap" style="display:none;padding:0 18px 18px;">
+                <div class="ficha-persona" id="ficha-staff-contenido"></div>
+                <h4 style="font-size:0.9em;margin:0 0 8px;">Historial de marcaciones en el rango</h4>
+                <div id="lista-asistencias-staff" style="max-height:400px;overflow-y:auto;border:1px solid var(--color-borde);border-radius:10px;"></div>
+            </div>
+        </div>
+
+        <!-- ============== VISTA: PROFESORES ============== -->
+        <div class="card" id="vista-profesores" style="display:none;">
+            <div class="card-header"><h3 class="card-title">Buscar profesor</h3></div>
+            <div style="padding:14px 18px;">
+                <input type="text" class="bi-input" id="buscar-profesor-input" placeholder="Nombre..." oninput="onBuscarPersona('profesor')">
+                <div id="resultados-profesor"></div>
+            </div>
+            <div id="ficha-profesor-wrap" style="display:none;padding:0 18px 18px;">
+                <div class="ficha-persona" id="ficha-profesor-contenido"></div>
+                <h4 style="font-size:0.9em;margin:0 0 8px;">Clases dictadas en el rango</h4>
+                <div id="lista-clases-profesor" style="max-height:400px;overflow-y:auto;border:1px solid var(--color-borde);border-radius:10px;"></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    const HORAS_DIA = Array.from({ length: 16 }, (_, i) => i + 6); // 6..21 -> bloques 6-7 .. 21-22
+    let tipoPersonaActivo = "alumnos";
+    let vistaAlumnoActiva = "general";
+    let busquedaTimeout = null;
+
+    // ================================================================
+    // Filtros de fecha (compartidos por todas las vistas)
+    // ================================================================
+    function initFechas() {
+        const hoy = new Date();
+        document.getElementById("f-desde").value = isoFecha(hoy);
+        document.getElementById("f-hasta").value = isoFecha(hoy);
+    }
+    function isoFecha(d) { return d.toISOString().split("T")[0]; }
+
+    function onCheckHoy() {
+        const chk = document.getElementById("chk-hoy").checked;
+        document.getElementById("f-desde").disabled = chk;
+        document.getElementById("f-hasta").disabled = chk;
+        recargarVistaActual();
+    }
+    function onFechaChange() {
+        document.getElementById("chk-hoy").checked = false;
+        recargarVistaActual();
+    }
+    document.getElementById("f-desde")?.addEventListener?.("change", onFechaChange);
+    document.getElementById("f-hasta")?.addEventListener?.("change", onFechaChange);
+
+    function rangoActual() {
+        const chkHoy = document.getElementById("chk-hoy").checked;
+        const hoy = isoFecha(new Date());
+        if (chkHoy) return { desde: hoy, hasta: hoy, esHoy: true };
+        return { desde: document.getElementById("f-desde").value, hasta: document.getElementById("f-hasta").value, esHoy: false };
+    }
+
+    function recargarVistaActual() {
+        if (tipoPersonaActivo === "alumnos") {
+            if (vistaAlumnoActiva === "general") cargarVistaGeneral();
+            else if (vistaAlumnoActiva === "horario") cargarVistaHorario();
+            else if (vistaAlumnoActiva === "alumno") recargarFichaSiHayAlumno();
+        } else if (tipoPersonaActivo === "staff") {
+            recargarFichaStaffSiHay();
+        } else if (tipoPersonaActivo === "profesores") {
+            recargarFichaProfesorSiHay();
+        }
+    }
+
+    // ================================================================
+    // Selector de tipo de persona: Alumnos / Staff / Profesores
+    // ================================================================
+    function onChipPersona(el) {
+        document.querySelectorAll(".chip-persona").forEach(c => c.classList.remove("activo"));
+        el.classList.add("activo");
+        tipoPersonaActivo = el.dataset.tipo;
+
+        document.getElementById("subtabs-alumnos").style.display = tipoPersonaActivo === "alumnos" ? "flex" : "none";
+        document.getElementById("vista-general").style.display  = (tipoPersonaActivo === "alumnos" && vistaAlumnoActiva === "general") ? "block" : "none";
+        document.getElementById("vista-horario").style.display  = (tipoPersonaActivo === "alumnos" && vistaAlumnoActiva === "horario") ? "block" : "none";
+        document.getElementById("vista-alumno").style.display   = (tipoPersonaActivo === "alumnos" && vistaAlumnoActiva === "alumno") ? "block" : "none";
+        document.getElementById("vista-staff").style.display     = tipoPersonaActivo === "staff" ? "block" : "none";
+        document.getElementById("vista-profesores").style.display = tipoPersonaActivo === "profesores" ? "block" : "none";
+
+        recargarVistaActual();
+    }
+
+    function onSubtab(el) {
+        document.querySelectorAll(".subtab").forEach(s => s.classList.remove("activo"));
+        el.classList.add("activo");
+        vistaAlumnoActiva = el.dataset.vista;
+        onChipPersona(document.querySelector(".chip-persona.activo")); // re-muestra la vista correcta
+    }
+
+    // ================================================================
+    // VISTA GENERAL: todas las asistencias del rango, sin acciones
+    // ================================================================
+    async function cargarVistaGeneral() {
+        const { desde, hasta } = rangoActual();
+        const cont = document.getElementById("lista-general");
+        cont.innerHTML = '<p style="text-align:center;padding:30px;color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const asistencias = await apiFetch(`/asistencias/?desde=${desde}&hasta=${hasta}&limit=1000`);
+            document.getElementById("contador-general").textContent = `${asistencias.length} registro${asistencias.length !== 1 ? "s" : ""}`;
+            if (!asistencias.length) {
+                cont.innerHTML = '<p style="text-align:center;padding:30px;color:var(--color-texto-secundario);">Sin asistencias en el rango seleccionado</p>';
+                return;
+            }
+            cont.innerHTML = asistencias.map(a => {
+                const nombre = a.cliente ? `${a.cliente.nombre} ${a.cliente.apellidos || ""}`.trim() : "Desconocido";
+                const dni = a.cliente ? (a.cliente.dni || "Sin DNI") : "—";
+                return `
+                    <div class="fila-asistencia">
+                        ${avatarHtml(nombre, a.cliente ? a.cliente.foto_url : null)}
+                        <div class="fila-info">
+                            <div class="fila-nombre">${nombre}</div>
+                            <div class="fila-sub">${dni} · ${formatFecha(a.fecha_hora_entrada)}</div>
+                        </div>
+                        <div class="fila-hora">
+                            <strong>${formatHora(a.fecha_hora_entrada)}</strong>
+                            ${a.fecha_hora_salida ? `hasta ${formatHora(a.fecha_hora_salida)}` : "en curso"}
+                        </div>
+                    </div>`;
+            }).join("");
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // VISTA POR HORARIO: mini-grafico de barras 6-7 .. 21-22.
+    // column-reverse hace que 6-7 (el primero en el HTML) quede
+    // dibujado ABAJO y las horas mas tardias vayan subiendo, como un
+    // grafico de crecimiento del dia.
+    // ================================================================
+    async function cargarVistaHorario() {
+        const { desde, hasta } = rangoActual();
+        const cont = document.getElementById("lista-horarios");
+        cont.innerHTML = '<p style="text-align:center;padding:30px;color:var(--color-texto-secundario);">Cargando...</p>';
+        try {
+            const asistencias = await apiFetch(`/asistencias/?desde=${desde}&hasta=${hasta}&limit=1000`);
+
+            const bloques = {};
+            HORAS_DIA.forEach(h => bloques[h] = []);
+            asistencias.forEach(a => {
+                const hora = new Date(a.fecha_hora_entrada).getHours();
+                if (bloques[hora]) bloques[hora].push(a);
+            });
+
+            const maxCount = Math.max(...HORAS_DIA.map(h => bloques[h].length), 1);
+
+            cont.innerHTML = `<div class="horario-chart">` + HORAS_DIA.map(h => {
+                const items = bloques[h];
+                const pct = Math.max((items.length / maxCount) * 100, items.length > 0 ? 4 : 0);
+                const nombres = items.map(a => a.cliente ? `${a.cliente.nombre} ${a.cliente.apellidos || ""}`.trim() : "Desconocido").join(", ");
+                return `
+                    <div class="horario-fila" title="${nombres ? escapeAttrHorario(nombres) : "Sin ingresos en este horario"}">
+                        <span class="horario-fila-label">${String(h).padStart(2,"0")}-${String(h+1).padStart(2,"0")}h</span>
+                        <div class="horario-fila-barwrap"><div class="horario-fila-bar" style="width:${pct}%;"></div></div>
+                        <span class="horario-fila-count">${items.length}</span>
+                    </div>`;
+            }).join("") + `</div>`;
+        } catch (e) { showError(e.message); }
+    }
+
+    function escapeAttrHorario(str) { return (str || "").replace(/"/g, "&quot;"); }
+
+    // ================================================================
+    // BUSQUEDA (compartida): alumno / staff / profesor
+    // ================================================================
+    function onBuscarPersona(tipo) {
+        clearTimeout(busquedaTimeout);
+        const termino = document.getElementById(`buscar-${tipo}-input`).value.trim();
+        const contResultados = document.getElementById(`resultados-${tipo}`);
+        if (!termino) { contResultados.innerHTML = ""; return; }
+        busquedaTimeout = setTimeout(() => ejecutarBusquedaPersona(tipo, termino), 250);
+    }
+
+    async function ejecutarBusquedaPersona(tipo, termino) {
+        const contResultados = document.getElementById(`resultados-${tipo}`);
+        try {
+            if (tipo === "alumno") {
+                const clientes = await apiFetch(`/clientes/?buscar=${encodeURIComponent(termino)}&limit=8`);
+                if (!clientes.length) { contResultados.innerHTML = '<p style="padding:12px;color:var(--color-texto-secundario);font-size:0.82em;">Sin resultados</p>'; return; }
+                contResultados.innerHTML = clientes.map(c => `
+                    <div class="resultado-busq" onclick="seleccionarAlumno(${c.id})">
+                        ${avatarHtml(c.nombre + " " + (c.apellidos||""), c.foto_url)}
+                        <div><div style="font-weight:600;font-size:0.85em;">${c.nombre} ${c.apellidos||""}</div><div style="font-size:0.72em;color:var(--color-texto-secundario);">${c.dni||"Sin DNI"}</div></div>
+                    </div>`).join("");
+            } else {
+                // staff / profesor: filtra en memoria sobre /empleados/
+                const tipoEmpleado = tipo === "staff" ? "staff_fijo" : "profesor_de_sala";
+                const empleados = (await apiFetch("/empleados/")).filter(e => e.tipo === tipoEmpleado &&
+                    e.nombre_completo.toLowerCase().includes(termino.toLowerCase()));
+                if (!empleados.length) { contResultados.innerHTML = '<p style="padding:12px;color:var(--color-texto-secundario);font-size:0.82em;">Sin resultados</p>'; return; }
+                contResultados.innerHTML = empleados.map(e => `
+                    <div class="resultado-busq" onclick="${tipo === 'staff' ? `seleccionarStaff(${e.id})` : `seleccionarProfesor(${e.id})`}">
+                        ${avatarHtml(e.nombre_completo, null)}
+                        <div><div style="font-weight:600;font-size:0.85em;">${e.nombre_completo}</div><div style="font-size:0.72em;color:var(--color-texto-secundario);">${e.puesto||"—"}</div></div>
+                    </div>`).join("");
+            }
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // POR ALUMNO: ficha + membresía actual + historial
+    // ================================================================
+    let alumnoSeleccionado = null;
+
+    async function seleccionarAlumno(clienteId) {
+        alumnoSeleccionado = clienteId;
+        document.getElementById("resultados-alumno").innerHTML = "";
+        document.getElementById("buscar-alumno-input").value = "";
+        await cargarFichaAlumno();
+    }
+
+    async function recargarFichaSiHayAlumno() {
+        if (alumnoSeleccionado) await cargarFichaAlumno();
+    }
+
+    async function cargarFichaAlumno() {
+        const { desde, hasta } = rangoActual();
+        try {
+            const [ficha, asistencias] = await Promise.all([
+                apiFetch(`/clientes/${alumnoSeleccionado}/ficha`),
+                apiFetch(`/asistencias/?desde=${desde}&hasta=${hasta}&cliente_id=${alumnoSeleccionado}&limit=500`),
+            ]);
+            const m = ficha.membresia_actual;
+            const config = await getConfiguracion();
+
+            document.getElementById("ficha-alumno-contenido").innerHTML = `
+                ${avatarHtml(ficha.nombre_completo, ficha.foto_url, "width:56px;height:56px;font-size:1.3em;")}
+                <div class="ficha-persona-info">
+                    <div class="ficha-persona-nombre">${ficha.nombre_completo}</div>
+                    ${m
+                        ? `<span class="membresia-chip" style="background:#E6FBF5;color:#00B894;">${m.nombre} · vence ${formatFecha(m.fecha_fin)}</span>
+                           <div class="ficha-persona-sub" style="margin-top:4px;">Pagado ${formatCurrency(m.monto_pagado, config.moneda)} de ${formatCurrency(m.precio, config.moneda)}${m.deuda_pendiente > 0 ? ` · Saldo ${formatCurrency(m.deuda_pendiente, config.moneda)}` : " · Al día"}</div>`
+                        : `<span class="membresia-chip" style="background:#FFEAE6;color:#E17055;">Sin membresía activa</span>`}
+                </div>`;
+            document.getElementById("ficha-alumno-wrap").style.display = "block";
+
+            const listaCont = document.getElementById("lista-asistencias-alumno");
+            if (!asistencias.length) {
+                listaCont.innerHTML = '<p style="text-align:center;padding:20px;color:var(--color-texto-secundario);font-size:0.85em;">Sin asistencias en el rango seleccionado</p>';
+            } else {
+                listaCont.innerHTML = asistencias.map(a => `
+                    <div class="fila-asistencia">
+                        <div class="fila-info">
+                            <div class="fila-nombre">${formatFecha(a.fecha_hora_entrada)}</div>
+                        </div>
+                        <div class="fila-hora">
+                            <strong>${formatHora(a.fecha_hora_entrada)}</strong>
+                            ${a.fecha_hora_salida ? `hasta ${formatHora(a.fecha_hora_salida)}` : "en curso"}
+                        </div>
+                    </div>`).join("");
+            }
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // STAFF: ficha + historial de marcaciones (AsistenciaEmpleado)
+    // ================================================================
+    let staffSeleccionado = null;
+
+    async function seleccionarStaff(empleadoId) {
+        staffSeleccionado = empleadoId;
+        document.getElementById("resultados-staff").innerHTML = "";
+        document.getElementById("buscar-staff-input").value = "";
+        await cargarFichaStaff();
+    }
+    async function recargarFichaStaffSiHay() { if (staffSeleccionado) await cargarFichaStaff(); }
+
+    async function cargarFichaStaff() {
+        const { desde, hasta } = rangoActual();
+        try {
+            const empleados = await apiFetch("/empleados/");
+            const empleado = empleados.find(e => e.id === staffSeleccionado);
+            if (!empleado) return;
+            const marcaciones = await apiFetch(`/asistencias-empleado/?desde=${desde}&hasta=${hasta}&empleado_id=${staffSeleccionado}&limit=500`);
+
+            document.getElementById("ficha-staff-contenido").innerHTML = `
+                ${avatarHtml(empleado.nombre_completo, null, "width:56px;height:56px;font-size:1.3em;")}
+                <div class="ficha-persona-info">
+                    <div class="ficha-persona-nombre">${empleado.nombre_completo}</div>
+                    <div class="ficha-persona-sub">${empleado.puesto || "Sin puesto asignado"} · DNI ${empleado.dni || "—"}</div>
+                </div>`;
+            document.getElementById("ficha-staff-wrap").style.display = "block";
+
+            const listaCont = document.getElementById("lista-asistencias-staff");
+            if (!marcaciones.length) {
+                listaCont.innerHTML = '<p style="text-align:center;padding:20px;color:var(--color-texto-secundario);font-size:0.85em;">Sin marcaciones en el rango seleccionado</p>';
+            } else {
+                listaCont.innerHTML = marcaciones.map(a => `
+                    <div class="fila-asistencia">
+                        <div class="fila-info"><div class="fila-nombre">${formatFecha(a.fecha_hora_entrada)}</div></div>
+                        <div class="fila-hora">
+                            <strong>${formatHora(a.fecha_hora_entrada)}</strong>
+                            ${a.fecha_hora_salida ? `hasta ${formatHora(a.fecha_hora_salida)}` : "en curso"}
+                        </div>
+                    </div>`).join("");
+            }
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // PROFESORES: ficha + clases dictadas (registro de su "asistencia")
+    // ================================================================
+    let profesorSeleccionado = null;
+
+    async function seleccionarProfesor(empleadoId) {
+        profesorSeleccionado = empleadoId;
+        document.getElementById("resultados-profesor").innerHTML = "";
+        document.getElementById("buscar-profesor-input").value = "";
+        await cargarFichaProfesor();
+    }
+    async function recargarFichaProfesorSiHay() { if (profesorSeleccionado) await cargarFichaProfesor(); }
+
+    async function cargarFichaProfesor() {
+        const { desde, hasta } = rangoActual();
+        try {
+            const empleados = await apiFetch("/empleados/");
+            const profesor = empleados.find(e => e.id === profesorSeleccionado);
+            if (!profesor) return;
+            const clases = await apiFetch(`/clases/?desde=${desde}&hasta=${hasta}&profesor_id=${profesorSeleccionado}`);
+
+            document.getElementById("ficha-profesor-contenido").innerHTML = `
+                ${avatarHtml(profesor.nombre_completo, null, "width:56px;height:56px;font-size:1.3em;")}
+                <div class="ficha-persona-info">
+                    <div class="ficha-persona-nombre">${profesor.nombre_completo}</div>
+                    <div class="ficha-persona-sub">${profesor.puesto || "Especialidad no definida"}</div>
+                </div>`;
+            document.getElementById("ficha-profesor-wrap").style.display = "block";
+
+            const listaCont = document.getElementById("lista-clases-profesor");
+            if (!clases.length) {
+                listaCont.innerHTML = '<p style="text-align:center;padding:20px;color:var(--color-texto-secundario);font-size:0.85em;">Sin clases en el rango seleccionado</p>';
+            } else {
+                listaCont.innerHTML = clases.map(c => `
+                    <div class="fila-asistencia">
+                        <div class="fila-info">
+                            <div class="fila-nombre">${c.nombre_clase}${c.sala ? " · " + c.sala : ""}</div>
+                            <div class="fila-sub">${formatFecha(c.fecha)} ${c.dictada ? `· ${c.cantidad_alumnos || 0} alumnos` : "· pendiente"}</div>
+                        </div>
+                        <div class="fila-hora">
+                            <strong>${formatHora(c.hora_inicio)}</strong>
+                            <span class="badge ${c.dictada ? 'badge-success' : 'badge-warning'}" style="font-size:0.62em;">${c.dictada ? "Dictada" : "Pendiente"}</span>
+                        </div>
+                    </div>`).join("");
+            }
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // Init
+    // ================================================================
+    initFechas();
+    cargarVistaGeneral();
+</script>
+</body>
+</html>

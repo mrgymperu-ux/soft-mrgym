@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Agenda - Zona de Profesores</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="page">
+        <div class="page-header">
+            <h1>🗓️ Zona de Profesores</h1>
+            <p id="saludo">Cargando...</p>
+        </div>
+        <div class="tabs">
+            <button class="tab-btn activo" id="tab-agenda" onclick="cambiarTab('agenda')">Mi Agenda</button>
+            <button class="tab-btn" id="tab-ocupado" onclick="cambiarTab('ocupado')">Ocupado</button>
+        </div>
+        <div id="contenido-agenda"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+        <div id="contenido-ocupado" style="display:none;"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+    </div>
+
+    <!-- Modal reemplazo -->
+    <div id="modal-reemplazo" class="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);align-items:center;justify-content:center;z-index:100;">
+        <div style="background:#fff;border-radius:12px;padding:20px;width:100%;max-width:340px;">
+            <h3 style="margin:0 0 4px;">Reemplazo puntual</h3>
+            <p id="reemplazo-info" style="font-size:0.85em;color:#636E72;margin:0 0 14px;"></p>
+            <div class="form-group">
+                <label style="display:block;margin-bottom:6px;font-size:0.85em;font-weight:600;">¿Quien te reemplaza?</label>
+                <select id="sel-reemplazo" style="width:100%;padding:10px;border:1px solid #E5E7EB;border-radius:8px;">
+                    <option value="">-- Sin reemplazo (yo dicto) --</option>
+                </select>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                <button onclick="cerrarModalReemplazo()" style="background:#E5E7EB;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;">Cancelar</button>
+                <button onclick="confirmarReemplazo()" style="background:#5B4FE5;color:#fff;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <nav class="nav-bottom">
+        <a href="agenda.html" class="nav-btn activo"><span>🗓️</span><span>Agenda</span></a>
+        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+    </nav>
+    <script src="js/api.js"></script>
+    <script>
+        requireAuth();
+        document.getElementById("saludo").textContent = `Hola, ${getNombre() || "profesor"}`;
+
+        let misClasesCache = [];
+        let otrosProfesoresCache = [];
+        let claseReemplazoId = null;
+
+        function cambiarTab(tab) {
+            document.getElementById("tab-agenda").classList.toggle("activo", tab === "agenda");
+            document.getElementById("tab-ocupado").classList.toggle("activo", tab === "ocupado");
+            document.getElementById("contenido-agenda").style.display = tab === "agenda" ? "block" : "none";
+            document.getElementById("contenido-ocupado").style.display = tab === "ocupado" ? "block" : "none";
+        }
+
+        function renderClases(clases, contenedorId, vacioMsg, mostrarProfesor) {
+            const cont = document.getElementById(contenedorId);
+            if (!clases.length) {
+                cont.innerHTML = `<div class="card"><div class="card-body" style="text-align:center;color:#636E72;">${vacioMsg}</div></div>`;
+                return;
+            }
+            cont.innerHTML = `<div class="card">` + clases.map(c => {
+                const fecha = new Date(c.fecha + "T00:00:00");
+                const dia = fecha.getDate();
+                const mes = fecha.toLocaleDateString("es-PE", { month: "short" });
+                const esMia = contenedorId === "contenido-agenda";
+                const reemplazoTexto = c.nombre_profesor_reemplazo ? ` · reemplazo: ${c.nombre_profesor_reemplazo}` : "";
+                return `
+                    <div class="clase-item">
+                        <div class="clase-fecha"><div class="dia">${dia}</div><div class="mes">${mes}</div></div>
+                        <div class="clase-info">
+                            <div class="clase-nombre">${c.nombre_clase}</div>
+                            <div class="clase-meta">${formatHora(c.hora_inicio)}${c.hora_fin ? " - " + formatHora(c.hora_fin) : ""} ${c.sala ? "· " + c.sala : ""} ${mostrarProfesor ? "· " + c.nombre_profesor : ""}${reemplazoTexto}</div>
+                        </div>
+                        ${c.dictada !== undefined ? `<span class="badge ${c.dictada ? "badge-verde" : "badge-morado"}">${c.dictada ? "Dictada" : "Programada"}</span>` : ""}
+                        ${esMia && !c.dictada ? `<button onclick="abrirModalReemplazo(${c.id}, '${(c.nombre_clase || "").replace(/'/g, "")}', '${c.fecha}')" style="margin-left:8px;background:none;border:1px solid #E5E7EB;border-radius:8px;padding:6px 10px;font-size:0.75em;cursor:pointer;">🔁 Reemplazo</button>` : ""}
+                    </div>
+                `;
+            }).join("") + `</div>`;
+        }
+
+        async function cargarAgenda() {
+            try {
+                misClasesCache = await apiFetch("/portal-profesor/mi-agenda");
+                renderClases(misClasesCache, "contenido-agenda", "No tienes clases proximas programadas", false);
+            } catch (e) { alert(e.message); }
+        }
+
+        async function cargarOcupado() {
+            try {
+                const clases = await apiFetch("/portal-profesor/ocupado?dias=7");
+                renderClases(clases, "contenido-ocupado", "No hay clases programadas en los proximos 7 dias", true);
+            } catch (e) { alert(e.message); }
+        }
+
+        async function abrirModalReemplazo(claseId, nombreClase, fecha) {
+            claseReemplazoId = claseId;
+            document.getElementById("reemplazo-info").textContent = `${nombreClase} · ${formatFecha(fecha)}`;
+            if (!otrosProfesoresCache.length) {
+                try { otrosProfesoresCache = await apiFetch("/portal-profesor/otros-profesores"); } catch (e) { alert(e.message); return; }
+            }
+            const clase = misClasesCache.find(c => c.id === claseId);
+            const sel = document.getElementById("sel-reemplazo");
+            sel.innerHTML = '<option value="">-- Sin reemplazo (yo dicto) --</option>' +
+                otrosProfesoresCache.map(p => `<option value="${p.id}" ${clase && clase.profesor_reemplazo_id === p.id ? "selected" : ""}>${p.nombre_completo}</option>`).join("");
+            document.getElementById("modal-reemplazo").style.display = "flex";
+        }
+
+        function cerrarModalReemplazo() {
+            document.getElementById("modal-reemplazo").style.display = "none";
+            claseReemplazoId = null;
+        }
+
+        async function confirmarReemplazo() {
+            const valor = document.getElementById("sel-reemplazo").value;
+            try {
+                await apiFetch(`/portal-profesor/clases/${claseReemplazoId}/reemplazo`, {
+                    method: "PUT",
+                    body: JSON.stringify({ profesor_reemplazo_id: valor ? parseInt(valor) : null }),
+                });
+                cerrarModalReemplazo();
+                cargarAgenda();
+            } catch (e) { alert(e.message); }
+        }
+
+        cargarAgenda();
+        cargarOcupado();
+    </script>
+</body>
+</html>

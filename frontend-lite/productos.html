@@ -1,0 +1,34 @@
+<section id="productos" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Inventario de Productos</h3>
+                        <button class="btn btn-primary" onclick="showModal('producto-modal')">
+                            + Nuevo Producto
+                        </button>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nombre</th>
+                                    <th>Categoría</th>
+                                    <th>Precio Venta</th>
+                                    <th>Stock</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productos-table">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay productos registrados
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>

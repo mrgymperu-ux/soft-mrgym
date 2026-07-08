@@ -1,0 +1,23 @@
+# render.yaml - Blueprint para Render.com
+# BD: Supabase (PostgreSQL gratis permanente, 500MB)
+# Web: Render free tier (Docker)
+#
+# ANTES de aplicar este blueprint, crea la BD en Supabase:
+#   1. supabase.com → New Project → copiar connection string
+#   2. Pegar como DATABASE_URL abajo o en el dashboard de Render
+
+services:
+  - type: web
+    name: soft-mrgym
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # se configura manualmente con la URL de Supabase
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: "*"
+
+# SIN sección "databases" — la BD vive en Supabase, no en Render

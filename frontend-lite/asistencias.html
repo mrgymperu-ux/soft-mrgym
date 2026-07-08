@@ -1,0 +1,62 @@
+<section id="asistencias" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">✅ Control de Asistencias</h3>
+                        <button class="btn btn-primary" onclick="registrarEntrada()">
+                            + Registrar Entrada
+                        </button>
+                    </div>
+
+                    <div class="tabs">
+                        <button class="tab active" onclick="showAsistenciaTab('ultimos', this)">Últimos 20 Ingresos</button>
+                        <button class="tab" onclick="showAsistenciaTab('hoy', this)">Asistencias de Hoy</button>
+                    </div>
+
+                    <div id="asistencia-tab-ultimos" class="asistencia-tab-content">
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Hora</th>
+                                        <th>Cliente</th>
+                                        <th>DNI</th>
+                                        <th>Membresía</th>
+                                        <th>Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ultimos-ingresos">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; padding: 40px; color: #636E72;">
+                                            No hay ingresos registrados
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="asistencia-tab-hoy" class="asistencia-tab-content" style="display: none;">
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Hora Entrada</th>
+                                        <th>Hora Salida</th>
+                                        <th>Cliente</th>
+                                        <th>Duración</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="asistencias-hoy">
+                                    <tr>
+                                        <td colspan="4" style="text-align: center; padding: 40px; color: #636E72;">
+                                            No hay asistencias hoy
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>

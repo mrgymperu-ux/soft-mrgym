@@ -1,0 +1,1389 @@
+"""
+schemas.py
+Esquemas Pydantic para validacion de entrada/salida de la API.
+
+Convencion usada en todo el archivo:
+  - XxxBase: campos compartidos
+  - XxxCreate: lo que se recibe al crear (hereda de Base)
+  - XxxUpdate: campos opcionales para actualizar parcialmente
+  - Xxx: lo que se devuelve al cliente (incluye id y relaciones
+    cuando aplica), con from_attributes=True para leer desde ORM
+"""
+
+from datetime import datetime, date
+from typing import Optional, List
+
+from pydantic import BaseModel, EmailStr, ConfigDict
+
+from .models import (
+    RolUsuario,
+    MetodoPago,
+    TipoComida,
+    TipoEmpleado,
+    CategoriaAlimento,
+    PropositoNutricion,
+)
+
+
+# ==================================================================
+# 1. AUTENTICACION Y USUARIOS (staff / profesores)
+# ==================================================================
+
+class UsuarioBase(BaseModel):
+    nombre_completo: str
+    username: str
+    rol: RolUsuario
+    empleado_id: Optional[int] = None
+    es_administrador: bool = True
+    puede_eliminar: bool = True
+    puede_exportar: bool = False
+    zonas_permitidas: Optional[str] = None
+
+
+class UsuarioCreate(UsuarioBase):
+    password: str  # texto plano solo en el request; se hashea en auth.py
+
+
+class UsuarioUpdate(BaseModel):
+    nombre_completo: Optional[str] = None
+    password: Optional[str] = None
+    activo: Optional[bool] = None
+    empleado_id: Optional[int] = None
+    es_administrador: Optional[bool] = None
+    puede_eliminar: Optional[bool] = None
+    puede_exportar: Optional[bool] = None
+    zonas_permitidas: Optional[str] = None
+
+
+class Usuario(UsuarioBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_creacion: datetime
+
+
+class LoginRequest(BaseModel):
+    """Login de staff/profesores: usuario y contraseña."""
+    username: str
+    password: str
+
+
+class LoginAlumnoRequest(BaseModel):
+    """Login de alumnos: DNI + codigo de acceso corto. slug identifica el gimnasio."""
+    dni: str
+    codigo_acceso: str
+    slug: Optional[str] = None
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    rol: str
+    nombre: str
+    es_administrador: bool = False
+    es_superadmin: bool = False
+    puede_eliminar: bool = False
+    puede_exportar: bool = False
+    zonas_permitidas: Optional[str] = None
+    gimnasio_id: Optional[int] = None
+    gimnasio_slug: Optional[str] = None
+
+
+# ==================================================================
+# 0. SAAS / MULTI-TENANT
+# ==================================================================
+
+class PlanSaasBase(BaseModel):
+    nombre: str
+    precio_mensual: float = 0.0
+    max_clientes: int = 50
+    max_productos: int = 20
+    max_rutinas: int = 10
+    max_usuarios_staff: int = 1
+    nutricion_habilitada: bool = False
+    reportes_avanzados: bool = False
+    dominio_propio: bool = False
+
+class PlanSaasCreate(PlanSaasBase):
+    pass
+
+class PlanSaasUpdate(BaseModel):
+    nombre: Optional[str] = None
+    precio_mensual: Optional[float] = None
+    max_clientes: Optional[int] = None
+    max_productos: Optional[int] = None
+    max_rutinas: Optional[int] = None
+    max_usuarios_staff: Optional[int] = None
+    nutricion_habilitada: Optional[bool] = None
+    reportes_avanzados: Optional[bool] = None
+    dominio_propio: Optional[bool] = None
+    activo: Optional[bool] = None
+
+class PlanSaas(PlanSaasBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+
+
+class GimnasioBase(BaseModel):
+    nombre: str
+    slug: str
+    plan_id: Optional[int] = None
+    email_contacto: Optional[str] = None
+    telefono: Optional[str] = None
+    direccion: Optional[str] = None
+
+class GimnasioCreate(GimnasioBase):
+    admin_username: str = "admin"
+    admin_password: str = "admin123"
+    admin_nombre: str = "Administrador"
+
+class GimnasioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    slug: Optional[str] = None
+    plan_id: Optional[int] = None
+    activo: Optional[bool] = None
+    email_contacto: Optional[str] = None
+    telefono: Optional[str] = None
+    direccion: Optional[str] = None
+
+class Gimnasio(GimnasioBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_registro: Optional[datetime] = None
+    logo_url: Optional[str] = None
+
+class GimnasioDetalle(Gimnasio):
+    """Gimnasio con stats para el dashboard del superadmin."""
+    total_clientes: int = 0
+    total_usuarios: int = 0
+    nombre_plan: Optional[str] = None
+
+
+class RegistroGimnasioRequest(BaseModel):
+    """Registro publico de un gimnasio nuevo (onboarding)."""
+    nombre_gimnasio: str
+    slug: str
+    nombre_admin: str
+    username: str
+    password: str
+    email: Optional[str] = None
+    telefono: Optional[str] = None
+
+
+# ==================================================================
+# 2. CLIENTES / ALUMNOS
+# ==================================================================
+
+class ClienteBase(BaseModel):
+    nombre: str
+    apellidos: Optional[str] = None
+    dni: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    fecha_nacimiento: Optional[date] = None
+    direccion: Optional[str] = None
+    foto_url: Optional[str] = None
+    genero: Optional[str] = None
+    fecha_renovacion: Optional[date] = None
+    fecha_vencimiento: Optional[date] = None
+    membresia_texto: Optional[str] = None
+
+
+class ClienteCreate(ClienteBase):
+    codigo_acceso: Optional[str] = None
+
+
+class ClienteUpdate(BaseModel):
+    nombre: Optional[str] = None
+    apellidos: Optional[str] = None
+    dni: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    fecha_nacimiento: Optional[date] = None
+    direccion: Optional[str] = None
+    foto_url: Optional[str] = None
+    codigo_acceso: Optional[str] = None
+    activo: Optional[bool] = None
+    genero: Optional[str] = None
+    fecha_renovacion: Optional[date] = None
+    fecha_vencimiento: Optional[date] = None
+    membresia_texto: Optional[str] = None
+
+
+class Cliente(ClienteBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    fecha_registro: datetime
+    activo: bool
+    # Calculado (no es columna): dias asistidos / dias del ULTIMO
+    # plan asignado, como %. None si el cliente nunca tuvo un plan.
+    porcentaje_asistencia: Optional[float] = None
+
+
+class ClienteListItem(BaseModel):
+    """Version liviana para listados paginados (no trae relaciones)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    apellidos: Optional[str] = None
+    dni: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    foto_url: Optional[str] = None
+    activo: bool
+    genero: Optional[str] = None
+    fecha_vencimiento: Optional[date] = None
+    membresia_texto: Optional[str] = None
+
+
+# ==================================================================
+# 2b. CLIENTES ANTIGUOS / HISTORICOS
+# ==================================================================
+
+class ClienteHistoricoItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    num_carnet: Optional[int] = None
+    nombre_completo: str
+    telefono1: Optional[str] = None
+    telefono2: Optional[str] = None
+    email: Optional[str] = None
+    distrito: Optional[str] = None
+    plan_texto: Optional[str] = None
+    fecha_vencimiento: Optional[date] = None
+    total_asistencias_legado: Optional[int] = None
+    migrado: bool
+    cliente_nuevo_id: Optional[int] = None
+
+
+class ImportarClientesHistoricosResultado(BaseModel):
+    total_filas_leidas: int
+    total_importados: int
+    total_omitidos_duplicados: int
+    errores: List[str] = []
+
+
+class ImportarClientesResultado(BaseModel):
+    """Resultado de importar clientes ACTIVOS directo (no historicos), ver /clientes/importar."""
+    total_filas_leidas: int
+    total_importados: int
+    total_omitidos_duplicados: int
+    errores: List[str] = []
+
+
+# ==================================================================
+# 3. MEMBRESIAS
+# ==================================================================
+
+class MembresiaBase(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    precio: float
+    duracion_dias: int
+
+    duracion_meses: Optional[int] = None
+    duracion_dias_extra: Optional[int] = None
+
+    monto_inicial: Optional[float] = None
+    fracciones_pago_deuda: Optional[int] = None
+    penalizacion: Optional[float] = None
+    dias_gracia_pago: Optional[int] = None
+
+    monto_mensual: Optional[float] = None
+
+    dias_congelamiento: Optional[int] = None
+    permite_congelamiento: bool = True
+
+    dias_acceso_periodo: Optional[int] = None
+    hora_inicio_acceso: str = "00:00"
+    hora_fin_acceso: str = "24:00"
+    dias_semana_acceso: str = "dom,lun,mar,mie,jue,vie,sab"
+
+    password_tarifa: Optional[str] = None
+    congelado_no_aparece_pagos: bool = False
+    no_aparecer_reporte_cruce_medidas: bool = False
+    incluye_nutricion: bool = False
+
+
+class MembresiaCreate(MembresiaBase):
+    pass
+
+
+class MembresiaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    precio: Optional[float] = None
+    duracion_dias: Optional[int] = None
+    duracion_meses: Optional[int] = None
+    duracion_dias_extra: Optional[int] = None
+    monto_inicial: Optional[float] = None
+    fracciones_pago_deuda: Optional[int] = None
+    penalizacion: Optional[float] = None
+    dias_gracia_pago: Optional[int] = None
+    monto_mensual: Optional[float] = None
+    dias_congelamiento: Optional[int] = None
+    permite_congelamiento: Optional[bool] = None
+    dias_acceso_periodo: Optional[int] = None
+    hora_inicio_acceso: Optional[str] = None
+    hora_fin_acceso: Optional[str] = None
+    dias_semana_acceso: Optional[str] = None
+    password_tarifa: Optional[str] = None
+    congelado_no_aparece_pagos: Optional[bool] = None
+    no_aparecer_reporte_cruce_medidas: Optional[bool] = None
+    incluye_nutricion: Optional[bool] = None
+    activo: Optional[bool] = None
+
+
+class Membresia(MembresiaBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+
+
+class ClienteMembresiaCreate(BaseModel):
+    cliente_id: int
+    membresia_id: int
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    monto_pagado: Optional[float] = None
+    fecha_pago_saldo: Optional[date] = None
+    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+
+
+class ClienteMembresiaUpdate(BaseModel):
+    """Correccion administrativa de una membresia ya asignada (solo admin)."""
+    membresia_id: Optional[int] = None
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    monto_pagado: Optional[float] = None
+    fecha_pago_saldo: Optional[date] = None
+    metodo_pago: Optional[MetodoPago] = None
+    activo: Optional[bool] = None
+
+
+class ClienteMembresia(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: int
+    membresia_id: int
+    fecha_inicio: date
+    fecha_fin: Optional[date] = None
+    monto_pagado: float
+    fecha_pago_saldo: Optional[date] = None
+    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+    vendido_por_id: Optional[int] = None
+    activo: bool
+    membresia: Optional[Membresia] = None
+
+
+class MembresiaPorVencer(BaseModel):
+    """Item del listado de vencimientos: cliente + su membresia activa que vence pronto."""
+    cliente_membresia_id: int
+    cliente_id: int
+    nombre_cliente: str
+    telefono: Optional[str] = None
+    membresia_nombre: str
+    fecha_fin: date
+    dias_restantes: int
+
+
+# ==================================================================
+# 4. PRODUCTOS E INVENTARIO
+# ==================================================================
+
+class ProductoBase(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = None
+    precio_venta: float
+    stock: int = 0
+    stock_minimo: int = 5
+    icono: Optional[str] = None
+    foto_url: Optional[str] = None
+
+
+class ProductoCreate(ProductoBase):
+    pass
+
+
+class ProductoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = None
+    precio_venta: Optional[float] = None
+    stock: Optional[int] = None
+    stock_minimo: Optional[int] = None
+    icono: Optional[str] = None
+    foto_url: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+class Producto(ProductoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    precio_compra: Optional[float] = None
+    activo: bool
+    fecha_creacion: datetime
+
+
+class ProductoVendido(BaseModel):
+    """Producto con su total de unidades vendidas, para venta rapida ordenada por popularidad."""
+    producto: Producto
+    cantidad_vendida: int
+
+
+# ==================================================================
+# 5. VENTAS
+# ==================================================================
+
+class DetalleVentaCreate(BaseModel):
+    producto_id: int
+    cantidad: int
+    precio_unitario: float
+
+
+class DetalleVenta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: int
+    cantidad: int
+    precio_unitario: float
+    subtotal: float
+    producto: Optional[Producto] = None
+
+
+class VentaCreate(BaseModel):
+    cliente_id: Optional[int] = None
+    metodo_pago: MetodoPago
+    es_venta_rapida: bool = False
+    notas: Optional[str] = None
+    detalles: List[DetalleVentaCreate]
+
+
+class Venta(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: Optional[int] = None
+    fecha_venta: datetime
+    total: float
+    metodo_pago: MetodoPago
+    es_venta_rapida: bool
+    notas: Optional[str] = None
+    usuario_id: Optional[int] = None
+    costo_comision_gym: float = 0.0
+    detalles: List[DetalleVenta] = []
+
+
+class CompraCreate(BaseModel):
+    producto_id: int
+    cantidad: int
+    costo_unitario: float
+    notas: Optional[str] = None
+
+
+class Compra(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: int
+    cantidad: int
+    costo_unitario: float
+    costo_total: float
+    fecha: datetime
+    usuario_id: Optional[int] = None
+    notas: Optional[str] = None
+    producto: Optional[Producto] = None
+
+
+# ==================================================================
+# 6. ASISTENCIAS (clientes)
+# ==================================================================
+
+class AsistenciaCreate(BaseModel):
+    cliente_id: int
+
+
+class Asistencia(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: int
+    fecha_hora_entrada: datetime
+    fecha_hora_salida: Optional[datetime] = None
+    cliente: Optional[ClienteListItem] = None
+
+
+class RegistrarSalidaRequest(BaseModel):
+    asistencia_id: int
+
+
+# ==================================================================
+# 7. PROGRESO FISICO
+# ==================================================================
+
+class ProgresoBase(BaseModel):
+    peso: Optional[float] = None
+    altura: Optional[float] = None
+    porcentaje_grasa: Optional[float] = None
+    porcentaje_musculo: Optional[float] = None
+    notas: Optional[str] = None
+
+
+class ProgresoCreate(ProgresoBase):
+    cliente_id: int
+
+
+class Progreso(ProgresoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: int
+    fecha: datetime
+
+
+# ==================================================================
+# 8. ENTRENAMIENTOS / RUTINAS
+# ==================================================================
+
+class RutinaEjercicioBase(BaseModel):
+    nombre: str
+    tipo_ejercicio_id: Optional[int] = None
+    series: Optional[int] = None
+    repeticiones: Optional[str] = None
+    peso: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class RutinaEjercicioCreate(RutinaEjercicioBase):
+    pass
+
+
+class RutinaEjercicio(RutinaEjercicioBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class RutinaDiaBase(BaseModel):
+    nombre: str
+    orden: int = 0
+
+
+class RutinaDiaCreate(RutinaDiaBase):
+    ejercicios: List[RutinaEjercicioCreate] = []
+
+
+class RutinaDia(RutinaDiaBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ejercicios: List[RutinaEjercicio] = []
+
+
+class RutinaCreate(BaseModel):
+    cliente_id: int
+    nombre: str
+    dias: List[RutinaDiaCreate] = []
+
+
+class Rutina(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: int
+    nombre: str
+    fecha_creacion: datetime
+    activo: bool
+    dias: List[RutinaDia] = []
+
+
+# ---- Catalogo de Ejercicios (imagen/video demostrativo) ----
+
+class TipoEjercicioCreate(BaseModel):
+    nombre: str
+    grupo_muscular: Optional[str] = None
+    descripcion: Optional[str] = None
+    video_url: Optional[str] = None
+    categoria: Optional[str] = None
+    equipamiento: Optional[str] = None
+    nivel: Optional[str] = None
+    genero_recomendado: Optional[str] = "todos"
+    objetivo: Optional[str] = None
+
+
+class TipoEjercicioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    grupo_muscular: Optional[str] = None
+    descripcion: Optional[str] = None
+    video_url: Optional[str] = None
+    activo: Optional[bool] = None
+    categoria: Optional[str] = None
+    equipamiento: Optional[str] = None
+    nivel: Optional[str] = None
+    genero_recomendado: Optional[str] = None
+    objetivo: Optional[str] = None
+
+
+class TipoEjercicio(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    grupo_muscular: Optional[str] = None
+    descripcion: Optional[str] = None
+    imagen_url: Optional[str] = None
+    imagen_url_2: Optional[str] = None
+    imagen_url_3: Optional[str] = None
+    video_url: Optional[str] = None
+    activo: bool
+    fecha_creacion: datetime
+    categoria: Optional[str] = None
+    equipamiento: Optional[str] = None
+    nivel: Optional[str] = None
+    genero_recomendado: Optional[str] = "todos"
+    objetivo: Optional[str] = None
+
+
+# ==================================================================
+# 9. NUTRICION
+# ==================================================================
+
+class ComidaPlanBase(BaseModel):
+    tipo: TipoComida
+    nombre_alimento: str
+    calorias: Optional[int] = None
+    alimento_id: Optional[int] = None
+    cantidad_gramos: Optional[float] = None
+
+
+class ComidaPlanCreate(ComidaPlanBase):
+    pass
+
+
+class ComidaPlan(ComidaPlanBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+# ---- Catalogo de Alimentos (editable, base peruana) ----
+
+class AlimentoBase(BaseModel):
+    nombre: str
+    categoria: CategoriaAlimento = CategoriaAlimento.OTRO
+    porcion_gramos: float = 100.0
+    calorias: float = 0.0
+    proteinas_g: float = 0.0
+    carbohidratos_g: float = 0.0
+    grasas_g: float = 0.0
+    fibra_g: Optional[float] = None
+
+
+class AlimentoCreate(AlimentoBase):
+    porcion_casera: Optional[str] = None
+
+
+class AlimentoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    categoria: Optional[CategoriaAlimento] = None
+    porcion_gramos: Optional[float] = None
+    calorias: Optional[float] = None
+    proteinas_g: Optional[float] = None
+    carbohidratos_g: Optional[float] = None
+    grasas_g: Optional[float] = None
+    fibra_g: Optional[float] = None
+    activo: Optional[bool] = None
+    porcion_casera: Optional[str] = None
+
+
+class Alimento(AlimentoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    porcion_casera: Optional[str] = None
+
+
+# ---- Paquetes de nutricion (plantillas desayuno/almuerzo/cena por proposito) ----
+
+class PaqueteAlimentoCreate(BaseModel):
+    alimento_id: int
+    cantidad_gramos: float = 100.0
+
+
+class PaqueteAlimentoItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    alimento_id: int
+    cantidad_gramos: float
+    alimento: Optional[Alimento] = None
+
+
+class PaqueteNutricionCreate(BaseModel):
+    nombre: str
+    tipo_comida: TipoComida
+    proposito: PropositoNutricion
+    notas: Optional[str] = None
+    items: List[PaqueteAlimentoCreate] = []
+
+
+class PaqueteNutricionUpdate(BaseModel):
+    nombre: Optional[str] = None
+    tipo_comida: Optional[TipoComida] = None
+    proposito: Optional[PropositoNutricion] = None
+    notas: Optional[str] = None
+    activo: Optional[bool] = None
+    items: Optional[List[PaqueteAlimentoCreate]] = None
+
+
+class PaqueteNutricion(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    tipo_comida: TipoComida
+    proposito: PropositoNutricion
+    notas: Optional[str] = None
+    activo: bool
+    fecha_creacion: datetime
+    items: List[PaqueteAlimentoItem] = []
+
+
+class AplicarPaqueteRequest(BaseModel):
+    """Aplica un Paquete de nutricion a un plan de un cliente: genera las filas ComidaPlan a partir de los items del paquete."""
+    plan_id: int
+
+
+class PlanNutricionCreate(BaseModel):
+    cliente_id: Optional[int] = None
+    titulo: str
+    descripcion: Optional[str] = None
+    calorias_objetivo: Optional[int] = None
+    origen: str = "membresia"
+    comidas: List[ComidaPlanCreate] = []
+
+
+class PlanNutricionUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    calorias_objetivo: Optional[int] = None
+    activo: Optional[bool] = None
+
+
+class PlanNutricion(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: Optional[int] = None
+    titulo: str
+    descripcion: Optional[str] = None
+    calorias_objetivo: Optional[int] = None
+    origen: str = "membresia"
+    activo: bool
+    fecha_creacion: datetime
+    comidas: List[ComidaPlan] = []
+
+
+# ==================================================================
+# 10. RETOS
+# ==================================================================
+
+class RetoBase(BaseModel):
+    titulo: str
+    descripcion: Optional[str] = None
+    icono: Optional[str] = None
+    duracion_dias: Optional[int] = None
+    dificultad: Optional[str] = None
+
+
+class RetoCreate(RetoBase):
+    pass
+
+
+class RetoUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    icono: Optional[str] = None
+    duracion_dias: Optional[int] = None
+    dificultad: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+class Reto(RetoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_creacion: datetime
+
+
+# ==================================================================
+# 11. PERSONAL Y PLANILLA
+# ==================================================================
+
+class PuestoCreate(BaseModel):
+    nombre: str
+    tipo: TipoEmpleado
+
+
+class PuestoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+class Puesto(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    tipo: TipoEmpleado
+    activo: bool
+
+
+class EmpleadoBase(BaseModel):
+    nombre_completo: str
+    tipo: TipoEmpleado
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    dni: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
+    puesto: Optional[str] = None
+    codigo_acceso: Optional[str] = None
+    # staff fijo:
+    sueldo_fijo_mensual: Optional[float] = None
+    # profesor de sala:
+    tarifa_por_clase: Optional[float] = None
+    minimo_alumnos_tarifa_completa: Optional[int] = None
+    tarifa_reducida: Optional[float] = None
+
+
+class EmpleadoCreate(EmpleadoBase):
+    pass
+
+
+class EmpleadoUpdate(BaseModel):
+    nombre_completo: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[EmailStr] = None
+    dni: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
+    puesto: Optional[str] = None
+    codigo_acceso: Optional[str] = None
+    sueldo_fijo_mensual: Optional[float] = None
+    tarifa_por_clase: Optional[float] = None
+    minimo_alumnos_tarifa_completa: Optional[int] = None
+    tarifa_reducida: Optional[float] = None
+    activo: Optional[bool] = None
+
+
+class Empleado(EmpleadoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_ingreso: date
+
+
+class AsistenciaEmpleadoCreate(BaseModel):
+    empleado_id: int
+
+
+class AsistenciaEmpleado(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empleado_id: int
+    fecha_hora_entrada: datetime
+    fecha_hora_salida: Optional[datetime] = None
+
+
+class ClaseDictadaCreate(BaseModel):
+    profesor_id: int
+    nombre_clase: str
+    sala: Optional[str] = None
+    fecha: date
+    hora_inicio: datetime
+    hora_fin: Optional[datetime] = None
+    notas: Optional[str] = None
+    # Repeticion (opcional): si dias_semana no esta vacio y semanas > 1,
+    # se crean varias clases (una serie) en vez de una sola.
+    # dias_semana usa convencion Python weekday: Lunes=0 ... Sabado=5.
+    dias_semana: List[int] = []
+    semanas: int = 1
+
+
+class ClaseDictadaUpdate(BaseModel):
+    nombre_clase: Optional[str] = None
+    sala: Optional[str] = None
+    hora_inicio: Optional[datetime] = None
+    hora_fin: Optional[datetime] = None
+    notas: Optional[str] = None
+
+
+class MarcarDictadaRequest(BaseModel):
+    """
+    Se usa al cerrar una clase: registra cuantos alumnos asistieron.
+    El backend calcula automaticamente monto_pagado comparando con
+    el minimo_alumnos_tarifa_completa del profesor.
+    """
+    cantidad_alumnos: int
+
+
+class ReemplazoRequest(BaseModel):
+    """Asigna (o quita, si es None) un profesor de reemplazo puntual para una fecha especifica."""
+    profesor_reemplazo_id: Optional[int] = None
+
+
+class ClaseDictada(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    profesor_id: int
+    nombre_clase: str
+    sala: Optional[str] = None
+    fecha: date
+    hora_inicio: datetime
+    hora_fin: Optional[datetime] = None
+    dictada: bool
+    cantidad_alumnos: Optional[int] = None
+    monto_pagado: Optional[float] = None
+    serie_id: Optional[str] = None
+    profesor_reemplazo_id: Optional[int] = None
+    notas: Optional[str] = None
+    profesor: Optional[Empleado] = None
+    profesor_reemplazo: Optional[Empleado] = None
+
+
+class ClaseOcupada(BaseModel):
+    """Vista minima de una clase para el calendario de 'Ocupado' del portal de profesores."""
+    fecha: date
+    hora_inicio: datetime
+    hora_fin: Optional[datetime] = None
+    sala: Optional[str] = None
+    nombre_clase: str
+    nombre_profesor: str
+    nombre_profesor_reemplazo: Optional[str] = None
+
+
+class ProfesorMinimo(BaseModel):
+    """Vista minima de un profesor de sala, para que otro profesor pueda elegirlo como reemplazo (no expone tarifas ni datos sensibles)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre_completo: str
+
+
+class ResumenPlanilla(BaseModel):
+    """Resultado del calculo de planilla de un profesor en un periodo (desde/hasta), con lo ya pagado y el pendiente para ESE MISMO rango."""
+    profesor_id: int
+    nombre_profesor: str
+    cantidad_clases_dictadas: int
+    total_a_pagar: float
+    total_pagado: float = 0.0
+    pendiente: float = 0.0
+    detalle_clases: List[ClaseDictada] = []
+
+
+class ResumenPlanillaStaff(BaseModel):
+    """
+    Calculo de planilla de un staff fijo para un mes: sueldo fijo de
+    ESE mes + comisiones generadas en el mes ANTERIOR (se pagan con
+    un mes de arrastre), menos lo que ya se le haya pagado en ese
+    periodo (permite pagos en partes).
+    """
+    empleado_id: int
+    nombre_empleado: str
+    anio: int
+    mes: int
+    sueldo_fijo_mensual: float
+    mes_comision_anio: int
+    mes_comision_mes: int
+    comision_membresias: float
+    comision_productos: float
+    total_a_pagar: float
+    total_pagado: float
+    pendiente: float
+
+
+class PagoPlanillaCreate(BaseModel):
+    empleado_id: int
+    tipo: str  # "staff" | "profesor"
+    anio: int
+    mes: int
+    monto_sueldo_fijo: float = 0.0
+    monto_comision_membresias: float = 0.0
+    monto_comision_productos: float = 0.0
+    cantidad_clases: Optional[int] = None
+    monto_clases: float = 0.0
+    monto_total: float
+    notas: Optional[str] = None
+    # Solo para tipo="profesor": rango exacto usado en el calculo,
+    # para poder comparar el pendiente contra pagos previos del
+    # MISMO rango (ver ResumenPlanilla/PagoPlanilla.desde/hasta).
+    desde: Optional[date] = None
+    hasta: Optional[date] = None
+
+
+class GastoCreate(BaseModel):
+    fecha: Optional[datetime] = None
+    categoria: str  # ver CategoriaGasto en models.py (validado por SQLAlchemy al guardar)
+    monto: float
+    descripcion: Optional[str] = None
+    referencia_id: Optional[int] = None
+    notas: Optional[str] = None
+
+
+class GastoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    fecha: datetime
+    categoria: str
+    monto: float
+    descripcion: Optional[str] = None
+    referencia_id: Optional[int] = None
+    notas: Optional[str] = None
+
+
+class ResumenIngresos(BaseModel):
+    total: float
+    membresias: float
+    productos: float
+    otros: float
+    detalle: list
+
+
+class ResumenEgresos(BaseModel):
+    total: float
+    compras_producto: float
+    pago_staff: float
+    pago_profesor: float
+    otros: float
+    detalle: list
+
+
+class PagoPlanillaUpdate(BaseModel):
+    """Correccion administrativa de un pago ya registrado (solo admin). El monto se revalida contra el saldo pendiente en el servidor."""
+    monto_total: Optional[float] = None
+    notas: Optional[str] = None
+
+
+class PagoPlanilla(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empleado_id: int
+    tipo: str
+    anio: int
+    mes: int
+    monto_sueldo_fijo: float
+    monto_comision_membresias: float
+    monto_comision_productos: float
+    cantidad_clases: Optional[int] = None
+    monto_clases: float
+    monto_total: float
+    fecha_pago: datetime
+    notas: Optional[str] = None
+    usuario_registro_id: Optional[int] = None
+    desde: Optional[date] = None
+    hasta: Optional[date] = None
+    empleado: Optional[Empleado] = None
+
+
+# ==================================================================
+# 11b. SERVICIOS / DEUDAS (Pagos > Servicios)
+# ==================================================================
+
+class ServicioCreate(BaseModel):
+    nombre: str
+    notas: Optional[str] = None
+
+
+class ServicioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    notas: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+class Servicio(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    notas: Optional[str] = None
+    activo: bool
+
+
+class PagoServicioCreate(BaseModel):
+    cargo_id: int
+    monto: float
+    notas: Optional[str] = None
+    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+
+
+class PagoServicioUpdate(BaseModel):
+    """Correccion administrativa de un pago ya registrado (solo admin). Se revalida contra el saldo pendiente del cargo."""
+    monto: Optional[float] = None
+    notas: Optional[str] = None
+    metodo_pago: Optional[MetodoPago] = None
+
+
+class PagoServicio(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cargo_id: int
+    monto: float
+    fecha_pago: datetime
+    notas: Optional[str] = None
+    usuario_registro_id: Optional[int] = None
+    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+
+
+class CargoServicioCreate(BaseModel):
+    servicio_id: int
+    concepto: Optional[str] = None
+    monto_total: float
+    anio: int
+    mes: int
+    fecha_vencimiento: Optional[date] = None
+    notas: Optional[str] = None
+    # Recurrencia opcional: si se define, el backend genera de una vez
+    # los cargos futuros de la serie en lugar de uno solo.
+    recurrente_tipo: Optional[str] = None  # "semanal" | "mensual" | "anual"
+    recurrente_dias_semana: Optional[str] = None  # csv (lun,mar,...), solo si recurrente_tipo == "semanal"
+
+
+class CargoServicioUpdate(BaseModel):
+    """Correccion administrativa de un cargo (solo admin)."""
+    concepto: Optional[str] = None
+    monto_total: Optional[float] = None
+    anio: Optional[int] = None
+    mes: Optional[int] = None
+    fecha_vencimiento: Optional[date] = None
+    notas: Optional[str] = None
+    recurrente_tipo: Optional[str] = None
+    recurrente_dias_semana: Optional[str] = None
+
+
+class CargoServicio(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    servicio_id: int
+    concepto: Optional[str] = None
+    monto_total: float
+    anio: int
+    mes: int
+    fecha_vencimiento: Optional[date] = None
+    fecha_registro: datetime
+    notas: Optional[str] = None
+    recurrente_tipo: Optional[str] = None
+    recurrente_dias_semana: Optional[str] = None
+    serie_id: Optional[str] = None
+    servicio: Optional[Servicio] = None
+    pagos: List[PagoServicio] = []
+    # Calculados en el endpoint (no son columnas de la tabla)
+    total_pagado: float = 0.0
+    pendiente: float = 0.0
+
+
+# ==================================================================
+# 12. CONFIGURACION GENERAL
+# ==================================================================
+
+class ConfiguracionBase(BaseModel):
+    moneda: str = "S/"
+    nombre_gimnasio: str = "Mi Gimnasio"
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    direccion: Optional[str] = None
+    comision_tarjeta: float = 3.5
+    comision_qr: float = 2.0
+    dias_aviso_vencimiento: int = 7
+    comision_producto_porcentaje: float = 0.0
+    tema: str = "lavanda"
+    modo_tema: str = "claro"
+    clausulas_contrato: Optional[str] = None
+    medidas_campos_visibles: Optional[str] = None
+    medidas_valores_visibles: Optional[str] = None
+
+
+class ConfiguracionUpdate(ConfiguracionBase):
+    pass
+
+
+class Configuracion(ConfiguracionBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+# ==================================================================
+# 13. DASHBOARD
+# ==================================================================
+
+class DashboardStats(BaseModel):
+    """Resumen de stats para la pantalla principal del staff."""
+    total_clientes: int
+    membresias_activas: int
+    ingresos_mes: float
+    productos_bajo_stock: int
+    asistencias_hoy: int
+    presentes_ahora: int
+    membresias_por_vencer: int
+    # --- Ampliado para las tarjetas del Panel ---
+    clientes_activos: int = 0            # clientes con membresia vigente HOY
+    ingresos_hoy_membresias: float = 0.0
+    ingresos_hoy_venta_rapida: float = 0.0
+    balance_efectivo_hoy: float = 0.0    # ventas+membresias de HOY pagadas en efectivo
+    balance_cuenta_hoy: float = 0.0      # ventas+membresias de HOY (tarjeta+QR) menos la comision de la pasarela
+
+
+class ClienteListadoRow(BaseModel):
+    """
+    Fila del listado completo de Clientes (tabla sin foto): datos
+    agregados de la membresia mas reciente + %asistencia, usados por
+    /clientes/listado-completo.
+    """
+    id: int
+    nombre_completo: str
+    activo: bool
+    fecha_vencimiento: Optional[date] = None
+    dias_para_vencer: Optional[int] = None
+    ultimo_plan: Optional[str] = None
+    costo: Optional[float] = None
+    pagado: Optional[float] = None
+    saldo: Optional[float] = None
+    porcentaje_asistencia: Optional[float] = None
+    tiene_membresia_catalogo: bool = False
+
+
+# ==================================================================
+# 14. FICHA RAPIDA DE CLIENTE (panel principal)
+# ==================================================================
+
+class FichaMembresiaActual(BaseModel):
+    cm_id: int
+    nombre: str
+    fecha_fin: Optional[date] = None
+    dias_restantes: Optional[int] = None
+    precio: float = 0.0
+    monto_pagado: float = 0.0
+    deuda_pendiente: float = 0.0
+    fecha_pago_saldo: Optional[date] = None
+
+
+class ClienteFicha(BaseModel):
+    """
+    Resumen agregado de un cliente para la columna de busqueda
+    inteligente del panel principal: evita que el frontend tenga
+    que hacer 4 llamadas por separado.
+    """
+    cliente_id: int
+    nombre_completo: str
+    foto_url: Optional[str] = None
+    membresia_actual: Optional[FichaMembresiaActual] = None
+    porcentaje_asistencia: float
+    ultimos_ingresos: List[Asistencia] = []
+
+
+# ==================================================================
+# 15. METAS DE VENTAS Y COMISIONES (solo administrador)
+# ==================================================================
+
+class MetaMensualBase(BaseModel):
+    anio: int
+    mes: int  # 1-12
+    meta_membresias: float = 0.0
+    meta_productos: float = 0.0
+    notas: Optional[str] = None
+
+
+class MetaMensualCreate(MetaMensualBase):
+    pass
+
+
+class MetaMensualUpdate(BaseModel):
+    meta_membresias: Optional[float] = None
+    meta_productos: Optional[float] = None
+    notas: Optional[str] = None
+
+
+class MetaMensual(MetaMensualBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class TramoComisionBase(BaseModel):
+    tipo: str  # "membresia" | "producto"
+    porcentaje_meta_minimo: float
+    porcentaje_comision: float
+
+
+class TramoComisionCreate(TramoComisionBase):
+    pass
+
+
+class TramoComisionUpdate(BaseModel):
+    porcentaje_meta_minimo: Optional[float] = None
+    porcentaje_comision: Optional[float] = None
+    activo: Optional[bool] = None
+
+
+class TramoComision(TramoComisionBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+
+
+class ResumenComisionUsuario(BaseModel):
+    """Comision calculada de un trabajador para un mes especifico."""
+    usuario_id: int
+    nombre_completo: str
+    ventas_membresias: float
+    ventas_productos: float
+    meta_membresias: float
+    meta_productos: float
+    porcentaje_meta_membresias: float
+    porcentaje_meta_productos: float
+    porcentaje_comision_membresias: float
+    porcentaje_comision_productos: float
+    comision_membresias: float
+    comision_productos: float
+    comision_total: float
+
+
+# ==================================================================
+# 16. MEDIDAS
+# ==================================================================
+
+class MedidaBase(BaseModel):
+    fecha: Optional[date] = None
+    notas: Optional[str] = None
+    estatura_cm: Optional[float] = None
+    peso_kg: Optional[float] = None
+    cuello_cm: Optional[float] = None
+    hombros_cm: Optional[float] = None
+    pecho_cm: Optional[float] = None
+    brazo_derecho_relajado_cm: Optional[float] = None
+    brazo_izquierdo_relajado_cm: Optional[float] = None
+    brazo_derecho_contraido_cm: Optional[float] = None
+    brazo_izquierdo_contraido_cm: Optional[float] = None
+    antebrazo_derecho_cm: Optional[float] = None
+    antebrazo_izquierdo_cm: Optional[float] = None
+    cintura_cm: Optional[float] = None
+    abdomen_cm: Optional[float] = None
+    cadera_cm: Optional[float] = None
+    muslo_derecho_cm: Optional[float] = None
+    muslo_izquierdo_cm: Optional[float] = None
+    pantorrilla_derecha_cm: Optional[float] = None
+    pantorrilla_izquierda_cm: Optional[float] = None
+    muneca_derecha_cm: Optional[float] = None
+    muneca_izquierda_cm: Optional[float] = None
+    tobillo_derecho_cm: Optional[float] = None
+    tobillo_izquierdo_cm: Optional[float] = None
+    presion_arterial: Optional[str] = None
+    frecuencia_cardiaca_reposo: Optional[int] = None
+    saturacion_oxigeno: Optional[float] = None
+    porcentaje_grasa_corporal: Optional[float] = None
+    masa_muscular_kg: Optional[float] = None
+    grasa_visceral_nivel: Optional[float] = None
+    agua_corporal_pct: Optional[float] = None
+    masa_osea_kg: Optional[float] = None
+    edad_metabolica: Optional[int] = None
+    peso_objetivo_kg: Optional[float] = None
+
+
+class MedidaCreate(MedidaBase):
+    cliente_id: int
+
+
+class MedidaUpdate(MedidaBase):
+    pass
+
+
+class Medida(MedidaBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: int
+    fecha: date

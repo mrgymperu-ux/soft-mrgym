@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zona de Profesores - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+    <div class="login-page">
+        <div class="login-card">
+            <div class="login-logo">
+                <div class="icono">🏋️</div>
+                <h1>Zona de Profesores</h1>
+                <p>Soft-MrGym</p>
+            </div>
+            <div id="error-login" class="alert alert-error" style="display:none;"></div>
+            <div class="form-group"><label>DNI</label><input type="text" id="dni" placeholder="12345678"></div>
+            <div class="form-group"><label>Codigo de acceso</label><input type="text" id="codigo" placeholder="••••" maxlength="10"></div>
+            <button class="btn-login" onclick="hacerLogin()">Ingresar</button>
+        </div>
+    </div>
+    <script src="js/api.js"></script>
+    <script>
+        /* Personalizar login con nombre del gym si viene ?gym=slug */
+        (async () => {
+            const info = await fetchInfoGym();
+            if (info && info.nombre) {
+                document.querySelector(".login-logo h1").textContent = info.nombre;
+                document.querySelector(".login-logo p").textContent = "Zona de Profesores";
+                document.title = `${info.nombre} - Profesores`;
+            }
+            /* PWA: inyectar manifest y registrar service worker */
+            const slug = getSlug();
+            if (slug) {
+                const link = document.createElement("link");
+                link.rel = "manifest";
+                link.href = `${API_BASE}/gym/${slug}/manifest.json?portal=profesor`;
+                document.head.appendChild(link);
+                const iconLink = document.createElement("link");
+                iconLink.rel = "icon";
+                iconLink.href = `${API_BASE}/gym/${slug}/icon.svg`;
+                iconLink.type = "image/svg+xml";
+                document.head.appendChild(iconLink);
+                const appleIcon = document.createElement("link");
+                appleIcon.rel = "apple-touch-icon";
+                appleIcon.href = `${API_BASE}/gym/${slug}/icon.svg`;
+                document.head.appendChild(appleIcon);
+                if ("serviceWorker" in navigator) {
+                    navigator.serviceWorker.register(`${API_BASE}/gym/${slug}/sw.js`).catch(() => {});
+                }
+            }
+        })();
+
+        async function hacerLogin() {
+            const dni = document.getElementById("dni").value.trim();
+            const codigo = document.getElementById("codigo").value.trim();
+            const errorDiv = document.getElementById("error-login");
+            errorDiv.style.display = "none";
+            if (!dni || !codigo) { errorDiv.textContent = "Ingresa tu DNI y codigo"; errorDiv.style.display = "block"; return; }
+            try {
+                await loginProfesor(dni, codigo);
+                window.location.href = "agenda.html";
+            } catch (e) {
+                errorDiv.textContent = e.message;
+                errorDiv.style.display = "block";
+            }
+        }
+        document.addEventListener("keydown", (e) => { if (e.key === "Enter") hacerLogin(); });
+    </script>
+</body>
+</html>

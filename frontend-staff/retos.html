@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">Retos</h1>
+                <p class="header-subtitle">Desafios y metas para alumnos</p>
+            </div>
+            <button class="btn btn-primary" onclick="abrirModal()">+ Nuevo Reto</button>
+        </div>
+
+        <div class="grid-cards" id="grid-retos">
+            <p style="color:#636E72;padding:20px;">Cargando...</p>
+        </div>
+    </main>
+</div>
+
+<div id="modal-reto" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Nuevo Reto</h3>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="form-group"><label>Titulo *</label><input type="text" id="r-titulo" placeholder="Perder 5kg en 60 dias"></div>
+        <div class="form-group"><label>Descripcion</label><textarea id="r-descripcion" rows="2"></textarea></div>
+        <div class="form-group"><label>Icono (emoji)</label><input type="text" id="r-icono" placeholder="🏆" maxlength="4"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group"><label>Duracion (dias)</label><input type="number" id="r-duracion" min="1" placeholder="30"></div>
+            <div class="form-group">
+                <label>Dificultad</label>
+                <select id="r-dificultad">
+                    <option value="Principiante">Principiante</option>
+                    <option value="Intermedio">Intermedio</option>
+                    <option value="Avanzado">Avanzado</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarReto()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    async function cargarRetos() {
+        const retos = await apiFetch("/retos/");
+        const grid = document.getElementById("grid-retos");
+        if (!retos.length) {
+            grid.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏆</div><div class="empty-state-title">Sin retos creados</div><div class="empty-state-text">Crea el primer reto para tus alumnos</div></div>';
+            return;
+        }
+        grid.innerHTML = retos.map(r => `
+            <div class="grid-card">
+                <div class="grid-card-image">${r.icono || "🏆"}</div>
+                <div class="grid-card-content">
+                    <div class="grid-card-title">${r.titulo}</div>
+                    <div class="grid-card-subtitle">${r.descripcion || ""}</div>
+                    <div class="grid-card-footer">
+                        <span class="grid-card-meta">${r.duracion_dias ? r.duracion_dias + " dias" : ""}</span>
+                        <span class="grid-card-badge">${r.dificultad || "General"}</span>
+                    </div>
+                </div>
+            </div>
+        `).join("");
+    }
+
+    function abrirModal() {
+        ["titulo","descripcion","icono","duracion"].forEach(f => document.getElementById(`r-${f}`).value = "");
+        document.getElementById("r-icono").value = "🏆";
+        document.getElementById("modal-reto").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-reto").classList.remove("active"); }
+
+    async function guardarReto() {
+        const titulo = document.getElementById("r-titulo").value.trim();
+        if (!titulo) { showError("El titulo es obligatorio"); return; }
+        const datos = {
+            titulo,
+            descripcion: document.getElementById("r-descripcion").value.trim() || null,
+            icono: document.getElementById("r-icono").value.trim() || "🏆",
+            duracion_dias: parseInt(document.getElementById("r-duracion").value) || null,
+            dificultad: document.getElementById("r-dificultad").value,
+        };
+        try {
+            await apiFetch("/retos/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess("Reto creado");
+            cerrarModal();
+            cargarRetos();
+        } catch (e) { showError(e.message); }
+    }
+
+    cargarRetos();
+</script>
+</body>
+</html>

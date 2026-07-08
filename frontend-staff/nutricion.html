@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nutricion - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .subtabs { display:flex; gap:6px; margin-bottom:18px; }
+        .subtab { padding:8px 16px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.88em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); }
+        .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        .plan-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:hidden;margin-bottom:16px; }
+        .plan-card-header { background:linear-gradient(135deg, var(--color-primario), var(--color-primario-oscuro));color:#fff;padding:20px; }
+        .plan-card-header h3 { margin:0;font-size:1.1em; }
+        .plan-card-header p { margin:6px 0 0;opacity:0.85;font-size:0.85em; }
+        .kcal-badge { background:rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px;font-size:0.85em;display:inline-block;margin-top:8px; }
+        .comidas-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0;border-top:1px solid var(--color-borde); }
+        .comida-col { padding:16px;border-right:1px solid var(--color-borde); }
+        .comida-col:last-child { border-right:none; }
+        .comida-titulo { font-size:0.75em;text-transform:uppercase;color:var(--color-texto-secundario);font-weight:600;margin-bottom:10px; }
+        .alimento-item { font-size:0.85em;padding:4px 0;border-bottom:1px solid var(--color-borde);display:flex;justify-content:space-between; }
+        .alimento-item:last-child { border-bottom:none; }
+        .alimento-kcal { color:var(--color-texto-secundario);font-size:0.8em; }
+
+        /* Tabla de Alimentos: colores por categoria, mezclados con el fondo del tema
+           (no bloques solidos e intensos) para que se vean bien en claro y oscuro,
+           y respeten la paleta elegida por el gimnasio. */
+        .cat-alimento { font-size:0.68em; padding:2px 8px; border-radius:10px; font-weight:600; }
+        .cat-proteina { background:color-mix(in srgb, #E17055 18%, var(--color-fondo)); color:color-mix(in srgb, #E17055 75%, var(--color-texto) 25%); }
+        .cat-carbohidrato { background:color-mix(in srgb, #C99A2E 18%, var(--color-fondo)); color:color-mix(in srgb, #C99A2E 75%, var(--color-texto) 25%); }
+        .cat-vegetal { background:color-mix(in srgb, #00B894 18%, var(--color-fondo)); color:color-mix(in srgb, #00B894 75%, var(--color-texto) 25%); }
+        .cat-fruta { background:color-mix(in srgb, #E84393 18%, var(--color-fondo)); color:color-mix(in srgb, #E84393 75%, var(--color-texto) 25%); }
+        .cat-lacteo { background:color-mix(in srgb, #2E5BFF 18%, var(--color-fondo)); color:color-mix(in srgb, #2E5BFF 75%, var(--color-texto) 25%); }
+        .cat-grasa { background:color-mix(in srgb, #6C5CE7 18%, var(--color-fondo)); color:color-mix(in srgb, #6C5CE7 75%, var(--color-texto) 25%); }
+        .cat-legumbre { background:color-mix(in srgb, #6AA84F 18%, var(--color-fondo)); color:color-mix(in srgb, #6AA84F 75%, var(--color-texto) 25%); }
+        .cat-otro { background:var(--color-fondo); color:var(--color-texto-secundario); }
+
+        /* Paquetes */
+        .paq-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px; }
+        .paq-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);padding:16px; }
+        .paq-header { display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px; }
+        .paq-nombre { font-weight:700;font-size:0.95em; }
+        .paq-badges { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px; }
+        .paq-badge { font-size:0.68em;padding:2px 9px;border-radius:10px;font-weight:600; }
+        .paq-item { font-size:0.8em;display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--color-borde); }
+        .paq-item:last-child { border-bottom:none; }
+        .paq-total { margin-top:8px;padding-top:8px;border-top:2px solid var(--color-borde);font-size:0.85em;font-weight:700;display:flex;justify-content:space-between; }
+
+        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
+        .filtros-bar select, .filtros-bar input { padding:7px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.85em; background:var(--color-fondo); color:var(--color-texto); }
+
+        /* Tabla de alimentos: header y filtros pegajosos */
+        #vista-alimentos .table-container { max-height:calc(100vh - 260px); overflow-y:auto; }
+        #vista-alimentos .table thead th { position:sticky; top:0; background:var(--color-blanco); z-index:2; box-shadow:0 1px 0 var(--color-borde); }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">🥗 Nutrición</h1>
+                <p class="header-subtitle">Planes, catálogo de alimentos y paquetes por propósito</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary" id="btn-generar-masivo" style="display:none;" onclick="generarPlanesAutomaticosMasivo()">🤖 Generar automáticos (todos)</button>
+                <button class="btn btn-primary" id="btn-accion-principal" onclick="abrirModalPlan()">+ Nuevo Plan</button>
+            </div>
+        </div>
+
+        <div class="subtabs">
+            <span class="subtab activo" data-vista="planes" onclick="onSubtab(this)">📋 Planes</span>
+            <span class="subtab" data-vista="alimentos" onclick="onSubtab(this)">🍽️ Alimentos</span>
+            <span class="subtab" data-vista="paquetes" onclick="onSubtab(this)">📦 Paquetes</span>
+        </div>
+
+        <!-- ============ VISTA: PLANES ============ -->
+        <div id="vista-planes">
+            <div class="search-bar" style="background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);padding:14px 20px;margin-bottom:20px;">
+                <select id="sel-cliente" onchange="cargarPlanes()">
+                    <option value="">Todos los planes</option>
+                </select>
+            </div>
+            <div id="lista-planes"><p style="text-align:center;color:var(--color-texto-secundario);padding:40px;">Cargando...</p></div>
+        </div>
+
+        <!-- ============ VISTA: ALIMENTOS ============ -->
+        <div id="vista-alimentos" style="display:none;">
+            <div class="filtros-bar">
+                <input type="text" id="al-buscar" placeholder="Buscar alimento..." oninput="cargarAlimentos()" style="flex:1;min-width:180px;">
+                <select id="al-categoria" onchange="cargarAlimentos()">
+                    <option value="">Todas las categorías</option>
+                    <option value="proteina">Proteína</option>
+                    <option value="carbohidrato">Carbohidrato</option>
+                    <option value="legumbre">Legumbre</option>
+                    <option value="vegetal">Vegetal</option>
+                    <option value="fruta">Fruta</option>
+                    <option value="lacteo">Lácteo</option>
+                    <option value="grasa">Grasa</option>
+                    <option value="otro">Otro</option>
+                </select>
+            </div>
+            <div class="card">
+                <div class="table-container">
+                    <table class="table">
+                        <thead><tr><th>Alimento</th><th>Categoría</th><th style="text-align:right;">Porción</th><th style="text-align:right;">Kcal</th><th style="text-align:right;">Proteína</th><th style="text-align:right;">Carbos</th><th style="text-align:right;">Grasas</th><th style="text-align:right;">Fibra</th><th></th></tr></thead>
+                        <tbody id="tabla-alimentos"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ VISTA: PAQUETES ============ -->
+        <div id="vista-paquetes" style="display:none;">
+            <div class="filtros-bar">
+                <select id="paq-proposito" onchange="cargarPaquetes()">
+                    <option value="">Todos los propósitos</option>
+                    <option value="bajar_peso">Bajar de peso</option>
+                    <option value="ganar_masa">Ganar masa muscular</option>
+                    <option value="mantenimiento">Mantenimiento</option>
+                    <option value="definicion">Definición</option>
+                </select>
+                <select id="paq-tipo" onchange="cargarPaquetes()">
+                    <option value="">Todos los tipos</option>
+                    <option value="desayuno">Desayuno</option>
+                    <option value="comida">Almuerzo</option>
+                    <option value="aperitivo">Aperitivo</option>
+                    <option value="cena">Cena</option>
+                </select>
+            </div>
+            <div class="paq-grid" id="paq-grid"><p style="color:var(--color-texto-secundario);">Cargando...</p></div>
+        </div>
+    </main>
+</div>
+
+<!-- Modal nuevo plan -->
+<div id="modal-plan" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Nuevo Plan de Nutricion</h3>
+            <button class="modal-close" onclick="cerrarModal()">✕</button>
+        </div>
+        <div class="form-group"><label>Cliente (opcional)</label><select id="f-cliente"><option value="">Plan general</option></select></div>
+        <div class="form-group"><label>Titulo *</label><input type="text" id="f-titulo" placeholder="Ganar peso, Perder peso..."></div>
+        <div class="form-group"><label>Descripcion</label><textarea id="f-descripcion" rows="2"></textarea></div>
+        <div class="form-group"><label>Calorias objetivo (kcal)</label><input type="number" id="f-calorias" min="0" placeholder="2000"></div>
+
+        <p style="font-weight:600;margin:16px 0 8px;font-size:0.9em;">Alimentos por comida</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Desayuno</p>
+                <div id="items-desayuno"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="agregarAlimento('desayuno')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Comida</p>
+                <div id="items-comida"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="agregarAlimento('comida')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Aperitivo</p>
+                <div id="items-aperitivo"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="agregarAlimento('aperitivo')">+ Agregar</button>
+            </div>
+            <div>
+                <p style="font-size:0.8em;font-weight:600;color:var(--color-texto-secundario);margin:0 0 6px;">Cena</p>
+                <div id="items-cena"></div>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="agregarAlimento('cena')">+ Agregar</button>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarPlan()">Guardar Plan</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal crear/editar alimento -->
+<div id="modal-alimento" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="al-modal-titulo">Nuevo Alimento</h3>
+            <button class="modal-close" onclick="cerrarModalAlimento()">✕</button>
+        </div>
+        <div class="form-group"><label>Nombre *</label><input type="text" id="am-nombre" placeholder="Pechuga de pollo a la plancha"></div>
+        <div class="form-group">
+            <label>Categoría</label>
+            <select id="am-categoria">
+                <option value="proteina">Proteína</option>
+                <option value="carbohidrato">Carbohidrato</option>
+                <option value="legumbre">Legumbre</option>
+                <option value="vegetal">Vegetal</option>
+                <option value="fruta">Fruta</option>
+                <option value="lacteo">Lácteo</option>
+                <option value="grasa">Grasa</option>
+                <option value="otro">Otro</option>
+            </select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group"><label>Porcion de referencia (g)</label><input type="number" id="am-porcion" value="100" min="1"></div>
+            <div class="form-group"><label>Equivalencia casera</label>
+                <div style="display:flex;gap:6px;">
+                    <input type="number" id="am-peso-unidad" min="1" step="1" placeholder="175" style="width:70px;" oninput="_calcPorcionCasera()">
+                    <select id="am-unidad-medida" style="flex:1;" onchange="_calcPorcionCasera()">
+                        <option value="">Sin equivalencia</option>
+                        <option value="unidad">Unidad</option>
+                        <option value="unidades">Unidades</option>
+                        <option value="taza">Taza</option>
+                        <option value="vaso">Vaso</option>
+                        <option value="cucharada">Cucharada</option>
+                        <option value="cucharadita">Cucharadita</option>
+                        <option value="rebanada">Rebanada</option>
+                        <option value="tajada">Tajada</option>
+                        <option value="rodaja">Rodaja</option>
+                        <option value="filete">Filete</option>
+                        <option value="pu\u00f1ado">Pu\u00f1ado</option>
+                    </select>
+                </div>
+                <small id="am-porcion-preview" style="color:var(--color-texto-secundario);"></small>
+            </div>
+            <div class="form-group"><label>Calor\u00edas (kcal)</label><input type="number" id="am-calorias" min="0" step="0.1"></div>
+            <div class="form-group"><label>Prote\u00ednas (g)</label><input type="number" id="am-proteinas" min="0" step="0.1"></div>
+            <div class="form-group"><label>Carbohidratos (g)</label><input type="number" id="am-carbohidratos" min="0" step="0.1"></div>
+            <div class="form-group"><label>Grasas (g)</label><input type="number" id="am-grasas" min="0" step="0.1"></div>
+            <div class="form-group"><label>Fibra (g)</label><input type="number" id="am-fibra" min="0" step="0.1"></div>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalAlimento()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarAlimento()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal creador de paquetes -->
+<div id="modal-paquete" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <h3 class="modal-title" id="pq-modal-titulo">Nuevo Paquete</h3>
+            <button class="modal-close" onclick="cerrarModalPaquete()">✕</button>
+        </div>
+        <div class="form-group"><label>Nombre *</label><input type="text" id="pq-nombre" placeholder="Desayuno alto en proteína"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group">
+                <label>Tipo de comida *</label>
+                <select id="pq-tipo">
+                    <option value="desayuno">Desayuno</option>
+                    <option value="comida">Almuerzo</option>
+                    <option value="aperitivo">Aperitivo</option>
+                    <option value="cena">Cena</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Propósito *</label>
+                <select id="pq-proposito">
+                    <option value="bajar_peso">Bajar de peso</option>
+                    <option value="ganar_masa">Ganar masa muscular</option>
+                    <option value="mantenimiento">Mantenimiento</option>
+                    <option value="definicion">Definición</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group"><label>Notas</label><input type="text" id="pq-notas" placeholder="Opcional"></div>
+
+        <p style="font-weight:600;margin:16px 0 8px;font-size:0.9em;">Alimentos del paquete</p>
+        <div id="pq-items"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="agregarItemPaquete()">+ Agregar alimento</button>
+        <div id="pq-total-cal" style="margin-top:12px;font-weight:600;font-size:0.9em;"></div>
+
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPaquete()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarPaquete()">Guardar Paquete</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let vistaActual = "planes";
+    let alimentosCache = [];
+    let alimentoEditando = null;
+    let paquetesCache = [];
+
+    // Equivalencia aproximada de "tazas" por categoria (gramos por 1 taza
+    // de referencia, cocido/servido). Solo para dar una nocion casera
+    // ademas del gramaje exacto; no aplica a proteinas/grasas (se miden
+    // mejor en gramos/unidades).
+    const GRAMOS_POR_TAZA = { carbohidrato: 195, legumbre: 200, vegetal: 150, fruta: 150, lacteo: 245 };
+
+    function formatearCantidad(gramos, categoria) {
+        gramos = Math.round(gramos);
+        const gxTaza = GRAMOS_POR_TAZA[categoria];
+        if (gxTaza) {
+            const tazas = gramos / gxTaza;
+            const tazasTexto = tazas >= 0.4 ? ` (≈ ${tazas.toFixed(tazas < 1 ? 2 : 1)} taza${tazas >= 1.5 ? "s" : ""})` : "";
+            return `${gramos} g${tazasTexto}`;
+        }
+        return `${gramos} g`;
+    }
+
+    // ================================================================
+    // Sub-tabs
+    // ================================================================
+    function onSubtab(el) {
+        document.querySelectorAll(".subtab").forEach(s => s.classList.remove("activo"));
+        el.classList.add("activo");
+        vistaActual = el.dataset.vista;
+        document.getElementById("vista-planes").style.display = vistaActual === "planes" ? "block" : "none";
+        document.getElementById("vista-alimentos").style.display = vistaActual === "alimentos" ? "block" : "none";
+        document.getElementById("vista-paquetes").style.display = vistaActual === "paquetes" ? "block" : "none";
+
+        const btn = document.getElementById("btn-accion-principal");
+        if (vistaActual === "planes") { btn.textContent = "+ Nuevo Plan"; btn.onclick = abrirModalPlan; }
+        else if (vistaActual === "alimentos") { btn.textContent = "+ Nuevo Alimento"; btn.onclick = abrirModalAlimentoNuevo; }
+        else { btn.textContent = "+ Nuevo Paquete"; btn.onclick = abrirModalPaqueteNuevo; }
+
+        if (vistaActual === "alimentos") cargarAlimentos();
+        if (vistaActual === "paquetes") cargarPaquetes();
+
+        document.getElementById("btn-generar-masivo").style.display = (vistaActual === "planes" && esAdministrador()) ? "inline-block" : "none";
+    }
+
+    async function generarPlanesAutomaticosMasivo() {
+        if (!(await confirmDialog("Esto genera/actualiza el plan automático de TODOS los clientes activos con nutrición incluida en su membresía y con una toma de medidas registrada (peso y estatura). Los planes creados a mano no se tocan. ¿Continuar?"))) return;
+        try {
+            const r = await apiFetch("/nutricion/generar-automatico-masivo", { method: "POST" });
+            showSuccess(`Generados: ${r.generados} · Omitidos por falta de datos: ${r.omitidos_sin_datos} · Elegibles: ${r.total_elegibles}`);
+            cargarPlanes();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // PLANES (igual que antes)
+    // ================================================================
+    async function init() {
+        document.getElementById("btn-generar-masivo").style.display = esAdministrador() ? "inline-block" : "none";
+        const clientes = await apiFetch("/clientes/?limit=200");
+        const opts = clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos || ""}</option>`).join("");
+        document.getElementById("sel-cliente").innerHTML += opts;
+        document.getElementById("f-cliente").innerHTML = '<option value="">Plan general</option>' + opts;
+        cargarPlanes();
+        alimentosCache = await apiFetch("/alimentos/");
+    }
+
+    async function cargarPlanes() {
+        const clienteId = document.getElementById("sel-cliente").value;
+        const url = clienteId ? `/nutricion/cliente/${clienteId}` : "/nutricion/";
+        const planes = await apiFetch(url);
+        const contenedor = document.getElementById("lista-planes");
+
+        if (!planes.length) {
+            contenedor.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🥗</div><div class="empty-state-title">Sin planes registrados</div></div>';
+            return;
+        }
+
+        const tiposLabel = { desayuno:"Desayuno", comida:"Comida", aperitivo:"Aperitivo", cena:"Cena" };
+
+        contenedor.innerHTML = planes.map(plan => {
+            const tiposOrden = ["desayuno","comida","aperitivo","cena"];
+            const comidasHtml = tiposOrden.map(tipo => {
+                const items = (plan.comidas || []).filter(c => c.tipo === tipo);
+                if (!items.length) return "";
+                return `
+                    <div class="comida-col">
+                        <div class="comida-titulo">${tiposLabel[tipo]}</div>
+                        ${items.map(a => `
+                            <div class="alimento-item">
+                                <span>${a.nombre_alimento}</span>
+                                <span class="alimento-kcal">${a.calorias ? a.calorias + " kcal" : ""}</span>
+                            </div>
+                        `).join("")}
+                    </div>
+                `;
+            }).filter(Boolean).join("");
+
+            const badgeAuto = plan.origen === "automatico" ? '<span class="kcal-badge" style="margin-left:6px;">🤖 Automático</span>' : "";
+            return `
+            <div class="plan-card">
+            <div class="plan-card-header">
+            <h3>${plan.titulo}</h3>
+            <p>${plan.descripcion || ""}</p>
+                ${plan.calorias_objetivo ? `<span class="kcal-badge">🔥 ${plan.calorias_objetivo} kcal objetivo</span>` : ""}${badgeAuto}
+            </div>
+                <div class="comidas-grid">${comidasHtml || "<p style='padding:20px;color:var(--color-texto-secundario);'>Sin alimentos registrados</p>"}</div>
+                </div>
+                `;
+        }).join("");
+    }
+
+    function agregarAlimento(tipo) {
+        const contenedor = document.getElementById(`items-${tipo}`);
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;";
+        div.innerHTML = `
+            <select class="plan-item-alimento" style="flex:1;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarKcalItemPlan(this)">
+                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" data-categoria="${a.categoria}">${a.nombre}</option>`).join("")}
+            </select>
+            <input type="number" class="plan-item-gramos" value="100" min="1" style="width:64px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarKcalItemPlan(this)">
+            <span style="font-size:0.72em;color:var(--color-texto-secundario);">g</span>
+            <span class="plan-item-kcal-texto" style="font-size:0.72em;color:var(--color-texto-secundario);min-width:56px;"></span>
+            <button type="button" onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;color:var(--color-error);">✕</button>
+        `;
+        contenedor.appendChild(div);
+        _actualizarKcalItemPlan(div.querySelector(".plan-item-gramos"));
+    }
+
+    function _actualizarKcalItemPlan(elDisparador) {
+        const fila = elDisparador.closest("div");
+        const sel = fila.querySelector(".plan-item-alimento");
+        const gramosInput = fila.querySelector(".plan-item-gramos");
+        const opt = sel.selectedOptions[0];
+        if (!opt) return;
+        const gramos = parseFloat(gramosInput.value) || 0;
+        const cal = parseFloat(opt.dataset.cal) || 0;
+        const porcion = parseFloat(opt.dataset.porcion) || 100;
+        const kcalTotal = Math.round(cal * gramos / porcion);
+        fila.querySelector(".plan-item-kcal-texto").textContent = `${formatearCantidad(gramos, opt.dataset.categoria)} · ${kcalTotal} kcal`;
+    }
+
+    function abrirModalPlan() {
+        ["titulo","descripcion","calorias"].forEach(f => document.getElementById(`f-${f}`).value = "");
+        ["desayuno","comida","aperitivo","cena"].forEach(t => document.getElementById(`items-${t}`).innerHTML = "");
+        document.getElementById("modal-plan").classList.add("active");
+    }
+
+    function cerrarModal() { document.getElementById("modal-plan").classList.remove("active"); }
+
+    async function guardarPlan() {
+        const titulo = document.getElementById("f-titulo").value.trim();
+        if (!titulo) { showError("El titulo es obligatorio"); return; }
+
+        const tipos = ["desayuno","comida","aperitivo","cena"];
+        const comidas = [];
+        tipos.forEach(tipo => {
+            const items = document.querySelectorAll(`#items-${tipo} > div`);
+            items.forEach(item => {
+                const sel = item.querySelector(".plan-item-alimento");
+                const gramosInput = item.querySelector(".plan-item-gramos");
+                if (!sel) return;
+                const opt = sel.selectedOptions[0];
+                const gramos = parseFloat(gramosInput.value) || 100;
+                const cal = parseFloat(opt.dataset.cal) || 0;
+                const porcion = parseFloat(opt.dataset.porcion) || 100;
+                const kcalTotal = Math.round(cal * gramos / porcion);
+                comidas.push({
+                    tipo,
+                    alimento_id: parseInt(sel.value),
+                    nombre_alimento: `${opt.textContent} (${formatearCantidad(gramos, opt.dataset.categoria)})`,
+                    calorias: kcalTotal,
+                    cantidad_gramos: gramos,
+                });
+            });
+        });
+
+        const datos = {
+            cliente_id: parseInt(document.getElementById("f-cliente").value) || null,
+            titulo,
+            descripcion: document.getElementById("f-descripcion").value.trim() || null,
+            calorias_objetivo: parseInt(document.getElementById("f-calorias").value) || null,
+            comidas,
+        };
+
+        try {
+            await apiFetch("/nutricion/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess("Plan creado correctamente");
+            cerrarModal();
+            cargarPlanes();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // ALIMENTOS (catálogo peruano editable)
+    // ================================================================
+    const ETIQ_CAT = { proteina:"Proteína", carbohidrato:"Carbohidrato", legumbre:"Legumbre", vegetal:"Vegetal", fruta:"Fruta", lacteo:"Lácteo", grasa:"Grasa", otro:"Otro" };
+
+    async function cargarAlimentos() {
+        const buscar = document.getElementById("al-buscar").value.trim();
+        const categoria = document.getElementById("al-categoria").value;
+        let url = "/alimentos/?solo_activos=false";
+        if (buscar) url += `&buscar=${encodeURIComponent(buscar)}`;
+        if (categoria) url += `&categoria=${categoria}`;
+        alimentosCache = await apiFetch(url);
+        const tbody = document.getElementById("tabla-alimentos");
+        if (!alimentosCache.length) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="9">Sin alimentos</td></tr>';
+            return;
+        }
+        tbody.innerHTML = alimentosCache.map(a => {
+            const porcionTxt = a.porcion_casera
+                ? `${a.porcion_gramos} g<br><span style="font-size:0.82em;color:var(--color-texto-secundario);">≈ ${a.porcion_casera}</span>`
+                : `${a.porcion_gramos} g`;
+            return `<tr style="${a.activo ? "" : "opacity:0.5;"}">
+            <td><strong>${a.nombre}</strong></td>
+            <td><span class="cat-alimento cat-${a.categoria}">${ETIQ_CAT[a.categoria]}</span></td>
+            <td style="text-align:right;">${porcionTxt}</td>
+            <td style="text-align:right;">${a.calorias}</td>
+            <td style="text-align:right;">${a.proteinas_g}g</td>
+            <td style="text-align:right;">${a.carbohidratos_g}g</td>
+            <td style="text-align:right;">${a.grasas_g}g</td>
+            <td style="text-align:right;">${a.fibra_g ?? "—"}${a.fibra_g !== null ? "g" : ""}</td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-sm btn-secondary" onclick="abrirModalAlimentoEditar(${a.id})">✏️</button>
+                ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarAlimento(${a.id})">🗑️</button>` : ""}
+            </td>
+        </tr>`;
+        }).join("");
+    }
+
+    function _limpiarFormAlimento() {
+        document.getElementById("am-nombre").value = "";
+        document.getElementById("am-categoria").value = "proteina";
+        document.getElementById("am-porcion").value = "100";
+        document.getElementById("am-peso-unidad").value = "";
+        document.getElementById("am-unidad-medida").value = "";
+        document.getElementById("am-porcion-preview").textContent = "";
+        ["calorias","proteinas","carbohidratos","grasas","fibra"].forEach(f => document.getElementById(`am-${f}`).value = "");
+    }
+
+    function abrirModalAlimentoNuevo() {
+        alimentoEditando = null;
+        document.getElementById("al-modal-titulo").textContent = "Nuevo Alimento";
+        _limpiarFormAlimento();
+        document.getElementById("modal-alimento").classList.add("active");
+    }
+
+    function abrirModalAlimentoEditar(id) {
+        alimentoEditando = alimentosCache.find(a => a.id === id);
+        if (!alimentoEditando) return;
+        document.getElementById("al-modal-titulo").textContent = "Editar Alimento";
+        document.getElementById("am-nombre").value = alimentoEditando.nombre;
+        document.getElementById("am-categoria").value = alimentoEditando.categoria;
+        document.getElementById("am-porcion").value = alimentoEditando.porcion_gramos;
+        document.getElementById("am-calorias").value = alimentoEditando.calorias;
+        document.getElementById("am-proteinas").value = alimentoEditando.proteinas_g;
+        document.getElementById("am-carbohidratos").value = alimentoEditando.carbohidratos_g;
+        document.getElementById("am-grasas").value = alimentoEditando.grasas_g;
+        document.getElementById("am-fibra").value = alimentoEditando.fibra_g ?? "";
+        // Porcion casera: parsear "1 unidad" -> peso=porcion_gramos, medida="unidad"
+        const pc = alimentoEditando.porcion_casera || "";
+        const match = pc.match(/^[\d./]+\s*(.+)$/);
+        if (match) {
+            document.getElementById("am-unidad-medida").value = match[1].trim().replace(/s$/, "");
+            // El peso de 1 unidad es porcion_gramos (ya que porcion_casera="1 unidad" se refiere a 1 porcion_gramos)
+            document.getElementById("am-peso-unidad").value = alimentoEditando.porcion_gramos;
+        } else {
+            document.getElementById("am-peso-unidad").value = "";
+            document.getElementById("am-unidad-medida").value = "";
+        }
+        _calcPorcionCasera();
+        document.getElementById("modal-alimento").classList.add("active");
+    }
+
+    function cerrarModalAlimento() { document.getElementById("modal-alimento").classList.remove("active"); }
+
+    function _calcPorcionCasera() {
+        const peso = parseInt(document.getElementById("am-peso-unidad").value) || 0;
+        const medida = document.getElementById("am-unidad-medida").value;
+        const preview = document.getElementById("am-porcion-preview");
+        if (!peso || !medida) { preview.textContent = ""; return; }
+        const porcionRef = parseInt(document.getElementById("am-porcion").value) || 100;
+        const unidades = porcionRef / peso;
+        preview.textContent = `1 ${medida} = ${peso}g  →  ${porcionRef}g = ${unidades.toFixed(1)} ${medida}${unidades > 1.5 ? 's' : ''}`;
+    }
+
+    async function guardarAlimento() {
+        const nombre = document.getElementById("am-nombre").value.trim();
+        if (!nombre) { showError("El nombre es obligatorio"); return; }
+        // Construir porcion_casera
+        const pesoUnidad = parseInt(document.getElementById("am-peso-unidad").value) || 0;
+        const medida = document.getElementById("am-unidad-medida").value;
+        let porcionCasera = null;
+        if (pesoUnidad > 0 && medida) {
+            const porcionRef = parseFloat(document.getElementById("am-porcion").value) || 100;
+            const unidades = porcionRef / pesoUnidad;
+            porcionCasera = `${unidades % 1 === 0 ? unidades : unidades.toFixed(1)} ${medida}${unidades > 1.5 ? 's' : ''}`;
+        }
+        const datos = {
+            nombre,
+            categoria: document.getElementById("am-categoria").value,
+            porcion_gramos: parseFloat(document.getElementById("am-porcion").value) || 100,
+            calorias: parseFloat(document.getElementById("am-calorias").value) || 0,
+            proteinas_g: parseFloat(document.getElementById("am-proteinas").value) || 0,
+            carbohidratos_g: parseFloat(document.getElementById("am-carbohidratos").value) || 0,
+            grasas_g: parseFloat(document.getElementById("am-grasas").value) || 0,
+            fibra_g: document.getElementById("am-fibra").value ? parseFloat(document.getElementById("am-fibra").value) : null,
+            porcion_casera: porcionCasera,
+        };
+        try {
+            if (alimentoEditando) await apiFetch(`/alimentos/${alimentoEditando.id}`, { method: "PUT", body: JSON.stringify(datos) });
+            else await apiFetch("/alimentos/", { method: "POST", body: JSON.stringify(datos) });
+            showSuccess("Alimento guardado");
+            cerrarModalAlimento();
+            cargarAlimentos();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarAlimento(id) {
+        if (!(await confirmDialog("¿Eliminar este alimento del catálogo?"))) return;
+        try { await apiFetch(`/alimentos/${id}`, { method: "DELETE" }); showSuccess("Alimento eliminado"); cargarAlimentos(); }
+        catch (e) { showError(e.message); }
+    }
+
+    // ================================================================
+    // PAQUETES (creador desayuno/almuerzo/cena por propósito)
+    // ================================================================
+    const ETIQ_PROP = { bajar_peso:"Bajar de peso", ganar_masa:"Ganar masa", mantenimiento:"Mantenimiento", definicion:"Definición" };
+    const COLOR_PROP = { bajar_peso:"#E17055", ganar_masa:"#00B894", mantenimiento:"#2E5BFF", definicion:"#6C5CE7" };
+    const ETIQ_TIPO_COMIDA = { desayuno:"Desayuno", comida:"Almuerzo", aperitivo:"Aperitivo", cena:"Cena" };
+
+    async function cargarPaquetes() {
+        const proposito = document.getElementById("paq-proposito").value;
+        const tipo = document.getElementById("paq-tipo").value;
+        let url = "/paquetes-nutricion/?solo_activos=false";
+        if (proposito) url += `&proposito=${proposito}`;
+        if (tipo) url += `&tipo_comida=${tipo}`;
+        paquetesCache = await apiFetch(url);
+        const cont = document.getElementById("paq-grid");
+        if (!paquetesCache.length) {
+            cont.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">Sin paquetes creados</div></div>';
+            return;
+        }
+        cont.innerHTML = paquetesCache.map(p => {
+            const totalCal = p.items.reduce((s, i) => s + (i.alimento ? (i.alimento.calorias * i.cantidad_gramos / (i.alimento.porcion_gramos||100)) : 0), 0);
+            return `
+            <div class="paq-card" style="${p.activo ? "" : "opacity:0.55;"}">
+                <div class="paq-header">
+                    <div class="paq-nombre">${p.nombre}</div>
+                    <div style="display:flex;gap:4px;">
+                        <button class="btn btn-sm btn-secondary" onclick="abrirModalPaquete('editar', ${p.id})" title="Editar">✏️</button>
+                        <button class="btn btn-sm btn-secondary" onclick="abrirModalPaquete('duplicar', ${p.id})" title="Duplicar">📋</button>
+                        ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarPaquete(${p.id})">🗑️</button>` : ""}
+                    </div>
+                </div>
+                <div class="paq-badges">
+                    <span class="paq-badge" style="background:${COLOR_PROP[p.proposito]}22;color:${COLOR_PROP[p.proposito]};">${ETIQ_PROP[p.proposito]}</span>
+                    <span class="paq-badge" style="background:#F0F0F5;color:var(--color-texto-secundario);">${ETIQ_TIPO_COMIDA[p.tipo_comida]}</span>
+                </div>
+                ${p.items.map(i => `
+                    <div class="paq-item">
+                        <span>${i.alimento ? i.alimento.nombre : "?"} — ${i.alimento ? formatearCantidad(i.cantidad_gramos, i.alimento.categoria) : i.cantidad_gramos + 'g'}</span>
+                        <span>${i.alimento ? Math.round(i.alimento.calorias * i.cantidad_gramos / (i.alimento.porcion_gramos||100)) : 0} kcal</span>
+                    </div>
+                `).join("")}
+                <div class="paq-total"><span>Total</span><span>${Math.round(totalCal)} kcal</span></div>
+                ${p.notas ? `<div style="font-size:0.75em;color:var(--color-texto-secundario);margin-top:8px;font-style:italic;">${p.notas}</div>` : ""}
+            </div>`;
+        }).join("");
+    }
+
+    function abrirModalPaqueteNuevo() { abrirModalPaquete("nuevo", null); }
+
+    let paqueteEditandoId = null;
+
+    function abrirModalPaquete(modo, paqueteId) {
+        // modo: "nuevo" | "editar" | "duplicar"
+        const base = paqueteId ? paquetesCache.find(p => p.id === paqueteId) : null;
+        paqueteEditandoId = modo === "editar" ? paqueteId : null;
+
+        const titulos = { nuevo: "Nuevo Paquete", editar: "Editar Paquete", duplicar: "Duplicar Paquete" };
+        document.getElementById("pq-modal-titulo").textContent = titulos[modo];
+
+        document.getElementById("pq-nombre").value = base ? (modo === "duplicar" ? `${base.nombre} (copia)` : base.nombre) : "";
+        document.getElementById("pq-tipo").value = base ? base.tipo_comida : "desayuno";
+        document.getElementById("pq-proposito").value = base ? base.proposito : "bajar_peso";
+        document.getElementById("pq-notas").value = base ? (base.notas || "") : "";
+        document.getElementById("pq-items").innerHTML = "";
+
+        if (base && base.items.length) {
+            base.items.forEach(item => agregarItemPaquete(item.alimento_id, item.cantidad_gramos));
+        } else {
+            agregarItemPaquete();
+        }
+        document.getElementById("modal-paquete").classList.add("active");
+    }
+
+    function cerrarModalPaquete() { document.getElementById("modal-paquete").classList.remove("active"); paqueteEditandoId = null; }
+
+    function agregarItemPaquete(alimentoIdPreset, gramosPreset) {
+        const cont = document.getElementById("pq-items");
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;gap:6px;margin-bottom:6px;align-items:center;";
+        div.innerHTML = `
+            <select class="pq-item-alimento" style="flex:1;padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarTotalPaquete()">
+                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" ${alimentoIdPreset === a.id ? "selected" : ""}>${a.nombre}</option>`).join("")}
+            </select>
+            <input type="number" class="pq-item-gramos" value="${gramosPreset || 100}" min="1" style="width:70px;padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarTotalPaquete()">
+            <span style="font-size:0.75em;color:var(--color-texto-secundario);">g</span>
+            <button type="button" onclick="this.parentElement.remove();_actualizarTotalPaquete();" style="border:none;background:none;cursor:pointer;color:var(--color-error);">✕</button>
+        `;
+        cont.appendChild(div);
+        _actualizarTotalPaquete();
+    }
+
+    function _actualizarTotalPaquete() {
+        let total = 0;
+        document.querySelectorAll("#pq-items > div").forEach(row => {
+            const sel = row.querySelector(".pq-item-alimento");
+            const gramos = parseFloat(row.querySelector(".pq-item-gramos").value) || 0;
+            const cal = parseFloat(sel.selectedOptions[0]?.dataset.cal) || 0;
+            const porcion = parseFloat(sel.selectedOptions[0]?.dataset.porcion) || 100;
+            total += cal * gramos / porcion;
+        });
+        document.getElementById("pq-total-cal").textContent = `🔥 Total estimado: ${Math.round(total)} kcal`;
+    }
+
+    async function guardarPaquete() {
+        const nombre = document.getElementById("pq-nombre").value.trim();
+        if (!nombre) { showError("El nombre es obligatorio"); return; }
+        const items = [...document.querySelectorAll("#pq-items > div")].map(row => ({
+            alimento_id: parseInt(row.querySelector(".pq-item-alimento").value),
+            cantidad_gramos: parseFloat(row.querySelector(".pq-item-gramos").value) || 100,
+        }));
+        if (!items.length) { showError("Agrega al menos un alimento"); return; }
+        const datos = {
+            nombre,
+            tipo_comida: document.getElementById("pq-tipo").value,
+            proposito: document.getElementById("pq-proposito").value,
+            notas: document.getElementById("pq-notas").value.trim() || null,
+            items,
+        };
+        try {
+            if (paqueteEditandoId) {
+                await apiFetch(`/paquetes-nutricion/${paqueteEditandoId}`, { method: "PUT", body: JSON.stringify(datos) });
+                showSuccess("Paquete actualizado");
+            } else {
+                await apiFetch("/paquetes-nutricion/", { method: "POST", body: JSON.stringify(datos) });
+                showSuccess("Paquete creado");
+            }
+            cerrarModalPaquete();
+            cargarPaquetes();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarPaquete(id) {
+        if (!(await confirmDialog("¿Eliminar este paquete?"))) return;
+        try { await apiFetch(`/paquetes-nutricion/${id}`, { method: "DELETE" }); showSuccess("Paquete eliminado"); cargarPaquetes(); }
+        catch (e) { showError(e.message); }
+    }
+
+    init();
+</script>
+</body>
+</html>

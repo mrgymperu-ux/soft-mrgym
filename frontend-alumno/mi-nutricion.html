@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Nutricion - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="page">
+        <div class="page-header"><h1>🥗 Mi Nutricion</h1></div>
+        <div id="contenido"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+    </div>
+    <nav class="nav-bottom">
+        <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
+        <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+        <a href="mi-nutricion.html" class="nav-btn activo"><span>🥗</span><span>Nutricion</span></a>
+        <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
+        <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
+        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+    </nav>
+    <script src="js/api.js"></script>
+    <script>
+        requireAuth();
+        const tiposLabel = { desayuno:"Desayuno", comida:"Comida", aperitivo:"Aperitivo", cena:"Cena" };
+        async function cargar() {
+            const planes = await apiFetch("/portal-alumno/mi-nutricion");
+            const contenedor = document.getElementById("contenido");
+            if (!planes || !planes.length) {
+                contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">🥗</div><p>Aun no tienes plan de nutricion.<br>Consulta con tu entrenador.</p></div>';
+                return;
+            }
+            contenedor.innerHTML = planes.map(plan => {
+                const tipos = ["desayuno","comida","aperitivo","cena"];
+                const comidasHtml = tipos.map(tipo => {
+                    const items = (plan.comidas||[]).filter(c => c.tipo === tipo);
+                    if (!items.length) return "";
+                    return `<div style="margin-bottom:14px;">
+                        <p style="font-size:0.75em;font-weight:600;color:#636E72;text-transform:uppercase;margin-bottom:6px;">${tiposLabel[tipo]}</p>
+                        ${items.map(a => `<div class="alimento-row"><span>${a.nombre_alimento}</span><span class="kcal">${a.calorias ? a.calorias+" kcal" : ""}</span></div>`).join("")}
+                    </div>`;
+                }).filter(Boolean).join("");
+                return `<div class="card">
+                    <div class="card-header" style="background:linear-gradient(135deg,#00B894,#00D2A0);color:#fff;">
+                        🥗 ${plan.titulo}
+                        ${plan.calorias_objetivo ? `<span style="float:right;font-size:0.85em;opacity:0.9;">🔥 ${plan.calorias_objetivo} kcal</span>` : ""}
+                    </div>
+                    <div class="card-body">${comidasHtml || "<p style='color:#636E72;'>Sin alimentos registrados</p>"}</div>
+                </div>`;
+            }).join("");
+        }
+        cargar();
+    </script>
+</body>
+</html>

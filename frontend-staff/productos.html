@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Productos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Productos</h1><p class="header-subtitle">Inventario y stock</p></div>
+            <button class="btn btn-primary" onclick="abrirModalNuevo()">+ Nuevo Producto</button>
+        </div>
+        <div id="alerta-stock" style="display:none;" class="alert alert-error"></div>
+        <div class="card">
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Producto</th><th>Categoria</th><th>P.Compra</th><th>P.Venta</th><th>Stock</th><th>Min.</th><th>Acciones</th></tr></thead>
+                    <tbody id="tabla-productos"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+<div id="modal-producto" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title" id="modal-titulo">Nuevo Producto</h3>
+            <button class="modal-close" onclick="cerrarModal('modal-producto')">✕</button>
+        </div>
+        <div class="form-group"><label>Nombre *</label><input type="text" id="f-nombre" placeholder="Proteina Whey 1kg"></div>
+        <div class="form-group">
+            <label>Foto (opcional, tiene prioridad sobre el icono)</label>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <div id="foto-producto-preview" style="width:48px;height:48px;flex-shrink:0;"></div>
+                <input type="file" id="f-foto" accept="image/jpeg,image/png,image/webp" onchange="previsualizarFotoProducto(this)" style="flex:1;">
+            </div>
+        </div>
+        <div class="form-group"><label>Descripcion</label><textarea id="f-descripcion" rows="2"></textarea></div>
+        <div class="form-group"><label>Categoria</label><input type="text" id="f-categoria" placeholder="Suplementos"></div>
+        <div class="form-group">
+            <label>Icono (emoji)</label>
+            <input type="text" id="f-icono" placeholder="📦" maxlength="4">
+            <div id="icon-picker" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group"><label>Precio Compra</label><input type="number" id="f-precio-compra" step="0.01" min="0"></div>
+            <div class="form-group"><label>Precio Venta *</label><input type="number" id="f-precio-venta" step="0.01" min="0"></div>
+            <div class="form-group"><label>Stock *</label><input type="number" id="f-stock" min="0"></div>
+            <div class="form-group"><label>Stock Minimo</label><input type="number" id="f-stock-min" min="0" value="5"></div>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal('modal-producto')">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarProducto()">Guardar</button>
+        </div>
+    </div>
+</div>
+    <div id="modal-stock" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3 class="modal-title">Registrar Compra (reposicion de stock)</h3><button class="modal-close" onclick="cerrarModal('modal-stock')">✕</button></div>
+        <p id="stock-info" style="color:#636E72;margin-bottom:16px;"></p>
+        <div class="form-group"><label>Cantidad comprada</label><input type="number" id="f-compra-cantidad" min="1" value="1" oninput="sincronizarCostos()"></div>
+        <div class="form-group">
+            <label>Modo de ingreso del costo</label>
+            <select id="f-compra-modo" onchange="sincronizarCostos()" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.88em;">
+                <option value="unitario">Ingreso por Costo Unitario</option>
+                <option value="total">Ingreso por Costo Total</option>
+            </select>
+        </div>
+        <div class="form-group"><label>Costo unitario</label><input type="number" id="f-compra-costo" min="0" step="0.01" oninput="onCostoUnitarioInput()"></div>
+        <div class="form-group"><label>Costo total</label><input type="number" id="f-compra-costo-total" min="0" step="0.01" oninput="onCostoTotalInput()"></div>
+        <div class="form-group"><label>Notas</label><input type="text" id="f-compra-notas" placeholder="Opcional (proveedor, factura, etc.)"></div>
+        <p style="font-size:0.8em;color:var(--color-texto-secundario);">Esto suma al stock actual (no lo reemplaza) y queda registrado como egreso en Resumen/Egresos.</p>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal('modal-stock')">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarStock()">Registrar compra</button>
+        </div>
+    </div>
+</div>
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let productoEditando = null, productoAjustando = null, moneda = "S/", archivoFotoProducto = null;
+
+    const REPOSITORIO_ICONOS = [
+        "📦","🥤","🥛","💪","🏋️","🦵","🪢","🤊","🏃","🪀",
+        "👕","🧢","🪡","🫧","🏷️","🥤","🍌","🥜","🪥","💧",
+    ];
+
+    function renderIconPicker() {
+        const cont = document.getElementById("icon-picker");
+        cont.innerHTML = REPOSITORIO_ICONOS.map(ic => `<button type="button" onclick="document.getElementById('f-icono').value='${ic}'" style="width:32px;height:32px;border:1px solid var(--color-borde);background:#fff;border-radius:8px;cursor:pointer;font-size:1.05em;">${ic}</button>`).join("");
+    }
+
+    function previsualizarFotoProducto(input) {
+        archivoFotoProducto = input.files && input.files[0] ? input.files[0] : null;
+        const wrap = document.getElementById("foto-producto-preview");
+        if (archivoFotoProducto) {
+            const url = URL.createObjectURL(archivoFotoProducto);
+            wrap.innerHTML = `<div style="width:48px;height:48px;border-radius:10px;overflow:hidden;background:var(--color-fondo);"><img src="${url}" style="width:100%;height:100%;object-fit:cover;"></div>`;
+        }
+    }
+
+    function productoImagenHtml(p, size = 40) {
+        if (p.foto_url) {
+            return `<img src="${urlFoto(p.foto_url)}" style="width:${size}px;height:${size}px;border-radius:8px;object-fit:cover;vertical-align:middle;margin-right:8px;">`;
+        }
+        return `<span style="margin-right:6px;font-size:${size*0.6}px;vertical-align:middle;">${p.icono||"📦"}</span>`;
+    }
+
+    async function cargarProductos() {
+        const config = await getConfiguracion(); moneda = config.moneda;
+        const productos = await apiFetch("/productos/");
+        const tbody = document.getElementById("tabla-productos");
+        const bajoStock = productos.filter(p => p.stock <= p.stock_minimo);
+        if (bajoStock.length) {
+            document.getElementById("alerta-stock").style.display = "block";
+            document.getElementById("alerta-stock").textContent = "⚠️ Stock bajo: " + bajoStock.map(p => `${p.nombre} (${p.stock})`).join(", ");
+        }
+        if (!productos.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay productos</td></tr>'; return; }
+        tbody.innerHTML = productos.map(p => {
+            const bajo = p.stock <= p.stock_minimo;
+            return `<tr>
+                <td>${productoImagenHtml(p)}<strong>${p.nombre}</strong></td>
+                <td>${p.categoria||"—"}</td>
+                <td>${p.precio_compra ? formatCurrency(p.precio_compra,moneda) : "—"}</td>
+                <td>${formatCurrency(p.precio_venta,moneda)}</td>
+                <td style="font-weight:bold;color:${bajo?"var(--color-error)":"inherit"}">${p.stock}${bajo?" ⚠️":""}</td>
+                <td style="color:#636E72;">${p.stock_minimo}</td>
+                <td>
+                    <button class="btn btn-sm btn-secondary" onclick="abrirModalStock(${p.id},'${p.nombre.replace(/'/g,"")}',${p.stock})">📦 Comprar</button>
+                    <button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${p.id})">✏️</button>
+                    <button class="btn btn-sm btn-danger" onclick="eliminarProducto(${p.id})">🗑️</button>
+                </td>
+            </tr>`;
+        }).join("");
+    }
+
+    function abrirModalNuevo() {
+        productoEditando = null;
+        archivoFotoProducto = null;
+        document.getElementById("modal-titulo").textContent = "Nuevo Producto";
+        ["nombre","descripcion","categoria","icono","precio-compra","precio-venta","stock"].forEach(f => document.getElementById(`f-${f}`).value = "");
+        document.getElementById("f-stock-min").value = "5";
+        document.getElementById("f-foto").value = "";
+        document.getElementById("foto-producto-preview").innerHTML = "";
+        renderIconPicker();
+        document.getElementById("modal-producto").classList.add("active");
+    }
+
+    async function abrirModalEditar(id) {
+        const prods = await apiFetch("/productos/"); productoEditando = prods.find(p => p.id === id);
+        if (!productoEditando) return;
+        archivoFotoProducto = null;
+        document.getElementById("modal-titulo").textContent = "Editar Producto";
+        document.getElementById("f-nombre").value = productoEditando.nombre;
+        document.getElementById("f-descripcion").value = productoEditando.descripcion || "";
+        document.getElementById("f-categoria").value = productoEditando.categoria || "";
+        document.getElementById("f-icono").value = productoEditando.icono || "";
+        document.getElementById("f-precio-compra").value = productoEditando.precio_compra || "";
+        document.getElementById("f-precio-venta").value = productoEditando.precio_venta;
+        document.getElementById("f-stock").value = productoEditando.stock;
+        document.getElementById("f-stock-min").value = productoEditando.stock_minimo;
+        document.getElementById("f-foto").value = "";
+        document.getElementById("foto-producto-preview").innerHTML = productoEditando.foto_url
+            ? `<div style="width:48px;height:48px;border-radius:10px;overflow:hidden;"><img src="${urlFoto(productoEditando.foto_url)}" style="width:100%;height:100%;object-fit:cover;"></div>`
+            : "";
+        renderIconPicker();
+        document.getElementById("modal-producto").classList.add("active");
+    }
+
+    function cerrarModal(id) { document.getElementById(id).classList.remove("active"); productoEditando = null; productoAjustando = null; }
+
+    async function guardarProducto() {
+        const datos = {
+            nombre: document.getElementById("f-nombre").value.trim(),
+            descripcion: document.getElementById("f-descripcion").value.trim() || null,
+            categoria: document.getElementById("f-categoria").value.trim() || null,
+            icono: document.getElementById("f-icono").value.trim() || null,
+            precio_compra: parseFloat(document.getElementById("f-precio-compra").value) || null,
+            precio_venta: parseFloat(document.getElementById("f-precio-venta").value),
+            stock: parseInt(document.getElementById("f-stock").value) || 0,
+            stock_minimo: parseInt(document.getElementById("f-stock-min").value) || 5,
+        };
+        if (!datos.nombre || !datos.precio_venta) { showError("Nombre y precio son obligatorios"); return; }
+        try {
+            let productoId;
+            if (productoEditando) {
+                await apiFetch(`/productos/${productoEditando.id}`, { method: "PUT", body: JSON.stringify(datos) });
+                productoId = productoEditando.id;
+            } else {
+                const nuevo = await apiFetch("/productos/", { method: "POST", body: JSON.stringify(datos) });
+                productoId = nuevo.id;
+            }
+            if (archivoFotoProducto) {
+                await apiUploadFile(`/productos/${productoId}/foto`, archivoFotoProducto);
+            }
+            showSuccess(productoEditando ? "Producto actualizado" : "Producto creado");
+            cerrarModal("modal-producto"); cargarProductos();
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirModalStock(id, nombre, stockActual) {
+        productoAjustando = id;
+        document.getElementById("stock-info").textContent = `${nombre} · Stock actual: ${stockActual}`;
+        document.getElementById("f-compra-cantidad").value = 1;
+        document.getElementById("f-compra-costo").value = "";
+        document.getElementById("f-compra-costo-total").value = "";
+        document.getElementById("f-compra-notas").value = "";
+        document.getElementById("f-compra-modo").value = "unitario";
+        sincronizarCostos();
+        document.getElementById("modal-stock").classList.add("active");
+    }
+
+    function sincronizarCostos() {
+        const modo = document.getElementById("f-compra-modo").value;
+        const cant = parseInt(document.getElementById("f-compra-cantidad").value) || 1;
+        if (modo === "unitario") {
+            document.getElementById("f-compra-costo").readOnly = false;
+            document.getElementById("f-compra-costo-total").readOnly = true;
+            document.getElementById("f-compra-costo-total").style.background = "var(--color-fondo)";
+            document.getElementById("f-compra-costo").style.background = "";
+            const unit = parseFloat(document.getElementById("f-compra-costo").value) || 0;
+            document.getElementById("f-compra-costo-total").value = unit > 0 ? (unit * cant).toFixed(2) : "";
+        } else {
+            document.getElementById("f-compra-costo-total").readOnly = false;
+            document.getElementById("f-compra-costo").readOnly = true;
+            document.getElementById("f-compra-costo").style.background = "var(--color-fondo)";
+            document.getElementById("f-compra-costo-total").style.background = "";
+            const total = parseFloat(document.getElementById("f-compra-costo-total").value) || 0;
+            document.getElementById("f-compra-costo").value = total > 0 && cant > 0 ? (total / cant).toFixed(2) : "";
+        }
+    }
+    function onCostoUnitarioInput() {
+        const cant = parseInt(document.getElementById("f-compra-cantidad").value) || 1;
+        const unit = parseFloat(document.getElementById("f-compra-costo").value) || 0;
+        document.getElementById("f-compra-costo-total").value = unit > 0 ? (unit * cant).toFixed(2) : "";
+    }
+    function onCostoTotalInput() {
+        const cant = parseInt(document.getElementById("f-compra-cantidad").value) || 1;
+        const total = parseFloat(document.getElementById("f-compra-costo-total").value) || 0;
+        document.getElementById("f-compra-costo").value = total > 0 && cant > 0 ? (total / cant).toFixed(2) : "";
+    }
+
+    async function confirmarStock() {
+        const cantidad = parseInt(document.getElementById("f-compra-cantidad").value);
+        const costoUnitario = parseFloat(document.getElementById("f-compra-costo").value);
+        if (!cantidad || cantidad <= 0) { showError("La cantidad debe ser mayor a 0"); return; }
+        if (isNaN(costoUnitario) || costoUnitario < 0) { showError("Ingresa el costo unitario"); return; }
+        try {
+            await apiFetch("/compras/", { method: "POST", body: JSON.stringify({
+                producto_id: productoAjustando,
+                cantidad,
+                costo_unitario: costoUnitario,
+                notas: document.getElementById("f-compra-notas").value.trim() || null,
+            })});
+            showSuccess("Compra registrada: stock actualizado y quedo en Egresos");
+            cerrarModal("modal-stock"); cargarProductos();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarProducto(id) {
+        if (!(await confirmDialog("¿Desactivar este producto?"))) return;
+        try { await apiFetch(`/productos/${id}`, { method: "DELETE" }); showSuccess("Producto desactivado"); cargarProductos(); }
+        catch (e) { showError(e.message); }
+    }
+
+    cargarProductos();
+
+    const productoEditarUrl = new URLSearchParams(window.location.search).get("editar");
+    if (productoEditarUrl) abrirModalEditar(parseInt(productoEditarUrl));
+</script>
+</body>
+</html>

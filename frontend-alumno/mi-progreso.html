@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Progreso - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="page">
+        <div class="page-header"><h1>📈 Mi Progreso</h1></div>
+        <div id="stats-row"></div>
+        <div id="contenido"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+    </div>
+    <nav class="nav-bottom">
+        <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
+        <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+        <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
+        <a href="mi-progreso.html" class="nav-btn activo"><span>📈</span><span>Progreso</span></a>
+        <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
+        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+    </nav>
+    <script src="js/api.js"></script>
+    <script>
+        requireAuth();
+        async function cargar() {
+            const progresos = await apiFetch("/portal-alumno/mi-progreso");
+            const contenedor = document.getElementById("contenido");
+            if (!progresos || !progresos.length) {
+                contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">📈</div><p>Aun no hay registros de progreso.</p></div>';
+                return;
+            }
+            const ultimo = progresos[0];
+            document.getElementById("stats-row").innerHTML = `<div class="stat-row">
+                <div class="stat-mini"><div class="stat-mini-valor">${ultimo.peso ? ultimo.peso+" kg" : "—"}</div><div class="stat-mini-label">Peso actual</div></div>
+                <div class="stat-mini"><div class="stat-mini-valor">${ultimo.porcentaje_grasa ? ultimo.porcentaje_grasa+"%" : "—"}</div><div class="stat-mini-label">% Grasa</div></div>
+                <div class="stat-mini"><div class="stat-mini-valor">${ultimo.porcentaje_musculo ? ultimo.porcentaje_musculo+"%" : "—"}</div><div class="stat-mini-label">% Musculo</div></div>
+            </div>`;
+            contenedor.innerHTML = `<div class="card">
+                <div class="card-header">Historial</div>
+                <div class="card-body" style="padding:0;">
+                    <table class="tabla">
+                        <thead><tr><th>Fecha</th><th>Peso</th><th>% Grasa</th><th>% Musculo</th></tr></thead>
+                        <tbody>${progresos.map(p => `<tr>
+                            <td>${formatFecha(p.fecha)}</td>
+                            <td>${p.peso ? p.peso+" kg" : "—"}</td>
+                            <td>${p.porcentaje_grasa ? p.porcentaje_grasa+"%" : "—"}</td>
+                            <td>${p.porcentaje_musculo ? p.porcentaje_musculo+"%" : "—"}</td>
+                        </tr>`).join("")}</tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+        cargar();
+    </script>
+</body>
+</html>

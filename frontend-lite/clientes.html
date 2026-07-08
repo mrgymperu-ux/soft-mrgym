@@ -1,0 +1,38 @@
+<section id="clientes" class="section">
+            <div class="content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Lista de Clientes</h3>
+                        <button class="btn btn-primary" onclick="showModal('cliente-modal')">
+                            + Nuevo Cliente
+                        </button>
+                    </div>
+
+                    <div class="search-bar">
+                        <input type="text" id="buscar-cliente" placeholder="Buscar por nombre, DNI o email..." onkeyup="buscarCliente()">
+                    </div>
+
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nombre</th>
+                                    <th>DNI</th>
+                                    <th>Teléfono</th>
+                                    <th>Email</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clientes-table">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 40px; color: #636E72;">
+                                        No hay clientes registrados
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Principal - Soft-MrGym</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { padding: 20px; background: #f5f6fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .app-header h1 { margin: 0; font-size: 1.5em; color: #2d3436; }
+        .hora-actual { font-size: 1.2em; color: #636e72; font-weight: bold; }
+        .nav-bar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav-btn { background: white; border: 1px solid #ddd; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.9em; color: #2d3436; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s; }
+        .nav-btn:hover { background: #6c5ce7; color: white; border-color: #6c5ce7; }
+        .nav-btn.active { background: #6c5ce7; color: white; border-color: #6c5ce7; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: white; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .stat-icon { font-size: 2em; margin-bottom: 8px; }
+        .stat-value { font-size: 1.8em; font-weight: bold; color: #2d3436; }
+        .stat-label { color: #636e72; font-size: 0.85em; }
+        .asistencia-rapida { background: linear-gradient(135deg, #6c5ce7, #a29bfe); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .asistencia-rapida h2 { margin: 0; font-size: 1.1em; }
+        .asistencia-rapida p { margin: 5px 0 0; opacity: 0.8; }
+        .asistencia-control { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .asistencia-control select { padding: 10px 15px; border: none; border-radius: 8px; font-size: 1em; min-width: 220px; color: #2d3436; }
+        .asistencia-control button { background: #00b894; color: white; border: none; padding: 10px 25px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1em; }
+        .asistencia-control button:hover { background: #00a381; }
+        .ultimos-ingresos { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .ultimos-ingresos h3 { margin-top: 0; color: #2d3436; }
+        .ingreso-item { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; gap: 15px; }
+        .ingreso-item:last-child { border-bottom: none; }
+        .avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, #6c5ce7, #a29bfe); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.9em; flex-shrink: 0; }
+        .ingreso-info { flex: 1; }
+        .ingreso-nombre { font-weight: bold; color: #2d3436; font-size: 1em; }
+        .ingreso-hora { color: #636e72; font-size: 0.85em; }
+        .ingreso-estado { padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; }
+        .ingreso-estado.en-curso { background: #dfe6e9; color: #00b894; }
+        .ingreso-estado.completado { background: #dfe6e9; color: #636e72; }
+    </style>
+</head>
+<body>
+    <div class="app-header">
+        <h1>🏋️ Principal - Soft-MrGym</h1>
+        <div class="hora-actual" id="hora-actual"></div>
+    </div>
+
+    <div class="nav-bar">
+        <a href="principal.html" class="nav-btn active">🏠 Principal</a>
+        <a href="clientes.html" class="nav-btn">👥 Clientes</a>
+        <a href="productos.html" class="nav-btn">📦 Productos</a>
+        <a href="ventas.html" class="nav-btn">💰 Ventas</a>
+        <a href="asistencias.html" class="nav-btn">✅ Asistencias</a>
+        <a href="configuracion.html" class="nav-btn">⚙️ Configuración</a>
+    </div>
+
+    <div class="stats-grid" id="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">👥</div>
+            <div class="stat-value" id="total-clientes">0</div>
+            <div class="stat-label">Total Clientes</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value" id="hoy-ingresos">0</div>
+            <div class="stat-label">Ingresos Hoy</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🟢</div>
+            <div class="stat-value" id="presentes-ahora">0</div>
+            <div class="stat-label">Presentes Ahora</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-value" id="ventas-hoy">S/ 0.00</div>
+            <div class="stat-label">Ventas Hoy</div>
+        </div>
+    </div>
+
+    <div class="asistencia-rapida">
+        <div>
+            <h2>✅ Marcar Asistencia</h2>
+            <p>Selecciona el alumno que ingresa al gimnasio</p>
+        </div>
+        <div class="asistencia-control">
+            <select id="select-cliente-asistencia">
+                <option value="">-- Seleccionar alumno --</option>
+            </select>
+            <button onclick="registrarEntrada()">+ Registrar Entrada</button>
+        </div>
+    </div>
+
+    <div class="ultimos-ingresos">
+        <h3>📋 Últimos 20 Ingresos del Día</h3>
+        <div id="lista-ingresos">
+            <p style="color:#636e72;text-align:center;padding:20px;">Cargando...</p>
+        </div>
+    </div>
+
+    <script src="js/shared.js"></script>
+    <script>
+        cargarConfiguracionGlobal();
+        initSampleDataIfEmpty();
+
+        function actualizarHora() {
+            const ahora = new Date();
+            document.getElementById('hora-actual').textContent = ahora.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+        actualizarHora();
+        setInterval(actualizarHora, 1000);
+
+        function cargarClientesSelect() {
+            const clientes = getData(STORAGE_KEYS.clientes);
+            const select = document.getElementById('select-cliente-asistencia');
+            select.innerHTML = '<option value="">-- Seleccionar alumno --</option>';
+            clientes.forEach(c => {
+                select.innerHTML += '<option value="' + c.id + '">' + c.nombre + '</option>';
+            });
+        }
+
+        function cargarUltimosIngresos() {
+            const asistencias = getData(STORAGE_KEYS.asistencias);
+            const clientes = getData(STORAGE_KEYS.clientes);
+            const hoy = new Date();
+            hoy.setHours(0, 0, 0, 0);
+
+            const ingresosHoy = asistencias
+                .filter(a => new Date(a.fecha_hora_entrada) >= hoy)
+                .sort((a, b) => new Date(b.fecha_hora_entrada) - new Date(a.fecha_hora_entrada))
+                .slice(0, 20);
+
+            const container = document.getElementById('lista-ingresos');
+
+            if (ingresosHoy.length === 0) {
+                container.innerHTML = '<p style="color:#636e72;text-align:center;padding:30px;">No hay ingresos registrados hoy</p>';
+                return;
+            }
+
+            container.innerHTML = ingresosHoy.map(a => {
+                const cliente = clientes.find(c => c.id == a.cliente_id);
+                const nombre = cliente ? cliente.nombre : 'Desconocido';
+                const iniciales = getInitiales(nombre);
+                const hora = new Date(a.fecha_hora_entrada).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+                const enCurso = !a.fecha_hora_salida;
+                return '<div class="ingreso-item">' +
+                    '<div class="avatar">' + iniciales + '</div>' +
+                    '<div class="ingreso-info">' +
+                        '<div class="ingreso-nombre">' + nombre + '</div>' +
+                        '<div class="ingreso-hora">' + hora + '</div>' +
+                    '</div>' +
+                    '<div class="ingreso-estado ' + (enCurso ? 'en-curso' : 'completado') + '">' + (enCurso ? '🟢 En curso' : '✅ Completado') + '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        function cargarStats() {
+            const clientes = getData(STORAGE_KEYS.clientes);
+            const asistencias = getData(STORAGE_KEYS.asistencias);
+            const ventas = getData(STORAGE_KEYS.ventas);
+            const hoy = new Date();
+            hoy.setHours(0, 0, 0, 0);
+
+            document.getElementById('total-clientes').textContent = clientes.length;
+
+            const ingresosHoy = asistencias.filter(a => new Date(a.fecha_hora_entrada) >= hoy);
+            document.getElementById('hoy-ingresos').textContent = ingresosHoy.length;
+
+            const presentesAhora = ingresosHoy.filter(a => !a.fecha_hora_salida);
+            document.getElementById('presentes-ahora').textContent = presentesAhora.length;
+
+            const ventasHoy = ventas.filter(v => new Date(v.fecha_venta) >= hoy);
+            const totalVentas = ventasHoy.reduce((sum, v) => sum + (v.total || 0), 0);
+            document.getElementById('ventas-hoy').textContent = formatCurrency(totalVentas);
+        }
+
+        function registrarEntrada() {
+            const select = document.getElementById('select-cliente-asistencia');
+            const clienteId = select.value;
+            if (!clienteId) {
+                showError('Debes seleccionar un alumno');
+                return;
+            }
+
+            const clientes = getData(STORAGE_KEYS.clientes);
+            const cliente = clientes.find(c => c.id == clienteId);
+            if (!cliente) return;
+
+            const asistencia = {
+                id: generateId(),
+                cliente_id: clienteId,
+                fecha_hora_entrada: new Date().toISOString(),
+                fecha_hora_salida: null
+            };
+
+            const asistencias = getData(STORAGE_KEYS.asistencias);
+            asistencias.push(asistencia);
+            saveData(STORAGE_KEYS.asistencias, asistencias);
+
+            showSuccess('Entrada registrada para ' + cliente.nombre);
+            cargarUltimosIngresos();
+            cargarStats();
+            select.value = '';
+        }
+
+        cargarClientesSelect();
+        cargarUltimosIngresos();
+        cargarStats();
+    </script>
+</body>
+</html>

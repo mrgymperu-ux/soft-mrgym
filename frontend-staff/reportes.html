@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reportes - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .rep-filtros { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; padding: 18px 20px; border-bottom: 1px solid var(--color-borde); }
+        .rep-filtros .form-group { margin: 0; min-width: 160px; }
+        .rep-acciones { display: flex; gap: 8px; padding: 14px 20px; flex-wrap: wrap; }
+        .rep-resumen { padding: 0 20px 14px; font-size: 0.85em; color: #636E72; }
+        .rep-tabla-wrap { max-height: 480px; overflow: auto; }
+        #acceso-denegado { padding: 60px 20px; text-align: center; color: #636E72; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Reportes</h1><p class="header-subtitle">Ver, exportar e importar datos con filtros (info sensible: acceso restringido)</p></div>
+        </div>
+
+        <div id="acceso-denegado" style="display:none;">
+            <h3>🔒 No tienes permiso para ver esta seccion</h3>
+            <p>Pidele a un administrador que te habilite "Puede exportar/importar datos" en Personal → Editar.</p>
+        </div>
+
+        <div id="contenido-reportes" style="display:none;">
+            <div class="tabs" style="margin-bottom:16px;">
+                <button class="tab active" onclick="cambiarTab('clientes', this)">👥 Clientes</button>
+                <button class="tab" onclick="cambiarTab('ventas', this)">💰 Ventas</button>
+                <button class="tab" onclick="cambiarTab('productos', this)">📦 Productos</button>
+            </div>
+
+            <!-- ===================== CLIENTES ===================== -->
+            <div id="panel-clientes" class="card">
+                <div class="rep-filtros">
+                    <div class="form-group">
+                        <label>Filtro</label>
+                        <select id="cli-filtro" onchange="onCambioFiltroClientes()">
+                            <option value="activos">Solo activos</option>
+                            <option value="todos">Todos (incluye inactivos)</option>
+                            <option value="por_vencer">Por vencer</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="cli-dias-wrap" style="display:none;">
+                        <label>Dias para vencimiento</label>
+                        <input type="number" id="cli-dias" value="7" min="0" style="width:100px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Registrado desde</label>
+                        <input type="date" id="cli-desde">
+                    </div>
+                    <div class="form-group">
+                        <label>Registrado hasta</label>
+                        <input type="date" id="cli-hasta">
+                    </div>
+                </div>
+                <div class="rep-acciones">
+                    <button class="btn btn-secondary" onclick="verReporte('clientes')">👁️ Ver reporte</button>
+                    <button class="btn btn-primary" onclick="exportarReporte('clientes')">⬇️ Exportar CSV</button>
+                    <span style="flex:1;"></span>
+                    <input type="file" id="input-importar-clientes" accept=".csv,.tsv,text/csv" style="display:none;" onchange="importarClientes(this)">
+                    <button class="btn btn-secondary" onclick="document.getElementById('input-importar-clientes').click()">⬆️ Importar clientes (CSV)</button>
+                    <button class="btn btn-secondary" onclick="descargarPlantillaClientes()">📋 Plantilla clientes</button>
+                    <input type="file" id="input-importar-historicos" accept=".csv,.tsv,text/csv" style="display:none;" onchange="importarClientesHistoricos(this)">
+                    <button class="btn btn-secondary" onclick="document.getElementById('input-importar-historicos').click()">⬆️ Importar clientes antiguos (CSV)</button>
+                    <button class="btn btn-secondary" onclick="descargarPlantilla()">📋 Plantilla antiguos</button>
+                </div>
+                <div id="cli-resumen" class="rep-resumen"></div>
+                <div class="rep-tabla-wrap"><table class="table" id="tabla-reporte-clientes"><thead></thead><tbody></tbody></table></div>
+            </div>
+
+            <!-- ===================== VENTAS ===================== -->
+            <div id="panel-ventas" class="card" style="display:none;">
+                <div class="rep-filtros">
+                    <div class="form-group">
+                        <label>Desde</label>
+                        <input type="date" id="ven-desde">
+                    </div>
+                    <div class="form-group">
+                        <label>Hasta</label>
+                        <input type="date" id="ven-hasta">
+                    </div>
+                    <div class="form-group">
+                        <label>Metodo de pago</label>
+                        <select id="ven-metodo">
+                            <option value="">Todos</option>
+                            <option value="efectivo">Efectivo</option>
+                            <option value="tarjeta">Tarjeta</option>
+                            <option value="qr">QR</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="rep-acciones">
+                    <button class="btn btn-secondary" onclick="verReporte('ventas')">👁️ Ver reporte</button>
+                    <button class="btn btn-primary" onclick="exportarReporte('ventas')">⬇️ Exportar CSV</button>
+                </div>
+                <div id="ven-resumen" class="rep-resumen"></div>
+                <div class="rep-tabla-wrap"><table class="table" id="tabla-reporte-ventas"><thead></thead><tbody></tbody></table></div>
+            </div>
+
+            <!-- ===================== PRODUCTOS ===================== -->
+            <div id="panel-productos" class="card" style="display:none;">
+                <div class="rep-filtros">
+                    <div class="form-group">
+                        <label>Filtro</label>
+                        <select id="prod-filtro">
+                            <option value="activos">Solo activos</option>
+                            <option value="todos">Todos (incluye inactivos)</option>
+                            <option value="bajo_stock">Bajo stock minimo</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="rep-acciones">
+                    <button class="btn btn-secondary" onclick="verReporte('productos')">👁️ Ver reporte</button>
+                    <button class="btn btn-primary" onclick="exportarReporte('productos')">⬇️ Exportar CSV</button>
+                </div>
+                <div id="prod-resumen" class="rep-resumen"></div>
+                <div class="rep-tabla-wrap"><table class="table" id="tabla-reporte-productos"><thead></thead><tbody></tbody></table></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    if (typeof puedeExportar === "function" && puedeExportar()) {
+        document.getElementById("contenido-reportes").style.display = "block";
+    } else {
+        document.getElementById("acceso-denegado").style.display = "block";
+    }
+
+    function cambiarTab(nombre, el) {
+        document.querySelectorAll(".tabs .tab").forEach(t => t.classList.remove("active"));
+        el.classList.add("active");
+        ["clientes", "ventas", "productos"].forEach(n => {
+            document.getElementById(`panel-${n}`).style.display = n === nombre ? "block" : "none";
+        });
+    }
+
+    function onCambioFiltroClientes() {
+        const filtro = document.getElementById("cli-filtro").value;
+        document.getElementById("cli-dias-wrap").style.display = filtro === "por_vencer" ? "block" : "none";
+    }
+
+    function construirQueryClientes() {
+        const params = new URLSearchParams();
+        params.set("filtro", document.getElementById("cli-filtro").value);
+        const desde = document.getElementById("cli-desde").value;
+        const hasta = document.getElementById("cli-hasta").value;
+        if (desde) params.set("desde", desde);
+        if (hasta) params.set("hasta", hasta);
+        if (document.getElementById("cli-filtro").value === "por_vencer") {
+            params.set("dias_vencimiento", document.getElementById("cli-dias").value || "7");
+        }
+        return params.toString();
+    }
+
+    function construirQueryVentas() {
+        const params = new URLSearchParams();
+        const desde = document.getElementById("ven-desde").value;
+        const hasta = document.getElementById("ven-hasta").value;
+        const metodo = document.getElementById("ven-metodo").value;
+        if (desde) params.set("desde", desde);
+        if (hasta) params.set("hasta", hasta);
+        if (metodo) params.set("metodo_pago", metodo);
+        return params.toString();
+    }
+
+    function construirQueryProductos() {
+        const params = new URLSearchParams();
+        params.set("filtro", document.getElementById("prod-filtro").value);
+        return params.toString();
+    }
+
+    const CONFIG_ENTIDAD = {
+        clientes: { query: construirQueryClientes, base: "/reportes/clientes" },
+        ventas: { query: construirQueryVentas, base: "/reportes/ventas" },
+        productos: { query: construirQueryProductos, base: "/reportes/productos" },
+    };
+
+    function renderTabla(entidad, filas) {
+        const tabla = document.getElementById(`tabla-reporte-${entidad}`);
+        const resumen = document.getElementById(
+            entidad === "clientes" ? "cli-resumen" : entidad === "ventas" ? "ven-resumen" : "prod-resumen"
+        );
+        if (!filas.length) {
+            tabla.querySelector("thead").innerHTML = "";
+            tabla.querySelector("tbody").innerHTML = '<tr class="empty-row"><td>Sin resultados para estos filtros</td></tr>';
+            resumen.textContent = "0 resultados";
+            return;
+        }
+        const columnas = Object.keys(filas[0]);
+        tabla.querySelector("thead").innerHTML = `<tr>${columnas.map(c => `<th>${c}</th>`).join("")}</tr>`;
+        tabla.querySelector("tbody").innerHTML = filas.map(fila =>
+            `<tr>${columnas.map(c => `<td>${fila[c] === null || fila[c] === undefined ? "—" : fila[c]}</td>`).join("")}</tr>`
+        ).join("");
+
+        let extra = "";
+        if (entidad === "ventas") {
+            const totalSuma = filas.reduce((acc, f) => acc + (parseFloat(f.total) || 0), 0);
+            extra = ` · Suma total: ${totalSuma.toFixed(2)}`;
+        }
+        resumen.textContent = `${filas.length} resultados${extra}`;
+    }
+
+    async function verReporte(entidad) {
+        const cfg = CONFIG_ENTIDAD[entidad];
+        try {
+            const filas = await apiFetch(`${cfg.base}?${cfg.query()}`);
+            renderTabla(entidad, filas);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function exportarReporte(entidad) {
+        const cfg = CONFIG_ENTIDAD[entidad];
+        try {
+            showInfo("Generando exportacion...");
+            await apiDescargarArchivo(`${cfg.base}/exportar?${cfg.query()}`, `reporte_${entidad}.csv`);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function descargarPlantilla() {
+        try {
+            await apiDescargarArchivo("/reportes/clientes/plantilla-importacion", "plantilla_importacion_clientes_antiguos.csv");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function descargarPlantillaClientes() {
+        try {
+            await apiDescargarArchivo("/clientes/plantilla-importacion", "plantilla_importacion_clientes.csv");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function importarClientes(input) {
+        const archivo = input.files && input.files[0];
+        if (!archivo) return;
+        try {
+            showInfo("Importando clientes, esto puede tardar unos segundos...");
+            const resultado = await apiUploadFile("/clientes/importar", archivo, "archivo");
+            showSuccess(`Importados: ${resultado.total_importados} · Omitidos (ID/DNI duplicado): ${resultado.total_omitidos_duplicados} · Filas leidas: ${resultado.total_filas_leidas}`);
+            if (resultado.errores && resultado.errores.length) console.warn("Errores de importacion:", resultado.errores);
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            input.value = "";
+        }
+    }
+
+    async function importarClientesHistoricos(input) {
+        const archivo = input.files && input.files[0];
+        if (!archivo) return;
+        try {
+            showInfo("Importando, esto puede tardar unos segundos...");
+            const resultado = await apiUploadFile("/reportes/clientes/importar-historicos", archivo, "archivo");
+            showSuccess(`Importados: ${resultado.total_importados} · Omitidos (duplicados): ${resultado.total_omitidos_duplicados} · Filas leidas: ${resultado.total_filas_leidas}`);
+            if (resultado.errores && resultado.errores.length) console.warn("Errores de importacion:", resultado.errores);
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            input.value = "";
+        }
+    }
+</script>
+</body>
+</html>

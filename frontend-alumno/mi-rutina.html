@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Rutina - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="page">
+        <div class="page-header">
+            <h1>💪 Mi Rutina</h1>
+            <p id="saludo"></p>
+        </div>
+        <div id="contenido"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
+    </div>
+    <nav class="nav-bottom">
+        <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
+        <a href="mi-rutina.html" class="nav-btn activo"><span>💪</span><span>Rutina</span></a>
+        <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
+        <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
+        <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
+        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+    </nav>
+    <script src="js/api.js"></script>
+    <script>
+        requireAuth();
+        document.getElementById("saludo").textContent = `Hola, ${getNombre() || "alumno"}`;
+
+        async function cargar() {
+            const rutinas = await apiFetch("/portal-alumno/mi-rutina");
+            const contenedor = document.getElementById("contenido");
+            if (!rutinas || !rutinas.length) {
+                contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">💪</div><p>Aun no tienes rutina asignada.<br>Consulta con tu entrenador.</p></div>';
+                return;
+            }
+            const rutina = rutinas[0];
+            const dias = rutina.dias || [];
+
+            contenedor.innerHTML = `
+                <div class="card">
+                    <div class="card-header">${rutina.nombre}</div>
+                    <div class="card-body">
+                        <div class="dias-nav" id="dias-nav">
+                            ${dias.map((d, i) => `<button class="dia-pill ${i===0?"activo":""}" onclick="cambiarDia(${i},this)">${d.nombre}</button>`).join("")}
+                        </div>
+                        <div id="ejercicios-content"></div>
+                    </div>
+                </div>
+            `;
+
+            window.cambiarDia = (idx, el) => {
+                document.querySelectorAll(".dia-pill").forEach(p => p.classList.remove("activo"));
+                el.classList.add("activo");
+                renderDia(dias[idx]);
+            };
+
+            function renderDia(dia) {
+                const ejercicios = dia?.ejercicios || [];
+                document.getElementById("ejercicios-content").innerHTML = ejercicios.length
+                    ? ejercicios.map(e => `
+                        <div class="ejercicio-item">
+                            <div class="ejercicio-nombre">${e.nombre}</div>
+                            <div class="ejercicio-meta">
+                                ${e.series ? `${e.series} series` : ""}
+                                ${e.repeticiones ? ` · ${e.repeticiones} reps` : ""}
+                                ${e.peso ? ` · ${e.peso}` : ""}
+                            </div>
+                            ${e.notas ? `<div class="ejercicio-meta" style="font-style:italic;">${e.notas}</div>` : ""}
+                        </div>`).join("")
+                    : '<p style="color:#636E72;font-size:0.88em;">Sin ejercicios en este dia</p>';
+            }
+
+            if (dias.length) renderDia(dias[0]);
+        }
+
+        cargar();
+    </script>
+</body>
+</html>

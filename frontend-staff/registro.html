@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registrar mi Gimnasio — Soft-MrGym</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { display:flex; justify-content:center; align-items:center; min-height:100vh; background:var(--bg-base,#f5f3ff); margin:0; font-family:system-ui,-apple-system,sans-serif; }
+        .registro-card { background:#fff; border-radius:16px; box-shadow:0 4px 24px rgba(0,0,0,.08); padding:2.5rem; width:100%; max-width:440px; }
+        .registro-card h1 { font-size:1.5rem; margin:0 0 .25rem; text-align:center; }
+        .registro-card p.sub { color:#666; font-size:.9rem; text-align:center; margin:0 0 1.5rem; }
+        .form-group { margin-bottom:1rem; }
+        .form-group label { display:block; font-size:.85rem; font-weight:600; margin-bottom:.3rem; color:#333; }
+        .form-group input { width:100%; padding:.6rem .75rem; border:1px solid #d1d5db; border-radius:8px; font-size:.95rem; box-sizing:border-box; }
+        .form-group input:focus { outline:none; border-color:#7c3aed; box-shadow:0 0 0 3px rgba(124,58,237,.15); }
+        .form-group small { color:#888; font-size:.78rem; }
+        .btn-registrar { width:100%; padding:.75rem; background:#7c3aed; color:#fff; border:none; border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer; margin-top:.5rem; }
+        .btn-registrar:hover { background:#6d28d9; }
+        .btn-registrar:disabled { opacity:.5; cursor:not-allowed; }
+        .error-msg { color:#dc2626; font-size:.85rem; text-align:center; margin-top:.75rem; min-height:1.2em; }
+        .link-login { text-align:center; margin-top:1rem; font-size:.9rem; }
+        .link-login a { color:#7c3aed; text-decoration:none; }
+        .slug-preview { color:#7c3aed; font-size:.8rem; margin-top:.2rem; }
+    </style>
+</head>
+<body>
+    <div class="registro-card">
+        <h1>🏋️ Registrar mi Gimnasio</h1>
+        <p class="sub">Crea tu cuenta gratis y empieza a gestionar tu gimnasio</p>
+
+        <div class="form-group">
+            <label>Nombre del gimnasio</label>
+            <input type="text" id="nombre_gimnasio" placeholder="Ej: Iron Fitness" required>
+        </div>
+        <div class="form-group">
+            <label>Identificador (slug)</label>
+            <input type="text" id="slug" placeholder="ej: iron-fitness">
+            <small>Solo letras, números y guiones. Será parte de tu URL.</small>
+            <div class="slug-preview" id="slug-preview"></div>
+        </div>
+        <div class="form-group">
+            <label>Tu nombre completo</label>
+            <input type="text" id="nombre_admin" placeholder="Juan Pérez" required>
+        </div>
+        <div class="form-group">
+            <label>Usuario</label>
+            <input type="text" id="username" placeholder="juanperez" required>
+        </div>
+        <div class="form-group">
+            <label>Contraseña</label>
+            <input type="password" id="password" placeholder="••••••" required>
+        </div>
+        <div class="form-group">
+            <label>Email (opcional)</label>
+            <input type="email" id="email" placeholder="contacto@migimnasio.com">
+        </div>
+        <div class="form-group">
+            <label>Teléfono (opcional)</label>
+            <input type="tel" id="telefono" placeholder="987654321">
+        </div>
+
+        <button class="btn-registrar" id="btn-registrar" onclick="registrar()">Crear mi gimnasio</button>
+        <div class="error-msg" id="error-msg"></div>
+        <div class="link-login">¿Ya tienes cuenta? <a href="login.html">Inicia sesión</a></div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        const slugInput = document.getElementById("slug");
+        const nombreInput = document.getElementById("nombre_gimnasio");
+
+        nombreInput.addEventListener("input", () => {
+            if (!slugInput._touched) {
+                slugInput.value = nombreInput.value.toLowerCase().trim()
+                    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 50);
+                actualizarSlugPreview();
+            }
+        });
+        slugInput.addEventListener("input", () => {
+            slugInput._touched = true;
+            slugInput.value = slugInput.value.toLowerCase().replace(/[^a-z0-9\-]/g, "");
+            actualizarSlugPreview();
+        });
+
+        function actualizarSlugPreview() {
+            const preview = document.getElementById("slug-preview");
+            const val = slugInput.value.trim();
+            preview.textContent = val ? `Tu gimnasio será: ${val}` : "";
+        }
+
+        async function registrar() {
+            const btn = document.getElementById("btn-registrar");
+            const errorDiv = document.getElementById("error-msg");
+            errorDiv.textContent = "";
+
+            const datos = {
+                nombre_gimnasio: document.getElementById("nombre_gimnasio").value.trim(),
+                slug: document.getElementById("slug").value.trim(),
+                nombre_admin: document.getElementById("nombre_admin").value.trim(),
+                username: document.getElementById("username").value.trim(),
+                password: document.getElementById("password").value,
+                email: document.getElementById("email").value.trim() || null,
+                telefono: document.getElementById("telefono").value.trim() || null,
+            };
+
+            if (!datos.nombre_gimnasio || !datos.slug || !datos.nombre_admin || !datos.username || !datos.password) {
+                errorDiv.textContent = "Completa todos los campos obligatorios";
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = "Creando gimnasio...";
+
+            try {
+                const resp = await fetch(`${API_BASE_URL}/auth/registro-gimnasio`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(datos),
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || "Error al registrar");
+
+                guardarSesion(data.access_token, data.rol, data.nombre, {
+                    es_administrador: data.es_administrador,
+                    puede_eliminar: data.puede_eliminar,
+                    puede_exportar: data.puede_exportar,
+                    zonas_permitidas: data.zonas_permitidas,
+                    gimnasio_id: data.gimnasio_id,
+                });
+                window.location.href = "principal.html";
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                btn.disabled = false;
+                btn.textContent = "Crear mi gimnasio";
+            }
+        }
+
+        document.querySelectorAll("input").forEach(input => {
+            input.addEventListener("keypress", e => { if (e.key === "Enter") registrar(); });
+        });
+    </script>
+</body>
+</html>

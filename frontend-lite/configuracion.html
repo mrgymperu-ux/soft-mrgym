@@ -1,0 +1,81 @@
+<section id="configuracion" class="section">
+            <div class="content">
+                <div class="config-panel">
+                    <div class="config-section">
+                        <h3 class="config-section-title">⚙️ Configuración General</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Moneda</label>
+                            <select class="config-input" id="config-moneda" onchange="guardarConfiguracion()">
+                                <option value="S/">Soles (S/) - Perú</option>
+                                <option value="$">Dólares ($) - USA</option>
+                                <option value="€">Euros (€) - Europa</option>
+                                <option value="MXN$">Pesos Mexicanos (MXN$)</option>
+                                <option value="ARS$">Pesos Argentinos (ARS$)</option>
+                                <option value="COP$">Pesos Colombianos (COP$)</option>
+                            </select>
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Nombre del Gimnasio</label>
+                            <input type="text" class="config-input" id="config-nombre-gimnasio" placeholder="Mi Gimnasio" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Teléfono de Contacto</label>
+                            <input type="text" class="config-input" id="config-telefono" placeholder="999-999-999" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Email de Contacto</label>
+                            <input type="email" class="config-input" id="config-email" placeholder="info@gimnasio.com" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Dirección</label>
+                            <input type="text" class="config-input" id="config-direccion" placeholder="Av. Principal 123" onchange="guardarConfiguracion()">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h3 class="config-section-title">💳 Comisiones de Pago</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Comisión Tarjeta (%)</label>
+                            <input type="number" class="config-input" id="config-comision-tarjeta" placeholder="3.5" step="0.1" onchange="guardarConfiguracion()">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Comisión QR (%)</label>
+                            <input type="number" class="config-input" id="config-comision-qr" placeholder="2.0" step="0.1" onchange="guardarConfiguracion()">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h3 class="config-section-title">📊 Datos</h3>
+                        
+                        <div class="config-item">
+                            <label class="config-label">Exportar Datos</label>
+                            <button class="btn btn-secondary" onclick="exportarDatos()">
+                                📥 Exportar Backup
+                            </button>
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Importar Datos</label>
+                            <button class="btn btn-secondary" onclick="document.getElementById(\'import-file\').click()">
+                                📤 Importar Backup
+                            </button>
+                            <input type="file" id="import-file" style="display: none;" accept=".json" onchange="importarDatos(event)">
+                        </div>
+
+                        <div class="config-item">
+                            <label class="config-label">Limpiar Todos los Datos</label>
+                            <button class="btn btn-danger" onclick="limpiarDatos()">
+                                🗑️ Limpiar Todo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>

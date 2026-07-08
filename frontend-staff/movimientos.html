@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movimientos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
+        .filtros-bar label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar select { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
+        .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+
+        .chips-cat { display:flex; gap:6px; flex-wrap:wrap; }
+        .chip-cat { padding:5px 12px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.78em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); transition:.15s; user-select:none; }
+        .chip-cat.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:18px; }
+        .kpi-card { background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); padding:16px 18px; }
+        .kpi-label { font-size:0.74em; color:var(--color-texto-secundario); margin-bottom:6px; }
+        .kpi-valor { font-size:1.4em; font-weight:700; }
+        .kpi-card.ingresos .kpi-valor { color:#33C6A9; }
+        .kpi-card.egresos .kpi-valor { color:color-mix(in srgb, var(--color-error) 80%, white 20%); }
+        .kpi-card.balance .kpi-valor.positivo { color:#33C6A9; }
+        .kpi-card.balance .kpi-valor.negativo { color:color-mix(in srgb, var(--color-error) 80%, white 20%); }
+        .kpi-sub { font-size:0.7em; color:var(--color-texto-secundario); margin-top:2px; }
+
+        .tabla-detalle-wrap { max-height:520px; overflow-y:auto; }
+        .fila-signo-ingreso { color:#33C6A9; font-weight:600; }
+        .fila-signo-egreso { color:color-mix(in srgb, var(--color-error) 80%, white 20%); font-weight:600; }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">🔁 Movimientos</h1>
+                <p class="header-subtitle" id="subtitulo-rango">Cargando...</p>
+            </div>
+        </div>
+
+        <!-- Filtros (identicos a Resumen) -->
+        <div class="filtros-bar">
+            <label>Periodo
+                <select id="f-periodo" onchange="onPeriodoChange()">
+                    <option value="personalizado">Personalizado</option>
+                    <option value="mes_actual">Mes actual</option>
+                    <option value="anual">Año actual</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="chk-hoy" onchange="onCheckHoy()"> Hoy</label>
+            <label>Desde <input type="date" id="f-desde" onchange="onFechaChange()"></label>
+            <label>Hasta <input type="date" id="f-hasta" onchange="onFechaChange()"></label>
+            <div class="chips-cat" id="chips-cat">
+                <span class="chip-cat activo" data-cat="todos" onclick="onChipCat(this)">Todos</span>
+                <span class="chip-cat" data-cat="membresias" onclick="onChipCat(this)">🎫 Membresías</span>
+                <span class="chip-cat" data-cat="productos" onclick="onChipCat(this)">📦 Productos</span>
+                <span class="chip-cat" data-cat="otros" onclick="onChipCat(this)">💼 Otros</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="cargar()">🔄 Actualizar</button>
+        </div>
+
+        <!-- KPIs (identicas a Resumen) -->
+        <div class="kpi-grid">
+            <div class="kpi-card ingresos">
+                <div class="kpi-label">💰 Total Ingresos</div>
+                <div class="kpi-valor" id="kpi-ingresos">—</div>
+            </div>
+            <div class="kpi-card egresos">
+                <div class="kpi-label">📤 Total Egresos</div>
+                <div class="kpi-valor" id="kpi-egresos">—</div>
+            </div>
+            <div class="kpi-card balance">
+                <div class="kpi-label">⚖️ Balance</div>
+                <div class="kpi-valor" id="kpi-balance">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">🎫 Ingresos Membresías</div>
+                <div class="kpi-valor" id="kpi-mem" style="color:#3A9DE9;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">📦 Venta Productos</div>
+                <div class="kpi-valor" id="kpi-vprod" style="color:#3A9DE9;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">🛒 Compra Productos</div>
+                <div class="kpi-valor" id="kpi-cprod" style="color:#E78D77;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">👔 Pago Personal</div>
+                <div class="kpi-valor" id="kpi-personal" style="color:#897DEC;">—</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">💸 Comisiones pasarela</div>
+                <div class="kpi-valor" id="kpi-comisiones" style="color:color-mix(in srgb, var(--color-error) 80%, white 20%);">—</div>
+                <div class="kpi-sub">Tarjeta + QR, absorbidas por el gimnasio</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">💵 Efectivo</div>
+                <div class="kpi-valor" id="kpi-efectivo" style="color:#33C6A9;">—</div>
+                <div class="kpi-sub">Ingresos cobrados en efectivo</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">💳 Cuenta</div>
+                <div class="kpi-valor" id="kpi-cuenta" style="color:#3A9DE9;">—</div>
+                <div class="kpi-sub">Tarjeta + QR, neto de comisión</div>
+            </div>
+        </div>
+
+        <!-- Detalle de movimientos (sin graficos) -->
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Detalle de movimientos</h3>
+                <button class="btn btn-sm btn-danger" onclick="borrarUltimoMovimiento()">🗑️ Borrar último</button>
+            </div>
+            <p style="font-size:0.76em;color:var(--color-texto-secundario);margin:0;padding:10px 20px 0;">"Borrar último" quita solo el movimiento más reciente. Para corregir uno más antiguo se necesita ser administrador.</p>
+            <div class="tabla-detalle-wrap">
+                <table class="table">
+                    <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Método</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
+                    <tbody id="tabla-movimientos"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let catActiva = "todos";
+    let moneda = "S/";
+    let filasActuales = [];
+
+    // Categorias que se pueden borrar directamente, con su endpoint.
+    // "comision" no esta aqui a proposito: no es un registro propio
+    // (se deriva de la Venta/Membresia que la genero) y desaparece
+    // sola si se borra ese ingreso.
+    const _MOVIMIENTO_ENDPOINTS = {
+        membresias: (id) => `/cliente-membresias/${id}`,
+        productos: (id) => `/ventas/${id}`,
+        compra_producto: (id) => `/compras/${id}`,
+        pago_staff: (id) => `/pagos-planilla/${id}`,
+        pago_profesor: (id) => `/pagos-planilla/${id}`,
+        pago_servicio: (id) => `/pagos-servicio/${id}`,
+        otros: (id) => `/gastos/${id}`,
+    };
+
+    function isoFecha(d) { return d.toISOString().split("T")[0]; }
+
+    function initFechas() {
+        const hoy = new Date();
+        const y = hoy.getFullYear(), m = hoy.getMonth();
+        document.getElementById("f-desde").value = isoFecha(new Date(y, m, 1));
+        document.getElementById("f-hasta").value = isoFecha(new Date(y, m + 1, 0));
+    }
+
+    function onPeriodoChange() {
+        const periodo = document.getElementById("f-periodo").value;
+        const hoy = new Date();
+        if (periodo === "anual") {
+            document.getElementById("chk-hoy").checked = false;
+            document.getElementById("f-desde").value = isoFecha(new Date(hoy.getFullYear(), 0, 1));
+            document.getElementById("f-hasta").value = isoFecha(new Date(hoy.getFullYear(), 11, 31));
+        } else if (periodo === "mes_actual") {
+            document.getElementById("chk-hoy").checked = false;
+            document.getElementById("f-desde").value = isoFecha(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+            document.getElementById("f-hasta").value = isoFecha(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0));
+        }
+        cargar();
+    }
+
+    function onCheckHoy() {
+        const chk = document.getElementById("chk-hoy").checked;
+        document.getElementById("f-desde").disabled = chk;
+        document.getElementById("f-hasta").disabled = chk;
+        if (chk) document.getElementById("f-periodo").value = "personalizado";
+        cargar();
+    }
+    function onFechaChange() {
+        document.getElementById("chk-hoy").checked = false;
+        document.getElementById("f-desde").disabled = false;
+        document.getElementById("f-hasta").disabled = false;
+        document.getElementById("f-periodo").value = "personalizado";
+        cargar();
+    }
+    function onChipCat(el) {
+        document.querySelectorAll(".chip-cat").forEach(c => c.classList.remove("activo"));
+        el.classList.add("activo");
+        catActiva = el.dataset.cat;
+        renderTabla(window._ing, window._egr);
+    }
+
+    function renderTabla(ing, egr) {
+        const tbody = document.getElementById("tabla-movimientos");
+        let filas = [];
+
+        const incluirCat = (cat) => catActiva === "todos" || catActiva === cat ||
+            (catActiva === "otros" && ["otros","pago_staff","pago_profesor","comision"].includes(cat));
+
+        ing.detalle.forEach(d => { if (incluirCat(d.categoria) || (catActiva==="todos")) filas.push({ ...d, tipo:"ingreso" }); });
+        egr.detalle.forEach(d => {
+            const catNormalizada = d.categoria === "compra_producto" ? "productos" : d.categoria;
+            if (incluirCat(catNormalizada)) filas.push({ ...d, tipo:"egreso" });
+        });
+
+        if (catActiva !== "todos") {
+            filas = filas.filter(f => {
+                if (catActiva === "membresias") return f.categoria === "membresias";
+                if (catActiva === "productos") return f.categoria === "productos" || f.categoria === "compra_producto";
+                if (catActiva === "otros") return ["otros","pago_staff","pago_profesor","comision"].includes(f.categoria);
+                return true;
+            });
+        }
+
+        filas.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
+        filasActuales = filas;
+
+        if (!filas.length) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Sin movimientos en el rango/categoría seleccionada</td></tr>';
+            return;
+        }
+
+        const ETIQ = { membresias:"Membresías", productos:"Venta producto", compra_producto:"Compra producto", pago_staff:"Pago Staff", pago_profesor:"Pago Profesor", pago_servicio:"Pago Servicio", comision:"Comisión pasarela", otros:"Otros" };
+        const ETIQ_METODO = { efectivo:"💵 Efectivo", tarjeta:"💳 Tarjeta", qr:"📱 QR" };
+        const esAdmin = esAdministrador();
+
+        tbody.innerHTML = filas.slice(0, 300).map(f => `<tr>
+            <td style="white-space:nowrap;font-size:1.03em;">${formatFechaHora(f.fecha)}</td>
+            <td class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo === 'ingreso' ? '⬆️ Ingreso' : '⬇️ Egreso'}</td>
+            <td>${ETIQ[f.categoria] || f.categoria}</td>
+            <td style="font-size:0.85em;">${f.descripcion}</td>
+            <td style="font-size:0.82em;">${f.metodo_pago ? (ETIQ_METODO[f.metodo_pago] || f.metodo_pago) : "—"}</td>
+            <td style="text-align:right;font-weight:600;" class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo==='ingreso' ? '+' : '−'} ${formatCurrency(f.monto, moneda)}</td>
+            <td style="white-space:nowrap;">${_botonAccionFila(f, esAdmin)}</td>
+        </tr>`).join("");
+    }
+
+    function _botonAccionFila(f, esAdmin) {
+        if (!esAdmin) return "";
+        if (f.categoria === "comision") return '<span style="color:var(--color-texto-secundario);font-size:0.78em;" title="Se borra junto con el ingreso que la genero">—</span>';
+        return `<button class="btn btn-sm btn-danger" onclick="eliminarMovimiento('${f.categoria}', ${f.id})" title="Solo administrador">🗑️</button>`;
+    }
+
+    async function eliminarMovimiento(categoria, id) {
+        const ruta = _MOVIMIENTO_ENDPOINTS[categoria];
+        if (!ruta) { showError("Este movimiento no se puede eliminar directamente"); return; }
+        if (!(await confirmDialog("¿Eliminar este movimiento? Esta acción no se puede deshacer."))) return;
+        try {
+            await apiFetch(ruta(id), { method: "DELETE" });
+            showSuccess("Movimiento eliminado");
+            cargar();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function borrarUltimoMovimiento() {
+        // "comision" no es un registro propio, se salta al buscar el ultimo real.
+        const ultimo = filasActuales.find(f => f.categoria !== "comision");
+        if (!ultimo) { showError("No hay movimientos para borrar"); return; }
+        const ruta = _MOVIMIENTO_ENDPOINTS[ultimo.categoria];
+        if (!ruta) { showError("Este movimiento no se puede eliminar directamente"); return; }
+        if (!(await confirmDialog(`¿Eliminar el último movimiento?\n\n${ultimo.descripcion}\n${formatCurrency(ultimo.monto, moneda)}\n\nPara corregir movimientos más antiguos se necesita ser administrador.`))) return;
+        try {
+            await apiFetch(ruta(ultimo.id), { method: "DELETE" });
+            showSuccess("Último movimiento eliminado");
+            cargar();
+        } catch (e) { showError(e.message); }
+    }
+
+    function calcularEfectivoCuenta(ing, config) {
+        let efectivo = 0, cuenta = 0;
+        (ing.detalle || []).forEach(d => {
+            const metodo = d.metodo_pago || "efectivo";
+            if (metodo === "efectivo") {
+                efectivo += d.monto;
+            } else {
+                const comisionPct = metodo === "tarjeta" ? (config.comision_tarjeta || 0) : (config.comision_qr || 0);
+                const comisionMonto = d.comision_gym || (d.monto * comisionPct / 100);
+                cuenta += d.monto - comisionMonto;
+            }
+        });
+        return { efectivo, cuenta };
+    }
+
+    async function cargar() {
+        const cfg = await getConfiguracion(); moneda = cfg.moneda;
+        const chkHoy = document.getElementById("chk-hoy").checked;
+        const desde = document.getElementById("f-desde").value;
+        const hasta = document.getElementById("f-hasta").value;
+        const qs = chkHoy ? "solo_hoy=true" : `desde=${desde}&hasta=${hasta}`;
+
+        const [ing, egr] = await Promise.all([
+            apiFetch(`/ingresos/?${qs}`),
+            apiFetch(`/egresos/?${qs}`),
+        ]);
+        window._ing = ing; window._egr = egr;
+
+        const rangoTexto = chkHoy ? "hoy" : `del ${formatFecha(desde)} al ${formatFecha(hasta)}`;
+        document.getElementById("subtitulo-rango").textContent = `Movimientos ${rangoTexto}`;
+
+        const balance = ing.total - egr.total;
+        document.getElementById("kpi-ingresos").textContent = formatCurrency(ing.total, moneda);
+        document.getElementById("kpi-egresos").textContent = formatCurrency(egr.total, moneda);
+        const balEl = document.getElementById("kpi-balance");
+        balEl.textContent = formatCurrency(balance, moneda);
+        balEl.className = "kpi-valor " + (balance >= 0 ? "positivo" : "negativo");
+        document.getElementById("kpi-mem").textContent = formatCurrency(ing.membresias, moneda);
+        document.getElementById("kpi-vprod").textContent = formatCurrency(ing.productos, moneda);
+        document.getElementById("kpi-cprod").textContent = formatCurrency(egr.compras_producto, moneda);
+        document.getElementById("kpi-personal").textContent = formatCurrency(egr.pago_staff + egr.pago_profesor, moneda);
+        document.getElementById("kpi-comisiones").textContent = formatCurrency(egr.comisiones || 0, moneda);
+
+        const { efectivo, cuenta } = calcularEfectivoCuenta(ing, cfg);
+        document.getElementById("kpi-efectivo").textContent = formatCurrency(efectivo, moneda);
+        document.getElementById("kpi-cuenta").textContent = formatCurrency(cuenta, moneda);
+
+        renderTabla(ing, egr);
+    }
+
+    initFechas();
+    cargar();
+</script>
+</body>
+</html>

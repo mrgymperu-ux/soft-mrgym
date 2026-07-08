@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuracion - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .config-section { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); padding: 24px; }
+        .config-section h3 { margin: 0 0 20px; font-size: 1em; padding-bottom: 12px; border-bottom: 1px solid var(--color-borde); }
+        @media (max-width: 900px) { .config-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">Configuracion</h1>
+                <p class="header-subtitle">Ajustes generales del sistema</p>
+            </div>
+        </div>
+
+        <div class="config-grid">
+            <!-- Datos del gimnasio -->
+            <div class="config-section">
+                <h3>🏋️ Datos del Gimnasio</h3>
+                <div class="form-group"><label>Nombre del Gimnasio</label><input type="text" id="c-nombre" placeholder="Mi Gimnasio"></div>
+                <div class="form-group"><label>Telefono</label><input type="text" id="c-telefono" placeholder="999-999-999"></div>
+                <div class="form-group"><label>Email</label><input type="email" id="c-email" placeholder="info@gimnasio.com"></div>
+                <div class="form-group"><label>Direccion</label><input type="text" id="c-direccion" placeholder="Av. Principal 123"></div>
+                <div class="form-group">
+                    <label>Logo del Gimnasio</label>
+                    <div id="logo-preview" style="margin-bottom:8px;"><p style="font-size:0.8em;color:#636E72;">Cargando...</p></div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="file" id="input-logo" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
+                        <button class="btn btn-sm btn-primary" onclick="subirLogo()">Subir</button>
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
+            </div>
+
+            <!-- QR para compartir con socios -->
+            <div class="config-section">
+                <h3>📱 Compartir con Socios</h3>
+                <p style="font-size:0.85em;color:#636E72;margin-bottom:16px;">Comparte este QR con tus socios para que instalen la app en su celular. Al escanearlo, acceden al portal y pueden agregarlo a su pantalla de inicio.</p>
+                <div id="qr-container"><p style="color:#636E72;font-size:0.85em;">Cargando...</p></div>
+            </div>
+
+            <!-- Moneda y comisiones -->
+            <div class="config-section">
+                <h3>💳 Moneda y Comisiones</h3>
+                <div class="form-group">
+                    <label>Moneda</label>
+                    <select id="c-moneda">
+                        <option value="S/">Soles (S/) - Peru</option>
+                        <option value="$">Dolares ($)</option>
+                        <option value="€">Euros (€)</option>
+                        <option value="MXN$">Pesos Mexicanos</option>
+                        <option value="ARS$">Pesos Argentinos</option>
+                        <option value="COP$">Pesos Colombianos</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Comision Tarjeta (%)</label><input type="number" id="c-tarjeta" step="0.1" min="0" placeholder="3.5"></div>
+                <div class="form-group"><label>Comision QR (%)</label><input type="number" id="c-qr" step="0.1" min="0" placeholder="2.0"></div>
+                <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
+            </div>
+
+            <!-- Alertas de vencimiento -->
+            <div class="config-section">
+                <h3>⏳ Alertas de Vencimiento</h3>
+                <div class="form-group">
+                    <label>Avisar cuando falten (dias)</label>
+                    <input type="number" id="c-dias-aviso" step="1" min="1" placeholder="7">
+                </div>
+                <p style="font-size:0.82em;color:#636E72;margin:0 0 16px;">Define cuantos dias antes de vencer una membresia se considera "por vencer" en el Panel Principal.</p>
+                <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
+            </div>
+
+            <!-- Info del sistema -->
+            <div class="config-section">
+                <h3>ℹ️ Informacion del Sistema</h3>
+                <table class="table" style="font-size:0.9em;">
+                    <tbody>
+                        <tr><td style="color:#636E72;">Version</td><td>Soft-MrGym v1.0</td></tr>
+                        <tr><td style="color:#636E72;">Backend</td><td>FastAPI + SQLAlchemy</td></tr>
+                        <tr><td style="color:#636E72;">Base de datos</td><td id="info-bd">SQLite local</td></tr>
+                        <tr><td style="color:#636E72;">Usuario actual</td><td id="info-usuario">—</td></tr>
+                        <tr><td style="color:#636E72;">Rol</td><td id="info-rol">—</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Cambiar contrasena -->
+            <div class="config-section">
+                <h3>🔑 Cambiar mi Contrasena</h3>
+                <div class="form-group"><label>Nueva contrasena</label><input type="password" id="nueva-pass" placeholder="••••••••"></div>
+                <div class="form-group"><label>Confirmar contrasena</label><input type="password" id="confirmar-pass" placeholder="••••••••"></div>
+                <button class="btn btn-secondary" onclick="cambiarPassword()">Actualizar contrasena</button>
+            </div>
+
+            <!-- Tema / paleta de colores -->
+            <div class="config-section" style="grid-column:1/-1;">
+                <h3>🎨 Tema y apariencia</h3>
+                <p style="font-size:0.82em;color:var(--color-texto-secundario);margin:0 0 16px;">Elige la paleta de colores y el modo. Es una preferencia compartida: se aplica para todo el staff.</p>
+                <p style="font-size:0.8em;font-weight:600;margin:0 0 8px;">Modo</p>
+                <div id="selector-modo" style="display:flex;gap:10px;margin-bottom:20px;"></div>
+                <p style="font-size:0.8em;font-weight:600;margin:0 0 8px;">Paleta de colores</p>
+                <div id="selector-temas" style="display:flex;gap:16px;flex-wrap:wrap;"></div>
+            </div>
+
+            <!-- Modelo de contrato -->
+            <div class="config-section" style="grid-column:1/-1;">
+                <h3>📜 Modelo de Contrato</h3>
+                <p style="font-size:0.82em;color:var(--color-texto-secundario);margin:0 0 12px;">Estas cláusulas se personalizan automáticamente para cada cliente (nombre, plan, montos y fechas) al generar su contrato de matrícula. Una cláusula por línea. Si se deja vacío, se usa un modelo por defecto.</p>
+                <div class="form-group"><textarea id="c-clausulas" rows="8" placeholder="1. El cliente se compromete a...
+2. La membresia es personal e intransferible.
+3. ..."></textarea></div>
+                <button class="btn btn-primary" onclick="guardarClausulas()">Guardar modelo</button>
+            </div>
+
+            <!-- Comisiones por ventas (solo admin) -->
+            <div class="config-section" id="seccion-comisiones" style="display:none;grid-column:1/-1;">
+                <h3>💹 Comisiones por Ventas <span style="font-size:0.6em;color:#636E72;font-weight:normal;">(solo administrador)</span></h3>
+                <p style="font-size:0.82em;color:#636E72;">Define a partir de que % de cumplimiento de la meta mensual (ver "Metas y Comisiones") se activa cada tramo de comision. Se aplica el tramo mas alto alcanzado.</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+                    <div>
+                        <h4 style="font-size:0.85em;margin-bottom:8px;">Comision por venta de Membresias (por tramos, segun % de meta)</h4>
+                        <div id="tramos-membresia"></div>
+                        <button class="btn btn-secondary btn-sm" onclick="agregarTramo('membresia')">+ Agregar tramo</button>
+                    </div>
+                    <div>
+                        <h4 style="font-size:0.85em;margin-bottom:8px;">Comision por venta de Productos</h4>
+                        <p style="font-size:0.78em;color:#636E72;margin:-4px 0 8px;">No depende de metas: se aplica el mismo % a cada venta de producto.</p>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <input type="number" id="c-comision-producto" step="0.1" min="0" style="width:100px;padding:8px;border:1px solid var(--color-borde);border-radius:8px;">
+                            <span>% sobre cada venta de producto</span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarComisionProducto()">Guardar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    async function cargarConfig() {
+        const config = await getConfiguracion();
+        document.getElementById("c-nombre").value = config.nombre_gimnasio || "";
+        document.getElementById("c-telefono").value = config.telefono || "";
+        document.getElementById("c-email").value = config.email || "";
+        document.getElementById("c-direccion").value = config.direccion || "";
+        document.getElementById("c-moneda").value = config.moneda || "S/";
+        document.getElementById("c-tarjeta").value = config.comision_tarjeta || "";
+        document.getElementById("c-qr").value = config.comision_qr || "";
+        document.getElementById("c-dias-aviso").value = config.dias_aviso_vencimiento || 7;
+
+        document.getElementById("info-usuario").textContent = getNombreUsuario() || "—";
+        document.getElementById("info-rol").textContent = getRol() || "—";
+
+        if (esAdministrador()) {
+            document.getElementById("seccion-comisiones").style.display = "block";
+            document.getElementById("c-comision-producto").value = config.comision_producto_porcentaje || 0;
+            await cargarTramosComision();
+        }
+
+        renderSelectorTemas(config.tema || TEMA_POR_DEFECTO);
+        renderSelectorModo(config.modo_tema || MODO_POR_DEFECTO);
+
+        document.getElementById("c-clausulas").value = config.clausulas_contrato || "";
+    }
+
+    async function guardarClausulas() {
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ clausulas_contrato: document.getElementById("c-clausulas").value }) });
+            configuracionCache = null;
+            showSuccess("Modelo de contrato guardado");
+        } catch (e) { showError(e.message); }
+    }
+
+    function renderSelectorModo(modoActual) {
+        const cont = document.getElementById("selector-modo");
+        const opciones = [
+            { clave: "claro", etiqueta: "☀️ Claro" },
+            { clave: "oscuro", etiqueta: "🌙 Oscuro" },
+        ];
+        cont.innerHTML = opciones.map(o => `
+            <button class="btn ${o.clave === modoActual ? "btn-primary" : "btn-secondary"}" onclick="elegirModo('${o.clave}')">${o.etiqueta}</button>
+        `).join("");
+    }
+
+    async function elegirModo(clave) {
+        aplicarModo(clave);
+        localStorage.setItem(MODO_STORAGE_KEY, clave);
+        renderSelectorModo(clave);
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ modo_tema: clave }) });
+            configuracionCache = null;
+            showSuccess("Modo actualizado para todo el staff");
+        } catch (e) { showError(e.message); }
+    }
+
+    function renderSelectorTemas(temaActual) {
+        const cont = document.getElementById("selector-temas");
+        cont.innerHTML = Object.entries(PALETAS_TEMA).map(([clave, paleta]) => `
+            <div onclick="elegirTema('${clave}')" style="cursor:pointer;text-align:center;">
+                <div style="width:64px;height:64px;border-radius:12px;overflow:hidden;display:flex;border:3px solid ${clave === temaActual ? paleta.primario : "transparent"};box-shadow:var(--sombra);">
+                    <div style="flex:1;background:${paleta.sidebar};"></div>
+                    <div style="flex:1;background:${paleta.primario};"></div>
+                </div>
+                <div style="font-size:0.78em;margin-top:6px;${clave === temaActual ? "font-weight:600;" : ""}">${paleta.nombre}${clave === temaActual ? " ✓" : ""}</div>
+            </div>
+        `).join("");
+    }
+
+    async function elegirTema(clave) {
+        aplicarTema(clave);
+        localStorage.setItem(TEMA_STORAGE_KEY, clave);
+        renderSelectorTemas(clave);
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ tema: clave }) });
+            configuracionCache = null;
+            showSuccess("Tema actualizado para todo el staff");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function guardarComisionProducto() {
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ comision_producto_porcentaje: parseFloat(document.getElementById("c-comision-producto").value) || 0 }) });
+            showSuccess("Comision de productos actualizada");
+        } catch (e) { showError(e.message); }
+    }
+
+    let tramosCache = [];
+
+    async function cargarTramosComision() {
+        tramosCache = await apiFetch("/comisiones/tramos");
+        renderTramos("membresia");
+    }
+
+    function renderTramos(tipo) {
+        const contenedor = document.getElementById(`tramos-${tipo}`);
+        const items = tramosCache.filter(t => t.tipo === tipo);
+        if (!items.length) {
+            contenedor.innerHTML = '<p style="font-size:0.8em;color:#636E72;">Sin tramos configurados</p>';
+            return;
+        }
+        contenedor.innerHTML = items.map(t => `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span style="font-size:0.82em;white-space:nowrap;">Si llega a</span>
+                <input type="number" value="${t.porcentaje_meta_minimo}" style="width:70px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;" onchange="actualizarTramo(${t.id},'porcentaje_meta_minimo',this.value)">
+                <span style="font-size:0.82em;">% meta →</span>
+                <input type="number" value="${t.porcentaje_comision}" style="width:70px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;" onchange="actualizarTramo(${t.id},'porcentaje_comision',this.value)">
+                <span style="font-size:0.82em;">% comision</span>
+                <button class="btn btn-sm btn-danger" onclick="eliminarTramo(${t.id})">🗑️</button>
+            </div>
+        `).join("");
+    }
+
+    async function agregarTramo(tipo) {
+        try {
+            await apiFetch("/comisiones/tramos", { method: "POST", body: JSON.stringify({ tipo: "membresia", porcentaje_meta_minimo: 30, porcentaje_comision: 2 }) });
+            await cargarTramosComision();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function actualizarTramo(id, campo, valor) {
+        try {
+            await apiFetch(`/comisiones/tramos/${id}`, { method: "PUT", body: JSON.stringify({ [campo]: parseFloat(valor) }) });
+            showSuccess("Tramo actualizado");
+            await cargarTramosComision();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarTramo(id) {
+        try {
+            await apiFetch(`/comisiones/tramos/${id}`, { method: "DELETE" });
+            await cargarTramosComision();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function guardarConfig() {
+        const datos = {
+            nombre_gimnasio: document.getElementById("c-nombre").value.trim(),
+            telefono: document.getElementById("c-telefono").value.trim() || null,
+            email: document.getElementById("c-email").value.trim() || null,
+            direccion: document.getElementById("c-direccion").value.trim() || null,
+            moneda: document.getElementById("c-moneda").value,
+            comision_tarjeta: parseFloat(document.getElementById("c-tarjeta").value) || 0,
+            comision_qr: parseFloat(document.getElementById("c-qr").value) || 0,
+            dias_aviso_vencimiento: parseInt(document.getElementById("c-dias-aviso").value) || 7,
+        };
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify(datos) });
+            configuracionCache = null; // limpiar cache para que se recargue
+            showSuccess("Configuracion guardada correctamente");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cambiarPassword() {
+        const nueva = document.getElementById("nueva-pass").value;
+        const confirmar = document.getElementById("confirmar-pass").value;
+        if (!nueva) { showError("Escribe la nueva contrasena"); return; }
+        if (nueva !== confirmar) { showError("Las contrasenas no coinciden"); return; }
+        if (nueva.length < 6) { showError("La contrasena debe tener al menos 6 caracteres"); return; }
+
+        try {
+            const yo = await apiFetch("/usuarios/me");
+            await apiFetch(`/usuarios/${yo.id}`, { method: "PUT", body: JSON.stringify({ password: nueva }) });
+            showSuccess("Contrasena actualizada");
+            document.getElementById("nueva-pass").value = "";
+            document.getElementById("confirmar-pass").value = "";
+        } catch (e) { showError(e.message); }
+    }
+
+    cargarConfig();
+
+    /* ====== QR para compartir portal de socios ====== */
+    async function mostrarQR() {
+        let slug = sessionStorage.getItem("gimnasio_slug");
+        /* Si no hay slug en sessionStorage, obtenerlo del backend */
+        if (!slug) {
+            try {
+                const info = await apiFetch("/gym-actual/");
+                if (info && info.slug) {
+                    slug = info.slug;
+                    sessionStorage.setItem("gimnasio_slug", slug);
+                }
+            } catch(e) {}
+        }
+        const qrDiv = document.getElementById("qr-container");
+        if (!slug) {
+            qrDiv.innerHTML = '<p style="color:#636E72;font-size:0.85em;">No se pudo obtener la informacion del gimnasio. Cierra sesion y vuelve a entrar.</p>';
+            return;
+        }
+        qrDiv.innerHTML = '<p style="color:#636E72;font-size:0.85em;">Generando QR...</p>';
+        try {
+            const r = await fetch(`${API_BASE_URL}/gym/${slug}/qr.svg?portal=alumno`);
+            if (!r.ok) throw new Error("Error al generar QR");
+            const svg = await r.text();
+            const url = `${window.location.origin}/alumno/login.html?gym=${slug}`;
+            qrDiv.innerHTML = `
+                <div style="text-align:center;">
+                    <div style="max-width:250px;margin:0 auto;">${svg}</div>
+                    <p style="font-size:0.8em;margin:12px 0 4px;color:#636E72;">Tus socios escanean este QR para acceder:</p>
+                    <code style="font-size:0.75em;word-break:break-all;color:var(--color-primario);">${url}</code>
+                    <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+                        <button class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText('${url}');showSuccess('URL copiada')">Copiar URL</button>
+                        <a class="btn btn-sm" href="${API_BASE_URL}/gym/${slug}/qr.svg?portal=alumno" download="qr-${slug}.svg" style="text-decoration:none;">Descargar QR</a>
+                    </div>
+                </div>`;
+        } catch(e) { qrDiv.innerHTML = `<p style="color:red;">${e.message}</p>`; }
+    }
+
+    /* ====== Logo del gimnasio ====== */
+    async function cargarLogoActual() {
+        try {
+            const info = await apiFetch("/gym-actual/");
+            const prev = document.getElementById("logo-preview");
+            if (info && info.logo_url) {
+                prev.innerHTML = `<img src="${API_BASE_URL}${info.logo_url}" style="max-height:80px;border-radius:8px;" alt="Logo">`;
+            } else {
+                prev.innerHTML = '<p style="font-size:0.8em;color:#636E72;">Sin logo. Sube uno (JPEG, PNG o WEBP, max 5MB).</p>';
+            }
+        } catch(e) {}
+    }
+    async function subirLogo() {
+        const input = document.getElementById("input-logo");
+        if (!input.files.length) { showError("Selecciona una imagen"); return; }
+        try {
+            const formData = new FormData();
+            formData.append("logo", input.files[0]);
+            const headers = {};
+            const token = getToken();
+            if (token) headers["Authorization"] = `Bearer ${token}`;
+            const r = await fetch(`${API_BASE_URL}/gym-actual/logo`, { method: "POST", headers, body: formData });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || "Error al subir logo");
+            showSuccess("Logo actualizado");
+            cargarLogoActual();
+        } catch(e) { showError(e.message); }
+    }
+
+    mostrarQR();
+    cargarLogoActual();
+</script>
+</body>
+</html>

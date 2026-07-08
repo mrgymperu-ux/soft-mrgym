@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Venta Rapida - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .vr-layout { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
+        .vr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding: 20px; }
+        .vr-card {
+            border: 2px solid var(--color-borde);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.15s, transform 0.1s;
+            background: var(--color-blanco);
+            color: var(--color-texto);
+            user-select: none;
+        }
+        .vr-card:hover { border-color: var(--color-primario); transform: translateY(-2px); }
+        .vr-card.agotado { opacity: 0.4; cursor: not-allowed; }
+        .vr-icono { font-size: 2.2em; margin-bottom: 8px; }
+        .vr-nombre { font-weight: 600; font-size: 0.88em; margin-bottom: 4px; }
+        .vr-precio { color: var(--color-primario); font-weight: bold; font-size: 0.95em; }
+        .vr-stock { font-size: 0.75em; color: var(--color-texto-secundario); margin-top: 4px; }
+        .carrito-panel { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); display: flex; flex-direction: column; height: fit-content; position: sticky; top: 24px; }
+        .carrito-header { padding: 16px 20px; border-bottom: 1px solid var(--color-borde); font-weight: 600; }
+        .carrito-body { flex: 1; padding: 12px 20px; min-height: 200px; }
+        .carrito-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--color-borde); font-size: 0.88em; }
+        .carrito-item:last-child { border-bottom: none; }
+        .ci-nombre { flex: 1; }
+        .ci-controles { display: flex; align-items: center; gap: 4px; }
+        .ci-btn { width: 24px; height: 24px; border: 1px solid var(--color-borde); background: var(--color-input); color: var(--color-texto); border-radius: 6px; cursor: pointer; font-size: 1em; }
+        .ci-btn:hover { background: var(--color-fondo); }
+        .carrito-footer { padding: 16px 20px; border-top: 1px solid var(--color-borde); }
+        .carrito-total { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 1.05em; }
+        .empty-carrito { text-align: center; padding: 30px; color: var(--color-texto-secundario); }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">⚡ Venta Rapida</h1>
+                <p class="header-subtitle">Un clic por producto</p>
+            </div>
+        </div>
+
+        <div class="vr-layout">
+            <!-- Grid de productos -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Productos disponibles</h3>
+                    <input type="text" id="filtro" placeholder="Filtrar..." style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.88em;" oninput="filtrarProductos(this.value)">
+                </div>
+                <div class="vr-grid" id="grid-productos">
+                    <p style="color:var(--color-texto-secundario);padding:20px;">Cargando...</p>
+                </div>
+            </div>
+
+            <!-- Carrito -->
+            <div class="carrito-panel">
+                <div class="carrito-header">🛒 Carrito</div>
+                <div class="carrito-body" id="carrito-body">
+                    <div class="empty-carrito">Sin productos aun</div>
+                </div>
+                <div class="carrito-footer">
+                    <div class="form-group" style="margin-bottom:10px;">
+                        <label style="font-size:0.82em;">Cliente (opcional)</label>
+                        <select id="f-cliente" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.88em;">
+                            <option value="">Sin cliente</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <label style="font-size:0.82em;">Metodo de pago</label>
+                        <select id="f-metodo" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.88em;" onchange="actualizarTotal()">
+                            <option value="efectivo">Efectivo</option>
+                            <option value="tarjeta">Tarjeta</option>
+                            <option value="qr">QR</option>
+                        </select>
+                    </div>
+                    <div class="carrito-total">
+                        <span>Total</span>
+                        <strong id="total-display" style="color:var(--color-primario);font-size:1.2em;">S/ 0.00</strong>
+                    </div>
+                    <p id="nota-comision" style="font-size:0.75em;color:#636E72;margin:0 0 10px;"></p>
+                    <button class="btn btn-primary" style="width:100%;" onclick="confirmarVenta()">✅ Cobrar</button>
+                    <button class="btn btn-secondary" style="width:100%;margin-top:8px;" onclick="limpiarCarrito()">Limpiar</button>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let productosCache = [];
+    let carrito = [];
+    let config = null;
+    let moneda = "S/";
+
+    async function init() {
+        config = await getConfiguracion();
+        moneda = config.moneda;
+        productosCache = await apiFetch("/productos/");
+        renderGrid(productosCache);
+
+        const clientes = await apiFetch("/clientes/?limit=200");
+        const sel = document.getElementById("f-cliente");
+        sel.innerHTML = '<option value="">Sin cliente</option>' +
+            clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos || ""}</option>`).join("");
+
+        const clienteUrl = new URLSearchParams(window.location.search).get("cliente");
+        if (clienteUrl) sel.value = clienteUrl;
+
+        // Si se llego desde el Panel (boton 🔗 junto a un cliente), al
+        // cobrar se debe volver alli en vez de quedarse en esta pantalla.
+        if (new URLSearchParams(window.location.search).get("volver") === "panel") {
+            volverAlTerminar = "principal.html";
+            const aviso = document.createElement("p");
+            aviso.style.cssText = "font-size:0.78em;color:var(--color-texto-secundario);margin:-8px 0 12px;";
+            aviso.textContent = "🔙 Al cobrar, regresas automaticamente al Panel.";
+            document.querySelector(".header").after(aviso);
+        }
+    }
+
+    let volverAlTerminar = null;
+
+    function renderGrid(productos) {
+        const grid = document.getElementById("grid-productos");
+        const disponibles = productos.filter(p => p.stock > 0);
+        if (!disponibles.length) {
+            grid.innerHTML = '<p style="color:var(--color-texto-secundario);padding:20px;">No hay productos con stock disponible</p>';
+            return;
+        }
+        grid.innerHTML = disponibles.map(p => `
+            <div class="vr-card" onclick="agregarAlCarrito(${p.id})">
+                <div class="vr-icono">${p.foto_url ? `<img src="${urlFoto(p.foto_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">` : (p.icono || "📦")}</div>
+                <div class="vr-nombre">${p.nombre}</div>
+                <div class="vr-precio">${formatCurrency(p.precio_venta, moneda)}</div>
+                <div class="vr-stock">Stock: ${p.stock}</div>
+            </div>
+        `).join("");
+    }
+
+    function filtrarProductos(termino) {
+        const filtrados = productosCache.filter(p =>
+            p.nombre.toLowerCase().includes(termino.toLowerCase()) ||
+            (p.categoria && p.categoria.toLowerCase().includes(termino.toLowerCase()))
+        );
+        renderGrid(filtrados);
+    }
+
+    function agregarAlCarrito(productoId) {
+        const prod = productosCache.find(p => p.id === productoId);
+        if (!prod || prod.stock <= 0) return;
+
+        const existente = carrito.find(i => i.id === productoId);
+        if (existente) {
+            if (existente.cantidad >= prod.stock) { showError("Stock insuficiente"); return; }
+            existente.cantidad++;
+        } else {
+            carrito.push({ id: productoId, nombre: prod.nombre, precio: prod.precio_venta, cantidad: 1, stock: prod.stock });
+        }
+        renderCarrito();
+    }
+
+    function cambiarCantidad(id, delta) {
+        const idx = carrito.findIndex(i => i.id === id);
+        if (idx === -1) return;
+        carrito[idx].cantidad += delta;
+        if (carrito[idx].cantidad <= 0) carrito.splice(idx, 1);
+        renderCarrito();
+    }
+
+    function limpiarCarrito() {
+        carrito = [];
+        renderCarrito();
+    }
+
+    function renderCarrito() {
+        const body = document.getElementById("carrito-body");
+        if (!carrito.length) {
+            body.innerHTML = '<div class="empty-carrito">Sin productos aun</div>';
+            document.getElementById("total-display").textContent = formatCurrency(0, moneda);
+            document.getElementById("nota-comision").textContent = "";
+            return;
+        }
+        body.innerHTML = carrito.map(item => `
+            <div class="carrito-item">
+                <div class="ci-nombre">${item.nombre}</div>
+                <div class="ci-controles">
+                    <button class="ci-btn" onclick="cambiarCantidad(${item.id}, -1)">−</button>
+                    <span style="min-width:20px;text-align:center;">${item.cantidad}</span>
+                    <button class="ci-btn" onclick="cambiarCantidad(${item.id}, 1)">+</button>
+                </div>
+                <strong style="min-width:65px;text-align:right;">${formatCurrency(item.precio * item.cantidad, moneda)}</strong>
+            </div>
+        `).join("");
+        actualizarTotal();
+    }
+
+    function actualizarTotal() {
+        const subtotal = carrito.reduce((s, i) => s + i.precio * i.cantidad, 0);
+        const metodo = document.getElementById("f-metodo").value;
+        let comision = 0;
+        if (config) {
+            if (metodo === "tarjeta") comision = config.comision_tarjeta;
+            else if (metodo === "qr") comision = config.comision_qr;
+        }
+        document.getElementById("total-display").textContent = formatCurrency(subtotal, moneda);
+        document.getElementById("nota-comision").textContent = comision > 0
+            ? `El gimnasio asume la comision de ${comision}% (no se cobra al cliente)` : "";
+    }
+
+    async function confirmarVenta() {
+        if (!carrito.length) { showError("El carrito esta vacio"); return; }
+        const metodo = document.getElementById("f-metodo").value;
+        const clienteId = parseInt(document.getElementById("f-cliente").value) || null;
+        const detalles = carrito.map(i => ({
+            producto_id: i.id,
+            cantidad: i.cantidad,
+            precio_unitario: i.precio,
+        }));
+        try {
+            const venta = await apiFetch("/ventas/", {
+                method: "POST",
+                body: JSON.stringify({ cliente_id: clienteId, metodo_pago: metodo, es_venta_rapida: true, detalles }),
+            });
+            showSuccess("Venta registrada ✅");
+            await mostrarBoletaGenerada(venta.id, clienteId);
+            limpiarCarrito();
+            if (volverAlTerminar) {
+                setTimeout(() => { window.location.href = volverAlTerminar; }, 700);
+                return;
+            }
+            // Refrescar stock en cache
+            productosCache = await apiFetch("/productos/");
+            renderGrid(productosCache);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function mostrarBoletaGenerada(ventaId, clienteId) {
+        // La boleta requiere sesion (no es un endpoint publico), asi que
+        // se descarga con el token; un <a href> directo al backend
+        // fallaria con 401 al no llevar el token. Se descarga (no solo
+        // se abre) para que quede lista en Descargas y se pueda
+        // arrastrar directo a WhatsApp con un clic menos.
+        try {
+            await apiDescargarArchivo(`/ventas/${ventaId}/boleta.pdf`, `boleta_${ventaId}.pdf`);
+        } catch (e) {
+            showError("No se pudo descargar la boleta: " + e.message);
+        }
+        if (clienteId) {
+            try {
+                const cliente = await apiFetch(`/clientes/${clienteId}`);
+                if (cliente.telefono) {
+                    const mensaje = `Hola ${cliente.nombre}! Gracias por tu compra. Te comparto tu boleta adjunta (revisa tu carpeta de Descargas).`;
+                    const linkWa = linkWhatsApp(cliente.telefono, mensaje);
+                    if (linkWa) window.open(linkWa, "_blank");
+                }
+            } catch {}
+        }
+    }
+
+    init();
+</script>
+</body>
+</html>

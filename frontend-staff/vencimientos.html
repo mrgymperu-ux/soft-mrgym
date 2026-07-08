@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vencimientos - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+
+    <main class="main-content">
+        <div class="header">
+            <div>
+                <h1 class="header-title">⏳ Membresias por Vencer</h1>
+                <p class="header-subtitle" id="subtitulo-dias">Cargando...</p>
+            </div>
+            <a href="principal.html" class="btn btn-secondary btn-sm">← Volver al Panel</a>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Listado</h3>
+                <a href="configuracion.html" class="btn btn-secondary btn-sm">Ajustar dias de aviso</a>
+            </div>
+            <div class="table-container">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th>
+                            <th>Telefono</th>
+                            <th>Membresia</th>
+                            <th>Vence</th>
+                            <th>Dias restantes</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-vencimientos">
+                        <tr class="empty-row"><td colspan="6">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    async function cargarVencimientos() {
+        try {
+            const config = await getConfiguracion();
+            document.getElementById("subtitulo-dias").textContent =
+                `Clientes cuya membresia vence en los proximos ${config.dias_aviso_vencimiento || 7} dias`;
+
+            const items = await apiFetch("/membresias/por-vencer");
+            const tbody = document.getElementById("tabla-vencimientos");
+
+            if (!items.length) {
+                tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No hay membresias por vencer en el rango configurado</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = items.map(it => {
+                let claseBadge = "badge-info";
+                if (it.dias_restantes <= 2) claseBadge = "badge-error";
+                else if (it.dias_restantes <= 5) claseBadge = "badge-warning";
+                else claseBadge = "badge-success";
+
+                return `
+                    <tr>
+                        <td><a href="clientes.html?ver=${it.cliente_id}" style="color:var(--color-primario);font-weight:600;text-decoration:none;">${it.nombre_cliente}</a></td>
+                        <td>${it.telefono || "-"}</td>
+                        <td>${it.membresia_nombre}</td>
+                        <td>${formatFecha(it.fecha_fin)}</td>
+                        <td><span class="badge ${claseBadge}">${it.dias_restantes} dia(s)</span></td>
+                        <td><a href="venta-rapida.html?cliente=${it.cliente_id}" class="btn btn-primary btn-sm">Vender / Renovar</a></td>
+                    </tr>
+                `;
+            }).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    cargarVencimientos();
+</script>
+</body>
+</html>

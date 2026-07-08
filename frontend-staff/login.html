@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesion - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+</head>
+<body class="login-page">
+    <div class="login-card">
+        <div class="login-logo">
+            <div class="logo-icon">🏋️</div>
+            <h1>Soft-MrGym</h1>
+            <p style="color:#636E72;font-size:0.88em;margin-top:4px;">Panel de administracion</p>
+        </div>
+        <div id="alert-container"></div>
+        <form id="form-login">
+            <div class="form-group">
+                <label>Usuario</label>
+                <input type="text" id="login-username" placeholder="admin" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>Contraseña</label>
+                <input type="password" id="login-password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-login">Ingresar</button>
+        </form>
+    </div>
+    <script src="js/api.js"></script>
+    <script>
+        if (getToken()) window.location.href = "principal.html";
+
+        document.getElementById("form-login").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const username = document.getElementById("login-username").value.trim();
+            const password = document.getElementById("login-password").value;
+            const boton = document.getElementById("btn-login");
+            boton.disabled = true;
+            boton.textContent = "Ingresando...";
+            document.getElementById("alert-container").innerHTML = "";
+            try {
+                await login(username, password);
+                window.location.href = "principal.html";
+            } catch (error) {
+                document.getElementById("alert-container").innerHTML =
+                    `<div class="alert alert-error">${error.message}</div>`;
+                boton.disabled = false;
+                boton.textContent = "Ingresar";
+            }
+        });
+    </script>
+    <div style="text-align:center;margin-top:1.5rem;font-size:.9rem;">¿No tienes cuenta? <a href="registro.html" style="color:#7c3aed;text-decoration:none;font-weight:600;">Registra tu gimnasio gratis</a></div>
+</body>
+</html>

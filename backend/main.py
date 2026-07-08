@@ -1,0 +1,5864 @@
+"""
+main.py
+Punto de entrada FastAPI. Rutas agrupadas por modulo, en el mismo
+orden que models.py / schemas.py.
+
+Convencion de permisos:
+  - /auth/*                 publico (login)
+  - /staff/...               requiere rol STAFF
+  - /portal-alumno/...       requiere token de alumno (Cliente)
+  - el resto de rutas de gestion (clientes, productos, ventas,
+    etc.) requiere STAFF o PROFESOR segun el caso, ver cada ruta
+"""
+
+from datetime import datetime, date, timedelta
+from typing import List, Optional
+import os
+import uuid
+import csv
+import io
+
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from . import models, schemas, auth, pdf_generator
+from .database import get_db, engine, SessionLocal, SQLALCHEMY_DATABASE_URL
+
+app = FastAPI(title="Soft-MrGym API")
+
+
+# ==================================================================
+# HELPER MULTI-TENANT
+# Uso: gid = get_gid(usuario)  →  db.query(Model).filter(Model.gimnasio_id == gid)
+# ==================================================================
+
+def get_gid(usuario: models.Usuario) -> Optional[int]:
+    """Extrae el gimnasio_id del usuario autenticado."""
+    return usuario.gimnasio_id
+
+
+def q(db: Session, Model, usuario: models.Usuario):
+    """
+    Shorthand para queries filtradas por gimnasio.
+    Uso: q(db, models.Cliente, usuario).filter(...).all()
+    Equivale a: db.query(Model).filter(Model.gimnasio_id == get_gid(usuario))
+    """
+    gid = get_gid(usuario)
+    return db.query(Model).filter(Model.gimnasio_id == gid)
+
+
+def _validar_limite_plan(db: Session, usuario: models.Usuario, recurso: str):
+    """
+    Valida que el gimnasio no haya alcanzado el limite de su plan SaaS
+    para el recurso indicado. Lanza HTTPException 403 si se excede.
+    recurso: 'clientes' | 'productos' | 'rutinas' | 'usuarios_staff'
+    Un limite de 0 en el plan significa ilimitado.
+    """
+    gid = get_gid(usuario)
+    if not gid:
+        return  # sin gimnasio, no hay limite
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
+    if not gimnasio or not gimnasio.plan_id:
+        return
+    plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == gimnasio.plan_id).first()
+    if not plan:
+        return
+
+    mapa = {
+        "clientes": (plan.max_clientes, models.Cliente, models.Cliente.activo == True),
+        "productos": (plan.max_productos, models.Producto, models.Producto.activo == True),
+        "rutinas": (plan.max_rutinas, models.Rutina, models.Rutina.activo == True),
+        "usuarios_staff": (plan.max_usuarios_staff, models.Usuario, models.Usuario.activo == True),
+    }
+    if recurso not in mapa:
+        return
+
+    limite, modelo, filtro_extra = mapa[recurso]
+    if limite == 0:  # 0 = ilimitado
+        return
+
+    actual = db.query(func.count(modelo.id)).filter(
+        modelo.gimnasio_id == gid, filtro_extra
+    ).scalar() or 0
+
+    if actual >= limite:
+        nombres = {"clientes": "clientes", "productos": "productos", "rutinas": "rutinas", "usuarios_staff": "usuarios de staff"}
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tu plan ({plan.nombre}) permite maximo {limite} {nombres[recurso]}. "
+                   f"Actualmente tienes {actual}. Actualiza tu plan para agregar mas.",
+        )
+
+
+def _validar_nutricion_habilitada(db: Session, usuario: models.Usuario):
+    """Lanza 403 si el plan del gimnasio no tiene nutricion habilitada."""
+    gid = get_gid(usuario)
+    if not gid:
+        return
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
+    if not gimnasio or not gimnasio.plan_id:
+        return
+    plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == gimnasio.plan_id).first()
+    if not plan:
+        return
+    if not plan.nutricion_habilitada:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tu plan ({plan.nombre}) no incluye el modulo de nutricion. Actualiza tu plan para acceder a esta funcionalidad.",
+        )
+
+
+def _detectar_delimitador(primera_linea: str) -> str:
+    """
+    Detecta el separador de un CSV/TSV subido. Excel en espanol
+    (Peru y la mayoria de LatAm) exporta CSV con punto y coma (;)
+    por defecto, no coma - si no se detecta, ninguna columna hace
+    match y TODAS las filas se leen vacias (se ven como si todo
+    fuera invalido/duplicado sin ningun error claro). Se prioriza
+    tab > punto y coma > coma, contando ocurrencias reales en vez
+    de solo verificar presencia, para no confundirse con texto
+    libre que traiga una coma suelta.
+    """
+    if "\t" in primera_linea:
+        return "\t"
+    conteo_pyc = primera_linea.count(";")
+    conteo_coma = primera_linea.count(",")
+    if conteo_pyc > conteo_coma:
+        return ";"
+    return ","
+
+# ========================================================
+# ARCHIVOS SUBIDOS (fotos de clientes, productos, etc.)
+# ========================================================
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+FOTOS_CLIENTES_DIR = os.path.join(UPLOADS_DIR, "clientes")
+FOTOS_PRODUCTOS_DIR = os.path.join(UPLOADS_DIR, "productos")
+os.makedirs(FOTOS_CLIENTES_DIR, exist_ok=True)
+os.makedirs(FOTOS_PRODUCTOS_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+EXTENSIONES_IMAGEN_PERMITIDAS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+TAMANO_MAXIMO_FOTO_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str) -> str:
+    if content_type not in EXTENSIONES_IMAGEN_PERMITIDAS:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPEG, PNG o WEBP")
+    if len(contenido) > TAMANO_MAXIMO_FOTO_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el tamano maximo de 5MB")
+    extension = EXTENSIONES_IMAGEN_PERMITIDAS[content_type]
+    nombre_archivo = f"{uuid.uuid4().hex}{extension}"
+    ruta_destino = os.path.join(directorio, nombre_archivo)
+    with open(ruta_destino, "wb") as f:
+        f.write(contenido)
+    carpeta = os.path.basename(directorio)
+    return f"/uploads/{carpeta}/{nombre_archivo}"
+
+
+def _eliminar_foto_anterior(foto_url: Optional[str]):
+    if not foto_url:
+        return
+    ruta = os.path.join(os.path.dirname(__file__), foto_url.lstrip("/"))
+    if os.path.isfile(ruta):
+        try:
+            os.remove(ruta)
+        except OSError:
+            pass
+
+# ========================================================
+# CORS - permite que los frontends (staff y alumno) se conecten
+# ========================================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def _migrar_columnas_nuevas():
+    """
+    SQLAlchemy's create_all no altera tablas existentes, asi que en
+    una base de datos ya creada agregamos aqui, de forma
+    idempotente, las columnas nuevas que se fueron sumando al
+    modelo (evita tener que borrar la BD en cada despliegue).
+    Soporta SQLite (PRAGMA) y PostgreSQL (information_schema).
+    """
+    from sqlalchemy import text, inspect as sa_inspect
+
+    es_sqlite = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
+
+    def _columnas_existentes(conn, tabla):
+        if es_sqlite:
+            return {fila[1] for fila in conn.execute(text(f"PRAGMA table_info({tabla})"))}
+        else:
+            filas = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                f"WHERE table_name = '{tabla}'"
+            ))
+            return {fila[0] for fila in filas}
+
+    def _tipo_pg(definicion_sql):
+        """Convierte tipos SQLite a PostgreSQL."""
+        d = definicion_sql.upper()
+        if "BOOLEAN" in d:
+            default = "DEFAULT FALSE" if "DEFAULT 0" in d else ("DEFAULT TRUE" if "DEFAULT 1" in d else "")
+            return f"BOOLEAN {default}".strip()
+        if "FLOAT" in d:
+            val = definicion_sql.split("DEFAULT")[-1].strip() if "DEFAULT" in definicion_sql else ""
+            return f"DOUBLE PRECISION DEFAULT {val}" if val else "DOUBLE PRECISION"
+        if "INTEGER" in d:
+            val = definicion_sql.split("DEFAULT")[-1].strip() if "DEFAULT" in definicion_sql else ""
+            return f"INTEGER DEFAULT {val}" if val else "INTEGER"
+        if "VARCHAR" in d or "TEXT" in d:
+            val = definicion_sql.split("DEFAULT")[-1].strip() if "DEFAULT" in definicion_sql else ""
+            tipo_base = "TEXT" if "TEXT" in d else "VARCHAR"
+            return f"{tipo_base} DEFAULT {val}" if val else tipo_base
+        if "DATE" in d:
+            return "DATE"
+        return definicion_sql
+
+    columnas_esperadas = {
+        "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
+        "clientes": [
+            ("foto_url", "VARCHAR"),
+            ("genero", "VARCHAR"),
+            ("fecha_renovacion", "DATE"),
+            ("fecha_vencimiento", "DATE"),
+            ("membresia_texto", "VARCHAR"),
+            ("asistencias_legado", "INTEGER DEFAULT 0"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "productos": [("foto_url", "VARCHAR"), ("gimnasio_id", "INTEGER")],
+        "planes_nutricion": [("origen", "VARCHAR DEFAULT 'membresia'"), ("gimnasio_id", "INTEGER")],
+        "ventas": [("usuario_id", "INTEGER"), ("costo_comision_gym", "FLOAT DEFAULT 0.0"), ("gimnasio_id", "INTEGER")],
+        "empleados": [
+            ("dni", "VARCHAR"),
+            ("fecha_nacimiento", "DATE"),
+            ("puesto", "VARCHAR"),
+            ("codigo_acceso", "VARCHAR"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "configuracion": [
+            ("dias_aviso_vencimiento", "INTEGER DEFAULT 7"),
+            ("comision_producto_porcentaje", "FLOAT DEFAULT 0.0"),
+            ("tema", "VARCHAR DEFAULT 'lavanda'"),
+            ("modo_tema", "VARCHAR DEFAULT 'claro'"),
+            ("clausulas_contrato", "TEXT"),
+            ("medidas_campos_visibles", "TEXT"),
+            ("medidas_valores_visibles", "TEXT"),
+        ],
+        "usuarios": [
+            ("es_administrador", "BOOLEAN DEFAULT 1"),
+            ("es_superadmin", "BOOLEAN DEFAULT 0"),
+            ("puede_eliminar", "BOOLEAN DEFAULT 1"),
+            ("puede_exportar", "BOOLEAN DEFAULT 0"),
+            ("zonas_permitidas", "VARCHAR"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "membresias": [
+            ("duracion_meses", "INTEGER"),
+            ("duracion_dias_extra", "INTEGER"),
+            ("monto_inicial", "FLOAT"),
+            ("fracciones_pago_deuda", "INTEGER"),
+            ("penalizacion", "FLOAT"),
+            ("dias_gracia_pago", "INTEGER"),
+            ("monto_mensual", "FLOAT"),
+            ("dias_congelamiento", "INTEGER"),
+            ("permite_congelamiento", "BOOLEAN DEFAULT 1"),
+            ("dias_acceso_periodo", "INTEGER"),
+            ("hora_inicio_acceso", "VARCHAR DEFAULT '00:00'"),
+            ("hora_fin_acceso", "VARCHAR DEFAULT '24:00'"),
+            ("dias_semana_acceso", "VARCHAR DEFAULT 'dom,lun,mar,mie,jue,vie,sab'"),
+            ("password_tarifa", "VARCHAR"),
+            ("congelado_no_aparece_pagos", "BOOLEAN DEFAULT 0"),
+            ("no_aparecer_reporte_cruce_medidas", "BOOLEAN DEFAULT 0"),
+            ("incluye_nutricion", "BOOLEAN DEFAULT 0"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "clases_dictadas": [
+            ("serie_id", "VARCHAR"),
+            ("profesor_reemplazo_id", "INTEGER"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "pagos_planilla": [
+            ("desde", "DATE"),
+            ("hasta", "DATE"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        # clientes_extra: ya fusionado arriba en la entrada "clientes"
+        "rutina_ejercicios": [("tipo_ejercicio_id", "INTEGER")],
+        "comidas_plan": [("alimento_id", "INTEGER"), ("cantidad_gramos", "FLOAT")],
+        "pagos_servicio": [("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
+        "cargos_servicio": [
+            ("recurrente_tipo", "VARCHAR"),
+            ("recurrente_dias_semana", "VARCHAR"),
+            ("serie_id", "VARCHAR"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "tipos_ejercicio": [
+            ("categoria", "VARCHAR"),
+            ("equipamiento", "VARCHAR"),
+            ("nivel", "VARCHAR"),
+            ("genero_recomendado", "VARCHAR DEFAULT 'todos'"),
+            ("objetivo", "VARCHAR"),
+            ("imagen_url_2", "VARCHAR"),
+            ("imagen_url_3", "VARCHAR"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "alimentos": [
+            ("porcion_casera", "VARCHAR"),
+            ("gimnasio_id", "INTEGER"),
+        ],
+        "clientes_historicos": [("gimnasio_id", "INTEGER")],
+        "compras": [("gimnasio_id", "INTEGER")],
+        "asistencias": [("gimnasio_id", "INTEGER")],
+        "progresos": [("gimnasio_id", "INTEGER")],
+        "rutinas": [("gimnasio_id", "INTEGER")],
+        "paquetes_nutricion": [("gimnasio_id", "INTEGER")],
+        "retos": [("gimnasio_id", "INTEGER")],
+        "puestos": [("gimnasio_id", "INTEGER")],
+        "servicios": [("gimnasio_id", "INTEGER")],
+        "gastos": [("gimnasio_id", "INTEGER")],
+        "metas_mensuales": [("gimnasio_id", "INTEGER")],
+        "tramos_comision": [("gimnasio_id", "INTEGER")],
+        "medidas": [("gimnasio_id", "INTEGER")],
+    }
+    with engine.connect() as conn:
+        for tabla, columnas in columnas_esperadas.items():
+            try:
+                existentes = _columnas_existentes(conn, tabla)
+            except Exception:
+                continue  # tabla puede no existir aún
+            for nombre_columna, definicion_sql in columnas:
+                if nombre_columna not in existentes:
+                    tipo = definicion_sql if es_sqlite else _tipo_pg(definicion_sql)
+                    try:
+                        conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {nombre_columna} {tipo}"))
+                    except Exception:
+                        pass  # columna ya existe o tipo incompatible
+        conn.commit()
+
+
+def _sembrar_gimnasio_default():
+    """
+    Garantiza que exista un Gimnasio con id=1 (el 'default' para la
+    instalacion actual). Tambien asigna gimnasio_id=1 a todos los
+    registros existentes que aun tengan gimnasio_id=NULL, de forma
+    idempotente. Esto permite que la base de datos ya existente
+    funcione correctamente despues de la migracion multi-tenant.
+    """
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        # 1. Crear el plan Free si no existe
+        plan = db.query(models.PlanSaas).filter_by(nombre="Free").first()
+        if not plan:
+            plan = models.PlanSaas(
+                nombre="Free",
+                precio_mensual=0.0,
+                max_clientes=50,
+                max_productos=20,
+                max_rutinas=10,
+                max_usuarios_staff=1,
+                nutricion_habilitada=False,
+                reportes_avanzados=False,
+                dominio_propio=False,
+            )
+            db.add(plan)
+            db.flush()
+
+        plan_pro = db.query(models.PlanSaas).filter_by(nombre="Pro").first()
+        if not plan_pro:
+            plan_pro = models.PlanSaas(
+                nombre="Pro",
+                precio_mensual=49.0,
+                max_clientes=0,
+                max_productos=0,
+                max_rutinas=0,
+                max_usuarios_staff=0,
+                nutricion_habilitada=True,
+                reportes_avanzados=True,
+                dominio_propio=True,
+            )
+            db.add(plan_pro)
+            db.flush()
+
+        # 2. Crear el gimnasio default si no existe
+        gimnasio = db.query(models.Gimnasio).filter_by(id=1).first()
+        if not gimnasio:
+            # Leer configuracion existente para no perder datos
+            cfg = db.execute(text("SELECT * FROM configuracion LIMIT 1")).fetchone()
+            gimnasio = models.Gimnasio(
+                nombre="Mi Gimnasio",
+                slug="mi-gimnasio",
+                plan_id=plan_pro.id,  # tu instalacion actual va en Pro
+                activo=True,
+                moneda=cfg.moneda if cfg and hasattr(cfg, 'moneda') else "S/",
+                comision_tarjeta=cfg.comision_tarjeta if cfg and hasattr(cfg, 'comision_tarjeta') else 3.5,
+                comision_qr=cfg.comision_qr if cfg and hasattr(cfg, 'comision_qr') else 2.0,
+                dias_aviso_vencimiento=cfg.dias_aviso_vencimiento if cfg and hasattr(cfg, 'dias_aviso_vencimiento') else 7,
+                comision_producto_porcentaje=cfg.comision_producto_porcentaje if cfg and hasattr(cfg, 'comision_producto_porcentaje') else 0.0,
+                tema=cfg.tema if cfg and hasattr(cfg, 'tema') else "lavanda",
+                modo_tema=cfg.modo_tema if cfg and hasattr(cfg, 'modo_tema') else "claro",
+                clausulas_contrato=cfg.clausulas_contrato if cfg and hasattr(cfg, 'clausulas_contrato') else None,
+                medidas_campos_visibles=cfg.medidas_campos_visibles if cfg and hasattr(cfg, 'medidas_campos_visibles') else None,
+                medidas_valores_visibles=cfg.medidas_valores_visibles if cfg and hasattr(cfg, 'medidas_valores_visibles') else None,
+            )
+            db.add(gimnasio)
+            db.flush()
+        db.commit()
+
+        # 3. Asignar gimnasio_id=1 a todos los registros NULL (idempotente)
+        tablas_raiz = [
+            "usuarios", "clientes", "clientes_historicos", "membresias",
+            "productos", "ventas", "compras", "asistencias", "progresos",
+            "tipos_ejercicio", "rutinas", "planes_nutricion", "alimentos",
+            "paquetes_nutricion", "retos", "puestos", "empleados",
+            "clases_dictadas", "pagos_planilla", "servicios", "cargos_servicio",
+            "gastos", "metas_mensuales", "tramos_comision", "medidas",
+        ]
+        with engine.connect() as conn:
+            for tabla in tablas_raiz:
+                try:
+                    conn.execute(text(
+                        f"UPDATE {tabla} SET gimnasio_id = 1 WHERE gimnasio_id IS NULL"
+                    ))
+                except Exception:
+                    pass  # tabla puede no existir aun en una BD nueva
+            conn.commit()
+
+        # 4. Marcar al primer admin como superadmin (idempotente)
+        primer_admin = db.query(models.Usuario).filter(
+            models.Usuario.gimnasio_id == 1,
+            models.Usuario.es_administrador == True,
+        ).first()
+        if primer_admin:
+            primer_admin.es_superadmin = True
+            db.commit()
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+def startup_event():
+    models.Base.metadata.create_all(bind=engine)
+    _migrar_columnas_nuevas()
+    _sembrar_gimnasio_default()  # garantiza que exista el gimnasio 1 y asigna data existente
+    _sembrar_puestos_iniciales()
+    _sembrar_ejercicios_catalogo()
+    _sembrar_alimentos_iniciales()
+    _sembrar_alimentos_expansion_lima()
+    _sembrar_alimentos_expansion_lima_2()
+    _sembrar_paquetes_nutricion_iniciales()
+    _sembrar_paquetes_nutricion_variantes()
+    _sembrar_servicios_iniciales()
+    _sembrar_porciones_caseras()
+
+
+def _sembrar_ejercicios_catalogo():
+    """Precarga el catalogo de ejercicios con categoria, equipamiento, nivel, genero y objetivo para sugerencia automatica."""
+    db = SessionLocal()
+    try:
+        existentes_count = db.query(models.TipoEjercicio).count()
+        # Solo saltar si ya hay ejercicios CON categoria poblada (no
+        # solo los del catalogo viejo que no la tienen).
+        con_categoria = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.categoria.isnot(None)).count()
+        if con_categoria >= 60:
+            return  # ya sembrado
+        _EJERCICIOS = [
+            # CALENTAMIENTO
+            ("Saltos de tijera", "Cuerpo completo", "calentamiento", "sin_equipo", "principiante", "todos", "bajar_peso"),
+            ("Saltar cuerda basico", "Cuerpo completo", "calentamiento", "cuerda", "principiante", "todos", "bajar_peso"),
+            ("Saltar cuerda doble", "Cuerpo completo", "calentamiento", "cuerda", "intermedio", "todos", "bajar_peso"),
+            ("Saltar cuerda cruzada", "Cuerpo completo", "calentamiento", "cuerda", "avanzado", "todos", "tonificar"),
+            ("Trote en el sitio", "Piernas", "calentamiento", "sin_equipo", "principiante", "todos", "bajar_peso"),
+            ("Step basico subir y bajar", "Piernas", "calentamiento", "step", "principiante", "todos", "bajar_peso"),
+            ("Step lateral", "Piernas", "calentamiento", "step", "principiante", "todos", "tonificar"),
+            ("Step con rodillazo", "Piernas", "calentamiento", "step", "intermedio", "todos", "tonificar"),
+            ("Step con patada", "Piernas", "calentamiento", "step", "intermedio", "femenino", "tonificar"),
+            ("Circulos de cadera con pelota", "Core", "calentamiento", "pelota", "principiante", "femenino", "flexibilidad"),
+            ("Pase de pelota alrededor del cuerpo", "Core", "calentamiento", "pelota", "principiante", "todos", "flexibilidad"),
+            ("Pelota overhead squat", "Cuerpo completo", "calentamiento", "pelota", "intermedio", "todos", "tonificar"),
+            ("Rotacion de tronco con pelota", "Core", "calentamiento", "pelota", "principiante", "todos", "flexibilidad"),
+            # CARDIO
+            ("Burpees", "Cuerpo completo", "cardio", "sin_equipo", "intermedio", "todos", "bajar_peso"),
+            ("Mountain climbers", "Core", "cardio", "sin_equipo", "intermedio", "todos", "bajar_peso"),
+            ("Sentadilla con salto", "Piernas", "cardio", "sin_equipo", "intermedio", "todos", "bajar_peso"),
+            ("Rodillazos altos", "Core", "cardio", "sin_equipo", "principiante", "todos", "bajar_peso"),
+            ("Patinadores laterales", "Piernas", "cardio", "sin_equipo", "intermedio", "todos", "tonificar"),
+            ("Box jump (step alto)", "Piernas", "cardio", "step", "avanzado", "todos", "ganar_masa"),
+            ("Step up con mancuerna", "Piernas", "cardio", "step", "intermedio", "todos", "tonificar"),
+            # FUERZA - TREN SUPERIOR
+            ("Press de banca con barra", "Pecho", "fuerza", "barra", "intermedio", "masculino", "ganar_masa"),
+            ("Press inclinado con mancuernas", "Pecho", "fuerza", "mancuernas", "intermedio", "todos", "ganar_masa"),
+            ("Aperturas con mancuernas", "Pecho", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Flexiones de pecho", "Pecho", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Flexiones diamante", "Triceps", "fuerza", "sin_equipo", "avanzado", "masculino", "ganar_masa"),
+            ("Remo con barra", "Espalda", "fuerza", "barra", "intermedio", "todos", "ganar_masa"),
+            ("Remo con mancuerna", "Espalda", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Jalon al pecho (maquina)", "Espalda", "fuerza", "maquina", "principiante", "todos", "tonificar"),
+            ("Dominadas", "Espalda", "fuerza", "barra", "avanzado", "masculino", "ganar_masa"),
+            ("Press militar con mancuernas", "Hombros", "fuerza", "mancuernas", "intermedio", "todos", "ganar_masa"),
+            ("Elevaciones laterales", "Hombros", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Elevaciones frontales", "Hombros", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Curl de biceps con mancuernas", "Biceps", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Curl con barra", "Biceps", "fuerza", "barra", "intermedio", "masculino", "ganar_masa"),
+            ("Extension de triceps con mancuerna", "Triceps", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Fondos en paralelas", "Triceps", "fuerza", "sin_equipo", "avanzado", "masculino", "ganar_masa"),
+            ("Press en maquina de pecho", "Pecho", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            ("Remo en maquina", "Espalda", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            # FUERZA - TREN INFERIOR
+            ("Sentadilla con barra", "Piernas", "fuerza", "barra", "intermedio", "todos", "ganar_masa"),
+            ("Sentadilla copa con mancuerna", "Piernas", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Prensa de piernas (maquina)", "Piernas", "fuerza", "maquina", "principiante", "todos", "ganar_masa"),
+            ("Extension de cuadriceps (maquina)", "Piernas", "fuerza", "maquina", "principiante", "todos", "tonificar"),
+            ("Curl de femoral (maquina)", "Piernas", "fuerza", "maquina", "principiante", "todos", "tonificar"),
+            ("Peso muerto rumano con barra", "Piernas", "fuerza", "barra", "intermedio", "todos", "ganar_masa"),
+            ("Peso muerto rumano con mancuernas", "Piernas", "fuerza", "mancuernas", "principiante", "femenino", "tonificar"),
+            ("Zancadas con mancuernas", "Piernas", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
+            ("Hip thrust con barra", "Gluteos", "fuerza", "barra", "intermedio", "femenino", "ganar_masa"),
+            ("Hip thrust en maquina", "Gluteos", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            ("Abduccion de cadera (maquina)", "Gluteos", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            ("Elevacion de talones (pantorrilla)", "Piernas", "fuerza", "maquina", "principiante", "todos", "tonificar"),
+            ("Sentadilla bulgara", "Piernas", "fuerza", "mancuernas", "avanzado", "todos", "ganar_masa"),
+            ("Patada de gluteo en polea", "Gluteos", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            # CORE
+            ("Plancha frontal", "Core", "fuerza", "colchoneta", "principiante", "todos", "tonificar"),
+            ("Plancha lateral", "Core", "fuerza", "colchoneta", "intermedio", "todos", "tonificar"),
+            ("Crunch abdominal", "Core", "fuerza", "colchoneta", "principiante", "todos", "tonificar"),
+            ("Crunch con pelota", "Core", "fuerza", "pelota", "principiante", "todos", "tonificar"),
+            ("Russian twist", "Core", "fuerza", "colchoneta", "intermedio", "todos", "tonificar"),
+            ("Russian twist con pelota", "Core", "fuerza", "pelota", "intermedio", "todos", "tonificar"),
+            ("Elevacion de piernas", "Core", "fuerza", "colchoneta", "intermedio", "todos", "tonificar"),
+            ("Bicicleta abdominal", "Core", "fuerza", "colchoneta", "principiante", "todos", "bajar_peso"),
+            ("Pelota entre rodillas squeeze", "Core", "fuerza", "pelota", "principiante", "femenino", "tonificar"),
+            # FUNCIONAL
+            ("Kettlebell swing", "Cuerpo completo", "funcional", "mancuernas", "intermedio", "todos", "bajar_peso"),
+            ("Thruster con mancuernas", "Cuerpo completo", "funcional", "mancuernas", "intermedio", "todos", "ganar_masa"),
+            ("Clean and press con mancuerna", "Cuerpo completo", "funcional", "mancuernas", "avanzado", "todos", "ganar_masa"),
+            ("Battle ropes", "Cuerpo completo", "funcional", "cuerda", "intermedio", "todos", "bajar_peso"),
+            ("Wall ball con pelota", "Cuerpo completo", "funcional", "pelota", "intermedio", "todos", "tonificar"),
+            ("Sentadilla con banda elastica", "Piernas", "funcional", "banda", "principiante", "femenino", "tonificar"),
+            ("Caminata lateral con banda", "Gluteos", "funcional", "banda", "principiante", "femenino", "tonificar"),
+            ("Pull apart con banda", "Espalda", "funcional", "banda", "principiante", "todos", "tonificar"),
+            # ESTIRAMIENTO
+            ("Estiramiento de cuadriceps de pie", "Piernas", "estiramiento", "sin_equipo", "principiante", "todos", "flexibilidad"),
+            ("Estiramiento de isquiotibiales", "Piernas", "estiramiento", "colchoneta", "principiante", "todos", "flexibilidad"),
+            ("Estiramiento de pecho en pared", "Pecho", "estiramiento", "sin_equipo", "principiante", "todos", "flexibilidad"),
+            ("Estiramiento de espalda (gato-vaca)", "Espalda", "estiramiento", "colchoneta", "principiante", "todos", "flexibilidad"),
+            ("Estiramiento de hombros", "Hombros", "estiramiento", "sin_equipo", "principiante", "todos", "flexibilidad"),
+            ("Pelota de estabilidad estiramiento de espalda", "Espalda", "estiramiento", "pelota", "principiante", "todos", "flexibilidad"),
+            ("Estiramiento de cadera con pelota", "Piernas", "estiramiento", "pelota", "principiante", "femenino", "flexibilidad"),
+            ("Estiramiento de pantorrilla en step", "Piernas", "estiramiento", "step", "principiante", "todos", "flexibilidad"),
+        ]
+        nombres_existentes = {t.nombre for t in db.query(models.TipoEjercicio).all()}
+        nuevos = 0
+        for nombre, grupo, cat, equip, nivel, genero, obj in _EJERCICIOS:
+            if nombre in nombres_existentes:
+                continue
+            db.add(models.TipoEjercicio(
+                nombre=nombre, grupo_muscular=grupo, categoria=cat,
+                equipamiento=equip, nivel=nivel, genero_recomendado=genero, objetivo=obj,
+            ))
+            nuevos += 1
+        if nuevos:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_alimentos_iniciales():
+    """La primera vez (tabla alimentos vacia), precarga un catalogo base de alimentos peruanos comunes con su valor nutricional aproximado por 100g, editable despues desde Nutricion."""
+    db = SessionLocal()
+    try:
+        if db.query(models.Alimento).first():
+            return
+        # (nombre, categoria, calorias, proteinas_g, carbohidratos_g, grasas_g, fibra_g) por 100g
+        iniciales = [
+            ("Pechuga de pollo a la plancha", models.CategoriaAlimento.PROTEINA, 165, 31.0, 0.0, 3.6, 0.0),
+            ("Filete de pescado (bonito)", models.CategoriaAlimento.PROTEINA, 140, 26.0, 0.0, 4.0, 0.0),
+            ("Huevo", models.CategoriaAlimento.PROTEINA, 155, 13.0, 1.1, 11.0, 0.0),
+            ("Lomo de res", models.CategoriaAlimento.PROTEINA, 250, 26.0, 0.0, 17.0, 0.0),
+            ("Atun en agua", models.CategoriaAlimento.PROTEINA, 116, 26.0, 0.0, 1.0, 0.0),
+            ("Queso fresco", models.CategoriaAlimento.LACTEO, 264, 18.0, 3.4, 21.0, 0.0),
+            ("Leche descremada", models.CategoriaAlimento.LACTEO, 35, 3.4, 5.0, 0.1, 0.0),
+            ("Yogurt natural", models.CategoriaAlimento.LACTEO, 61, 3.5, 4.7, 3.3, 0.0),
+            ("Arroz blanco cocido", models.CategoriaAlimento.CARBOHIDRATO, 130, 2.7, 28.0, 0.3, 0.4),
+            ("Papa sancochada", models.CategoriaAlimento.CARBOHIDRATO, 87, 1.9, 20.0, 0.1, 1.8),
+            ("Camote", models.CategoriaAlimento.CARBOHIDRATO, 86, 1.6, 20.0, 0.1, 3.0),
+            ("Quinua cocida", models.CategoriaAlimento.CARBOHIDRATO, 120, 4.4, 21.3, 1.9, 2.8),
+            ("Avena cocida", models.CategoriaAlimento.CARBOHIDRATO, 68, 2.4, 12.0, 1.4, 1.7),
+            ("Pan integral", models.CategoriaAlimento.CARBOHIDRATO, 247, 13.0, 41.0, 4.2, 7.0),
+            ("Choclo (maiz)", models.CategoriaAlimento.CARBOHIDRATO, 96, 3.4, 21.0, 1.5, 2.4),
+            ("Yuca sancochada", models.CategoriaAlimento.CARBOHIDRATO, 160, 1.4, 38.0, 0.3, 1.8),
+            ("Lentejas cocidas", models.CategoriaAlimento.LEGUMBRE, 116, 9.0, 20.0, 0.4, 7.9),
+            ("Frijol canario cocido", models.CategoriaAlimento.LEGUMBRE, 127, 8.7, 22.8, 0.5, 6.4),
+            ("Garbanzo cocido", models.CategoriaAlimento.LEGUMBRE, 164, 8.9, 27.4, 2.6, 7.6),
+            ("Palta (aguacate)", models.CategoriaAlimento.GRASA, 160, 2.0, 8.5, 14.7, 6.7),
+            ("Aceite de oliva", models.CategoriaAlimento.GRASA, 884, 0.0, 0.0, 100.0, 0.0),
+            ("Mani", models.CategoriaAlimento.GRASA, 567, 25.8, 16.1, 49.2, 8.5),
+            ("Platano de seda", models.CategoriaAlimento.FRUTA, 89, 1.1, 23.0, 0.3, 2.6),
+            ("Manzana", models.CategoriaAlimento.FRUTA, 52, 0.3, 14.0, 0.2, 2.4),
+            ("Papaya", models.CategoriaAlimento.FRUTA, 43, 0.5, 11.0, 0.3, 1.7),
+            ("Naranja", models.CategoriaAlimento.FRUTA, 47, 0.9, 12.0, 0.1, 2.4),
+            ("Ensalada de vegetales frescos", models.CategoriaAlimento.VEGETAL, 20, 1.2, 4.0, 0.2, 1.8),
+            ("Brocoli cocido", models.CategoriaAlimento.VEGETAL, 35, 2.4, 7.0, 0.4, 3.3),
+            ("Espinaca cocida", models.CategoriaAlimento.VEGETAL, 23, 2.9, 3.6, 0.4, 2.2),
+            ("Zanahoria", models.CategoriaAlimento.VEGETAL, 41, 0.9, 10.0, 0.2, 2.8),
+        ]
+        for nombre, categoria, cal, prot, carb, gras, fibra in iniciales:
+            db.add(models.Alimento(
+                nombre=nombre, categoria=categoria, porcion_gramos=100.0,
+                calorias=cal, proteinas_g=prot, carbohidratos_g=carb, grasas_g=gras, fibra_g=fibra,
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_paquetes_nutricion_iniciales():
+    """
+    La primera vez (tabla paquetes_nutricion vacia), precarga un
+    catalogo amplio de paquetes de desayuno/almuerzo/cena para cada
+    proposito (bajar de peso, ganar masa, mantenimiento, definicion),
+    cada uno en 3 tamanos de porcion (reducida/estandar/amplia).
+
+    No se duplican paquetes por genero/edad de forma explicita: el
+    algoritmo de /nutricion/generar-automatico calcula el gasto
+    calorico real del cliente (que ya varia solo por sexo, edad,
+    peso y estatura via la formula de Mifflin-St Jeor) y elige, de
+    estas 3 porciones, la que mas se acerque a lo que ese cliente
+    necesita - cubriendo asi todo el espectro de hombres y mujeres
+    de distintas edades y contexturas con un catalogo manejable.
+    """
+    db = SessionLocal()
+    try:
+        if db.query(models.PaqueteNutricion).first():
+            return
+
+        alimentos = {a.nombre: a for a in db.query(models.Alimento).all()}
+
+        def _crear_paquete(nombre, tipo_comida, proposito, notas, receta_base, factor):
+            items = []
+            for nombre_alimento, gramos in receta_base:
+                alimento = alimentos.get(nombre_alimento)
+                if not alimento:
+                    continue
+                items.append(models.PaqueteAlimento(alimento_id=alimento.id, cantidad_gramos=round(gramos * factor, 1)))
+            if not items:
+                return
+            db.add(models.PaqueteNutricion(nombre=nombre, tipo_comida=tipo_comida, proposito=proposito, notas=notas, items=items))
+
+        PROP = models.PropositoNutricion
+        TC = models.TipoComida
+
+        # (tipo_comida, proposito, etiqueta, notas, receta base en gramos @ porcion "estandar")
+        RECETAS = [
+            (TC.DESAYUNO, PROP.BAJAR_PESO, "Desayuno ligero proteico",
+             "Bajo en carbohidratos, alto en proteina y fibra para saciar con pocas calorias.",
+             [("Huevo", 100), ("Espinaca cocida", 80), ("Papaya", 150)]),
+            (TC.DESAYUNO, PROP.GANAR_MASA, "Desayuno energetico",
+             "Alto en carbohidratos y calorias para sumar al superavit calorico del dia.",
+             [("Avena cocida", 250), ("Platano de seda", 120), ("Mani", 30), ("Leche descremada", 200)]),
+            (TC.DESAYUNO, PROP.MANTENIMIENTO, "Desayuno balanceado",
+             "Combinacion equilibrada de carbohidratos, proteina y grasas saludables.",
+             [("Pan integral", 60), ("Palta (aguacate)", 50), ("Huevo", 50), ("Naranja", 130)]),
+            (TC.DESAYUNO, PROP.DEFINICION, "Desayuno alto en proteina",
+             "Proteina alta y carbohidratos moderados para conservar masa muscular en deficit leve.",
+             [("Huevo", 150), ("Avena cocida", 120), ("Manzana", 130), ("Yogurt natural", 100)]),
+
+            (TC.COMIDA, PROP.BAJAR_PESO, "Almuerzo ligero",
+             "Proteina magra con vegetales y una porcion controlada de carbohidrato.",
+             [("Pechuga de pollo a la plancha", 150), ("Ensalada de vegetales frescos", 200), ("Camote", 100)]),
+            (TC.COMIDA, PROP.GANAR_MASA, "Almuerzo completo",
+             "Alto aporte calorico con proteina, carbohidratos y grasas para ganar masa.",
+             [("Lomo de res", 180), ("Arroz blanco cocido", 250), ("Frijol canario cocido", 150), ("Palta (aguacate)", 50)]),
+            (TC.COMIDA, PROP.MANTENIMIENTO, "Almuerzo balanceado",
+             "Pescado, quinua y vegetales en porciones equilibradas.",
+             [("Filete de pescado (bonito)", 150), ("Quinua cocida", 150), ("Brocoli cocido", 150)]),
+            (TC.COMIDA, PROP.DEFINICION, "Almuerzo alto en proteina",
+             "Proteina alta, carbohidrato moderado y vegetales para definicion muscular.",
+             [("Pechuga de pollo a la plancha", 180), ("Choclo (maiz)", 100), ("Ensalada de vegetales frescos", 200)]),
+
+            (TC.CENA, PROP.BAJAR_PESO, "Cena ligera",
+             "Cena baja en calorias, alta en proteina y vegetales.",
+             [("Filete de pescado (bonito)", 130), ("Espinaca cocida", 150), ("Zanahoria", 100)]),
+            (TC.CENA, PROP.GANAR_MASA, "Cena reforzada",
+             "Cena con buen aporte calorico para sostener el superavit diario.",
+             [("Atun en agua", 150), ("Camote", 200), ("Palta (aguacate)", 60), ("Ensalada de vegetales frescos", 100)]),
+            (TC.CENA, PROP.MANTENIMIENTO, "Cena balanceada",
+             "Combinacion moderada de proteina, carbohidrato y vegetales.",
+             [("Huevo", 100), ("Yuca sancochada", 120), ("Brocoli cocido", 120)]),
+            (TC.CENA, PROP.DEFINICION, "Cena alta en proteina",
+             "Proteina alta y carbohidrato bajo, ideal para la noche en definicion.",
+             [("Atun en agua", 150), ("Espinaca cocida", 150), ("Garbanzo cocido", 100)]),
+        ]
+
+        NIVELES = [("porcion reducida", 0.75), ("porcion estandar", 1.0), ("porcion amplia", 1.35), ("porcion extra amplia", 1.85)]
+
+        for tipo_comida, proposito, etiqueta, notas, receta in RECETAS:
+            for sufijo, factor in NIVELES:
+                _crear_paquete(f"{etiqueta} ({sufijo})", tipo_comida, proposito, notas, receta, factor)
+
+        db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_paquetes_nutricion_variantes():
+    """
+    Segunda tanda de recetas (una mas por cada combinacion tipo de
+    comida x proposito), usando ingredientes distintos a los de la
+    primera tanda para dar mas variedad real (pescados variados,
+    mas verduras, mas fuentes de carbohidrato) y evitar que el
+    cliente coma siempre lo mismo. Idempotente por nombre de paquete
+    (revisa si ya existe antes de crear), para poder correr sin
+    duplicar aunque el catalogo de paquetes ya tenga datos.
+    """
+    db = SessionLocal()
+    try:
+        alimentos = {a.nombre: a for a in db.query(models.Alimento).all()}
+        existentes = {p.nombre for p in db.query(models.PaqueteNutricion).all()}
+
+        def _crear_si_no_existe(nombre, tipo_comida, proposito, notas, receta_base, factor):
+            if nombre in existentes:
+                return
+            items = []
+            for nombre_alimento, gramos in receta_base:
+                alimento = alimentos.get(nombre_alimento)
+                if not alimento:
+                    continue
+                items.append(models.PaqueteAlimento(alimento_id=alimento.id, cantidad_gramos=round(gramos * factor, 1)))
+            if not items:
+                return
+            db.add(models.PaqueteNutricion(nombre=nombre, tipo_comida=tipo_comida, proposito=proposito, notas=notas, items=items))
+            existentes.add(nombre)
+
+        PROP = models.PropositoNutricion
+        TC = models.TipoComida
+
+        RECETAS_V2 = [
+            (TC.DESAYUNO, PROP.BAJAR_PESO, "Desayuno frutal proteico",
+             "Yogur griego (mas proteina, menos calorias que el yogurt normal) con fruta y semillas de chia.",
+             [("Yogur griego sin azucar", 150), ("Fresa", 100), ("Semillas de chia", 15)]),
+            (TC.DESAYUNO, PROP.GANAR_MASA, "Desayuno fuerza",
+             "Avena con frutos secos y leche entera para un desayuno alto en calorias.",
+             [("Avena cocida", 200), ("Almendras", 30), ("Leche entera", 200)]),
+            (TC.DESAYUNO, PROP.MANTENIMIENTO, "Desayuno tradicional",
+             "Huevo con camote y naranja, combinacion sencilla y balanceada.",
+             [("Huevo", 100), ("Camote", 150), ("Naranja", 130)]),
+            (TC.DESAYUNO, PROP.DEFINICION, "Desayuno proteico ligero",
+             "Yogur griego con avena y linaza: alta proteina, grasas saludables, carbohidrato controlado.",
+             [("Yogur griego sin azucar", 200), ("Avena cocida", 80), ("Linaza", 15)]),
+
+            (TC.COMIDA, PROP.BAJAR_PESO, "Almuerzo de pescado",
+             "Merluza (pescado muy magro) con esparragos y zapallito italiano.",
+             [("Merluza", 150), ("Esparragos", 150), ("Zapallito italiano", 100)]),
+            (TC.COMIDA, PROP.GANAR_MASA, "Almuerzo andino",
+             "Caballa, quinua y habas: buena densidad calorica con proteina y carbohidrato de calidad.",
+             [("Caballa", 180), ("Quinua cocida", 200), ("Habas cocidas", 150), ("Palta (aguacate)", 50)]),
+            (TC.COMIDA, PROP.MANTENIMIENTO, "Almuerzo mixto",
+             "Jurel con arroz integral y esparragos, opcion balanceada con otro tipo de pescado.",
+             [("Jurel", 150), ("Arroz integral cocido", 150), ("Esparragos", 150)]),
+            (TC.COMIDA, PROP.DEFINICION, "Almuerzo magro",
+             "Merluza con menestra de lentejas y ensalada, proteina alta y grasa baja.",
+             [("Merluza", 180), ("Lentejas cocidas", 120), ("Ensalada de vegetales frescos", 200)]),
+
+            (TC.CENA, PROP.BAJAR_PESO, "Cena de mar",
+             "Caballa con lechuga y tomate, cena ligera con otro tipo de pescado azul.",
+             [("Caballa", 130), ("Lechuga", 100), ("Tomate", 100)]),
+            (TC.CENA, PROP.GANAR_MASA, "Cena energetica",
+             "Pejerrey con papa sancochada y palta para sumar calorias en la noche.",
+             [("Pejerrey", 180), ("Papa sancochada", 200), ("Palta (aguacate)", 60)]),
+            (TC.CENA, PROP.MANTENIMIENTO, "Cena sencilla",
+             "Pavo con coliflor y zanahoria, opcion liviana y balanceada.",
+             [("Pavo (pechuga sin piel)", 150), ("Coliflor cocida", 150), ("Zanahoria", 100)]),
+            (TC.CENA, PROP.DEFINICION, "Cena proteica vegetal",
+             "Merluza con brocoli y esparragos: proteina alta, carbohidrato minimo.",
+             [("Merluza", 150), ("Brocoli cocido", 150), ("Esparragos", 100)]),
+        ]
+
+        NIVELES = [("porcion reducida", 0.75), ("porcion estandar", 1.0), ("porcion amplia", 1.35), ("porcion extra amplia", 1.85)]
+
+        for tipo_comida, proposito, etiqueta, notas, receta in RECETAS_V2:
+            for sufijo, factor in NIVELES:
+                _crear_si_no_existe(f"{etiqueta} ({sufijo})", tipo_comida, proposito, notas, receta, factor)
+
+        db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_servicios_iniciales():
+    """La primera vez (tabla servicios vacia), precarga los conceptos de servicios/deudas mas comunes de un gimnasio, editable despues desde Pagos > Servicios."""
+    db = SessionLocal()
+    try:
+        if db.query(models.Servicio).first():
+            return
+        for nombre in ["Personal de Limpieza", "Internet", "Agua", "Luz", "Mantenimiento", "Alquiler", "Deudas"]:
+            db.add(models.Servicio(nombre=nombre, activo=True))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_porciones_caseras():
+    """Actualiza porciones caseras de los alimentos existentes (solo los que no la tienen todavia)."""
+    _PORCIONES = {
+        # Proteinas
+        "Pollo (pechuga)": "1 filete mediano", "Pollo pechuga a la plancha": "1 filete mediano",
+        "Pollo muslo": "1 muslo", "Res (bistec)": "1 bistec mediano", "Lomo de res": "1 filete",
+        "Pescado (tilapia)": "1 filete", "Pescado tilapia al vapor": "1 filete",
+        "Bonito": "1 filete", "Jurel": "1 filete", "Trucha": "1 trucha entera",
+        "Atun en lata": "1 lata escurrida", "Huevo cocido": "1.5 unidades",
+        "Huevo": "2 unidades", "Huevos revueltos (2)": "2 unidades",
+        "Tofu": "1 bloque chico",
+        # Lacteos
+        "Leche descremada": "1 vaso", "Leche entera": "1 vaso", "Leche": "1 vaso",
+        "Yogur natural": "1 vasito", "Yogur griego": "1 vasito",
+        "Queso fresco": "2 tajadas", "Queso fresco serrano": "2 tajadas",
+        # Carbohidratos
+        "Arroz cocido": "1/2 taza", "Arroz integral cocido": "1/2 taza",
+        "Quinua cocida": "1/2 taza", "Avena cocida": "1/2 vaso", "Avena": "3 cucharadas",
+        "Papa sancochada": "1 papa mediana", "Papa": "1 papa mediana",
+        "Camote sancochado": "1 camote mediano", "Camote": "1 camote chico",
+        "Yuca sancochada": "1 trozo mediano", "Pan integral": "2 rebanadas",
+        "Pan ciabatta integral": "1 pan", "Pan frances": "1 pan",
+        "Fideos cocidos": "1 taza", "Lentejas cocidas": "1/2 taza",
+        "Frejoles cocidos": "1/2 taza", "Frijoles cocidos": "1/2 taza",
+        "Garbanzos cocidos": "1/2 taza", "Pallares cocidos": "1/2 taza",
+        "Choclo desgranado": "1/2 taza", "Choclo": "1 mazorca chica",
+        "Mote cocido": "1/2 taza", "Trigo cocido": "1/2 taza",
+        "Cebada cocida": "1/2 taza", "Kiwicha cocida": "1/2 taza",
+        "Chuño cocido": "3 unidades",
+        # Frutas
+        "Platano (isla)": "1 unidad", "Platano de isla": "1 unidad",
+        "Platano de seda": "1 unidad", "Manzana": "1 unidad mediana",
+        "Naranja": "1 unidad", "Mandarina": "2 unidades",
+        "Papaya": "1 tajada", "Pina": "1 rodaja", "Piña": "1 rodaja",
+        "Mango": "1/2 mango", "Sandia": "1 tajada", "Melon": "1 tajada",
+        "Uvas": "1 racimo chico", "Fresa": "8 fresas", "Pera": "1 unidad",
+        "Durazno": "1 unidad", "Granadilla": "2 unidades",
+        "Lucuma": "1/2 unidad", "Chirimoya": "1/2 unidad",
+        "Maracuya (pulpa)": "2 unidades", "Tuna": "1 unidad",
+        "Aguaymanto": "1 puñado",
+        # Vegetales
+        "Brocoli": "1 taza", "Espinaca": "2 tazas (cruda)",
+        "Lechuga": "3 hojas grandes", "Tomate": "1 unidad",
+        "Zanahoria": "1 unidad mediana", "Pepino": "1/2 pepino",
+        "Palta (aguacate)": "1/4 palta", "Palta": "1/4 palta",
+        "Zapallo": "1 tajada", "Vainitas": "1 taza",
+        "Cebolla": "1/2 unidad", "Choclo desgranado": "1/2 taza",
+        "Betarraga": "1 unidad chica", "Alcachofa": "1 unidad",
+        # Grasas
+        "Aceite de oliva": "1 cucharada", "Mani": "1 puñado (20 unid)",
+        "Almendras": "10 unidades", "Nueces": "5 mitades",
+        "Pecanas": "5 unidades", "Aceitunas": "6 unidades",
+        "Linaza": "1 cucharada", "Chia": "1 cucharada",
+        "Sacha inchi": "1 puñado", "Cancha serrana": "1/4 taza",
+        # Otros
+        "Miel de abeja": "1 cucharada", "Mermelada": "1 cucharada",
+    }
+    db = SessionLocal()
+    try:
+        sin_porcion = db.query(models.Alimento).filter(
+            models.Alimento.porcion_casera.is_(None)
+        ).all()
+        actualizados = 0
+        for alimento in sin_porcion:
+            casera = _PORCIONES.get(alimento.nombre)
+            if casera:
+                alimento.porcion_casera = casera
+                actualizados += 1
+        if actualizados:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_alimentos_expansion_lima():
+    """
+    Amplia el catalogo base con mas alimentos comunes en Lima/Peru
+    (mas proteinas, frutas, vegetales, lacteos, grasas y legumbres).
+    A diferencia de _sembrar_alimentos_iniciales (que solo corre si
+    la tabla esta completamente vacia), esta funcion revisa alimento
+    por alimento por nombre para poder ampliar un catalogo que ya
+    tiene datos, sin duplicar los que ya existan.
+    """
+    db = SessionLocal()
+    try:
+        existentes = {fila[0] for fila in db.query(models.Alimento.nombre).all()}
+        CA = models.CategoriaAlimento
+        # (nombre, categoria, calorias, proteinas_g, carbohidratos_g, grasas_g, fibra_g) por 100g
+        nuevos = [
+            ("Pavo (pechuga sin piel)", CA.PROTEINA, 135, 30.0, 0.0, 1.0, 0.0),
+            ("Carne de cerdo (lomo)", CA.PROTEINA, 242, 27.0, 0.0, 14.0, 0.0),
+            ("Higado de pollo", CA.PROTEINA, 119, 17.0, 0.9, 4.8, 0.0),
+            ("Camarones", CA.PROTEINA, 99, 24.0, 0.2, 0.3, 0.0),
+            ("Calamar", CA.PROTEINA, 92, 15.6, 3.1, 1.4, 0.0),
+            ("Jurel", CA.PROTEINA, 158, 20.0, 0.0, 8.0, 0.0),
+            ("Pejerrey", CA.PROTEINA, 105, 18.0, 0.0, 3.5, 0.0),
+            ("Leche entera", CA.LACTEO, 61, 3.2, 4.8, 3.3, 0.0),
+            ("Queso edam", CA.LACTEO, 357, 25.0, 1.4, 28.0, 0.0),
+            ("Mantequilla", CA.GRASA, 717, 0.9, 0.1, 81.0, 0.0),
+            ("Nueces", CA.GRASA, 654, 15.0, 14.0, 65.0, 6.7),
+            ("Pan frances", CA.CARBOHIDRATO, 274, 9.0, 55.0, 1.4, 2.2),
+            ("Tallarines cocidos", CA.CARBOHIDRATO, 158, 5.8, 31.0, 0.9, 1.8),
+            ("Mote (maiz mote cocido)", CA.CARBOHIDRATO, 123, 3.2, 25.0, 1.2, 3.0),
+            ("Kiwicha cocida", CA.CARBOHIDRATO, 122, 4.5, 21.0, 2.0, 3.0),
+            ("Oca sancochada", CA.CARBOHIDRATO, 71, 1.0, 16.8, 0.1, 1.2),
+            ("Pina", CA.FRUTA, 50, 0.5, 13.0, 0.1, 1.4),
+            ("Mango", CA.FRUTA, 60, 0.8, 15.0, 0.4, 1.6),
+            ("Fresa", CA.FRUTA, 32, 0.7, 7.7, 0.3, 2.0),
+            ("Mandarina", CA.FRUTA, 53, 0.8, 13.3, 0.3, 1.8),
+            ("Sandia", CA.FRUTA, 30, 0.6, 7.6, 0.2, 0.4),
+            ("Uva", CA.FRUTA, 69, 0.7, 18.0, 0.2, 0.9),
+            ("Aguaymanto", CA.FRUTA, 53, 1.9, 11.0, 0.7, 4.9),
+            ("Chirimoya", CA.FRUTA, 75, 1.6, 17.7, 0.7, 3.0),
+            ("Maracuya", CA.FRUTA, 68, 2.2, 15.0, 0.7, 3.0),
+            ("Tomate", CA.VEGETAL, 18, 0.9, 3.9, 0.2, 1.2),
+            ("Pepino", CA.VEGETAL, 15, 0.7, 3.6, 0.1, 0.5),
+            ("Pimiento (aji)", CA.VEGETAL, 20, 0.9, 4.6, 0.2, 1.7),
+            ("Cebolla", CA.VEGETAL, 40, 1.1, 9.3, 0.1, 1.7),
+            ("Apio", CA.VEGETAL, 16, 0.7, 3.0, 0.2, 1.6),
+            ("Rabanito", CA.VEGETAL, 16, 0.7, 3.4, 0.1, 1.6),
+            ("Vainita (ejote)", CA.VEGETAL, 31, 1.8, 7.0, 0.1, 3.4),
+            ("Coliflor cocida", CA.VEGETAL, 25, 1.9, 5.0, 0.3, 2.0),
+            ("Habas cocidas", CA.LEGUMBRE, 110, 7.9, 19.7, 0.7, 5.4),
+            ("Pallares cocidos", CA.LEGUMBRE, 113, 7.4, 20.0, 0.5, 6.5),
+            ("Arveja verde cocida", CA.LEGUMBRE, 84, 5.4, 14.5, 0.4, 5.1),
+            ("Cafe solo (sin azucar)", CA.OTRO, 2, 0.1, 0.0, 0.0, 0.0),
+        ]
+        agregados = 0
+        for nombre, categoria, cal, prot, carb, gras, fibra in nuevos:
+            if nombre in existentes:
+                continue
+            db.add(models.Alimento(
+                nombre=nombre, categoria=categoria, porcion_gramos=100.0,
+                calorias=cal, proteinas_g=prot, carbohidratos_g=carb, grasas_g=gras, fibra_g=fibra,
+            ))
+            agregados += 1
+        if agregados:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_alimentos_expansion_lima_2():
+    """
+    Segunda tanda de expansion del catalogo, a partir de la lista de
+    alimentos peruanos comunes para dietas saludables que paso el
+    gimnasio (proteinas magras, verduras, frutas, carbohidratos,
+    grasas saludables y bebidas/infusiones). Mismo patron idempotente
+    que _sembrar_alimentos_expansion_lima: revisa por nombre exacto
+    para no duplicar lo que ya existe en el catalogo.
+    """
+    db = SessionLocal()
+    try:
+        existentes = {fila[0] for fila in db.query(models.Alimento.nombre).all()}
+        CA = models.CategoriaAlimento
+        nuevos = [
+            ("Caballa", CA.PROTEINA, 205, 19.0, 0.0, 13.9, 0.0),
+            ("Merluza", CA.PROTEINA, 86, 17.2, 0.0, 1.3, 0.0),
+            ("Queso fresco light (bajo en grasa)", CA.LACTEO, 150, 17.0, 3.0, 7.0, 0.0),
+            ("Yogur griego sin azucar", CA.LACTEO, 59, 10.0, 3.6, 0.4, 0.0),
+            ("Lechuga", CA.VEGETAL, 15, 1.4, 2.9, 0.2, 1.3),
+            ("Zapallito italiano", CA.VEGETAL, 17, 1.2, 3.1, 0.3, 1.0),
+            ("Esparragos", CA.VEGETAL, 20, 2.2, 3.9, 0.1, 2.1),
+            ("Melon", CA.FRUTA, 34, 0.8, 8.6, 0.2, 0.9),
+            ("Arroz integral cocido", CA.CARBOHIDRATO, 112, 2.6, 23.5, 0.9, 1.8),
+            ("Almendras", CA.GRASA, 579, 21.0, 22.0, 50.0, 12.5),
+            ("Semillas de chia", CA.GRASA, 486, 17.0, 42.0, 31.0, 34.0),
+            ("Linaza", CA.GRASA, 534, 18.0, 29.0, 42.0, 27.0),
+            ("Agua", CA.OTRO, 0, 0.0, 0.0, 0.0, 0.0),
+            ("Te (infusion)", CA.OTRO, 1, 0.0, 0.3, 0.0, 0.0),
+            ("Infusion de hierbas (anis, manzanilla, hierba luisa)", CA.OTRO, 1, 0.0, 0.3, 0.0, 0.0),
+        ]
+        agregados = 0
+        for nombre, categoria, cal, prot, carb, gras, fibra in nuevos:
+            if nombre in existentes:
+                continue
+            db.add(models.Alimento(
+                nombre=nombre, categoria=categoria, porcion_gramos=100.0,
+                calorias=cal, proteinas_g=prot, carbohidratos_g=carb, grasas_g=gras, fibra_g=fibra,
+            ))
+            agregados += 1
+        if agregados:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_puestos_iniciales():
+    """La primera vez (tabla puestos vacia), precarga los puestos/especialidades que antes estaban fijos en el frontend, para no perder las opciones existentes al migrar al catalogo editable."""
+    db = SessionLocal()
+    try:
+        if db.query(models.Puesto).first():
+            return
+        iniciales = [
+            ("Counter", models.TipoEmpleado.STAFF_FIJO), ("Counter suplente", models.TipoEmpleado.STAFF_FIJO),
+            ("Entrenador", models.TipoEmpleado.STAFF_FIJO), ("Personal Trainer", models.TipoEmpleado.STAFF_FIJO),
+            ("Baile", models.TipoEmpleado.PROFESOR_DE_SALA), ("Cardio", models.TipoEmpleado.PROFESOR_DE_SALA),
+            ("Marinera", models.TipoEmpleado.PROFESOR_DE_SALA), ("Salsa", models.TipoEmpleado.PROFESOR_DE_SALA),
+            ("Top Figther", models.TipoEmpleado.PROFESOR_DE_SALA), ("Circuitos", models.TipoEmpleado.PROFESOR_DE_SALA),
+            ("Full Body", models.TipoEmpleado.PROFESOR_DE_SALA), ("Yoga", models.TipoEmpleado.PROFESOR_DE_SALA),
+        ]
+        for nombre, tipo in iniciales:
+            db.add(models.Puesto(nombre=nombre, tipo=tipo, activo=True))
+        db.commit()
+    finally:
+        db.close()
+
+
+# ==================================================================
+# AUTENTICACION (publico)
+# ==================================================================
+
+def _resolver_gimnasio_id_por_slug(db: Session, slug: Optional[str]) -> Optional[int]:
+    """Convierte un slug a gimnasio_id. Devuelve None si no viene slug (compat local)."""
+    if not slug:
+        return None
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail=f"Gimnasio '{slug}' no encontrado")
+    return gimnasio.id
+
+
+@app.get("/gym/{slug}", tags=["Auth"])
+def info_publica_gimnasio(slug: str, db: Session = Depends(get_db)):
+    """Info publica de un gimnasio (para personalizar login, PWA, etc). No requiere auth."""
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail=f"Gimnasio '{slug}' no encontrado")
+    return {
+        "id": gimnasio.id,
+        "nombre": gimnasio.nombre,
+        "slug": gimnasio.slug,
+        "logo_url": gimnasio.logo_url,
+        "tema": gimnasio.tema,
+        "modo_tema": gimnasio.modo_tema,
+    }
+
+
+@app.post("/gym-actual/logo", tags=["Auth"])
+async def subir_logo_gimnasio(
+    logo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Sube o reemplaza el logo del gimnasio. Solo admin."""
+    gid = get_gid(usuario)
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    contenido = await logo.read()
+    # Guardar en uploads/logos/
+    logos_dir = os.path.join(UPLOADS_DIR, "logos")
+    os.makedirs(logos_dir, exist_ok=True)
+    _eliminar_foto_anterior(gimnasio.logo_url)
+    foto_url = _validar_y_guardar_foto(contenido, logo.content_type, logos_dir)
+    # _validar_y_guardar_foto usa os.path.basename, ajustar ruta
+    nombre_archivo = os.path.basename(foto_url)
+    gimnasio.logo_url = f"/uploads/logos/{nombre_archivo}"
+    db.commit()
+    return {"logo_url": gimnasio.logo_url}
+
+
+@app.get("/gym-actual/", tags=["Auth"])
+def info_gimnasio_actual(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.get_usuario_actual)):
+    """Info del gimnasio del usuario autenticado. Para que el frontend obtenga el slug sin tenerlo en sessionStorage."""
+    gid = get_gid(usuario)
+    if not gid:
+        raise HTTPException(status_code=404, detail="Sin gimnasio asignado")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    return {
+        "id": gimnasio.id,
+        "nombre": gimnasio.nombre,
+        "slug": gimnasio.slug,
+        "logo_url": gimnasio.logo_url,
+        "tema": gimnasio.tema,
+        "modo_tema": gimnasio.modo_tema,
+    }
+
+
+# --- Colores por tema (para PWA manifest y meta tags) ---
+_COLORES_TEMA = {
+    "lavanda": {"bg": "#667eea", "fg": "#ffffff"},
+    "oceano": {"bg": "#0077b6", "fg": "#ffffff"},
+    "bosque": {"bg": "#2d6a4f", "fg": "#ffffff"},
+    "atardecer": {"bg": "#e85d04", "fg": "#ffffff"},
+    "noche": {"bg": "#1a1a2e", "fg": "#e0e0e0"},
+    "cereza": {"bg": "#d90429", "fg": "#ffffff"},
+    "dorado": {"bg": "#c9a227", "fg": "#1a1a1a"},
+}
+
+
+@app.get("/gym/{slug}/manifest.json", tags=["PWA"])
+def manifest_gimnasio(slug: str, portal: str = "alumno", db: Session = Depends(get_db)):
+    """
+    Genera un Web App Manifest dinamico para cada gimnasio.
+    portal: 'alumno' | 'profesor' | 'staff' - determina start_url y scope.
+    """
+    from fastapi.responses import JSONResponse
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+    colores = _COLORES_TEMA.get(gimnasio.tema or "lavanda", _COLORES_TEMA["lavanda"])
+
+    portales = {
+        "alumno": {"start": f"/alumno/mi-rutina.html?gym={slug}", "scope": "/alumno/", "sufijo": ""},
+        "profesor": {"start": f"/profesor/agenda.html?gym={slug}", "scope": "/profesor/", "sufijo": " - Profesores"},
+        "staff": {"start": f"/principal.html", "scope": "/", "sufijo": " - Admin"},
+    }
+    p = portales.get(portal, portales["alumno"])
+
+    icono_url = gimnasio.logo_url or f"/gym/{slug}/icon.svg"
+
+    manifest = {
+        "name": gimnasio.nombre + p["sufijo"],
+        "short_name": gimnasio.nombre[:12],
+        "description": f"App de {gimnasio.nombre}",
+        "start_url": p["start"],
+        "scope": p["scope"],
+        "display": "standalone",
+        "orientation": "portrait",
+        "theme_color": colores["bg"],
+        "background_color": colores["bg"],
+        "icons": [
+            {"src": icono_url, "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"},
+            {"src": icono_url, "sizes": "192x192", "type": "image/svg+xml"},
+            {"src": icono_url, "sizes": "512x512", "type": "image/svg+xml"},
+        ],
+    }
+    return JSONResponse(content=manifest, media_type="application/manifest+json")
+
+
+@app.get("/gym/{slug}/icon.svg", tags=["PWA"])
+def icono_gimnasio(slug: str, db: Session = Depends(get_db)):
+    """
+    Genera un icono SVG con la inicial del gimnasio y el color
+    de su tema. Se usa como fallback si el gym no tiene logo_url.
+    """
+    from fastapi.responses import Response
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+    colores = _COLORES_TEMA.get(gimnasio.tema or "lavanda", _COLORES_TEMA["lavanda"])
+    inicial = (gimnasio.nombre or "G")[0].upper()
+
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="{colores['bg']}"/>
+  <text x="256" y="280" text-anchor="middle" dominant-baseline="central"
+        font-family="Arial,sans-serif" font-weight="bold" font-size="280"
+        fill="{colores['fg']}">{inicial}</text>
+  <text x="256" y="420" text-anchor="middle" font-family="Arial,sans-serif"
+        font-size="60" fill="{colores['fg']}" opacity="0.7">GYM</text>
+</svg>"""
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.get("/gym/{slug}/sw.js", tags=["PWA"])
+def service_worker_gimnasio(slug: str):
+    """
+    Service Worker minimo: solo hace que la app sea 'instalable'
+    como PWA. No cachea nada (la app necesita conexion para funcionar).
+    """
+    from fastapi.responses import Response
+    sw = """// Service Worker - Soft-MrGym PWA
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
+"""
+    return Response(content=sw, media_type="application/javascript")
+
+
+@app.get("/gym/{slug}/qr.svg", tags=["PWA"])
+def qr_portal_alumno(slug: str, portal: str = "alumno", db: Session = Depends(get_db)):
+    """
+    Genera un codigo QR como SVG para compartir el portal del alumno
+    (o profesor) de un gimnasio. El dueño puede imprimirlo, ponerlo
+    en la recepcion, o compartirlo por WhatsApp.
+    """
+    from fastapi.responses import Response
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+    # Construir la URL que el QR codifica
+    # En produccion RENDER_EXTERNAL_URL estara definido; en dev usamos localhost
+    base = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:3001")
+    rutas = {"alumno": "alumno/login.html", "profesor": "profesor/login.html"}
+    ruta = rutas.get(portal, rutas["alumno"])
+    url_completa = f"{base}/{ruta}?gym={slug}"
+
+    # Generar QR con la libreria qrcode (pure python, sin deps C)
+    # Si no esta instalada, retornar un SVG con la URL en texto
+    try:
+        import qrcode
+        import qrcode.image.svg
+        factory = qrcode.image.svg.SvgPathImage
+        qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=2)
+        qr.add_data(url_completa)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=factory)
+        buf = io.BytesIO()
+        img.save(buf)
+        svg_content = buf.getvalue().decode("utf-8")
+    except ImportError:
+        # Fallback: SVG simple con la URL como texto
+        svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100">
+  <rect width="300" height="100" fill="#f0f0f0" rx="10"/>
+  <text x="150" y="40" text-anchor="middle" font-family="Arial" font-size="12">Escanea o visita:</text>
+  <text x="150" y="70" text-anchor="middle" font-family="Arial" font-size="10" fill="#0077b6">{url_completa}</text>
+</svg>"""
+
+    return Response(content=svg_content, media_type="image/svg+xml")
+
+
+@app.post("/auth/login", response_model=schemas.TokenResponse, tags=["Auth"])
+def login_staff_profesor(datos: schemas.LoginRequest, db: Session = Depends(get_db)):
+    """Login de staff y profesores con username + password."""
+    usuario = auth.autenticar_usuario(db, datos.username, datos.password)
+    if not usuario:
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+
+    # Obtener slug del gimnasio para el frontend
+    gym_slug = None
+    if usuario.gimnasio_id:
+        gym = db.query(models.Gimnasio).filter(models.Gimnasio.id == usuario.gimnasio_id).first()
+        if gym:
+            gym_slug = gym.slug
+
+    token = auth.crear_access_token({
+        "sub": str(usuario.id),
+        "tipo": "usuario",
+        "rol": usuario.rol.value,
+        "gimnasio_id": usuario.gimnasio_id,
+    })
+    return schemas.TokenResponse(
+        access_token=token,
+        rol=usuario.rol.value,
+        nombre=usuario.nombre_completo,
+        es_administrador=usuario.es_administrador,
+        es_superadmin=getattr(usuario, 'es_superadmin', False),
+        puede_eliminar=usuario.puede_eliminar,
+        puede_exportar=usuario.puede_exportar,
+        zonas_permitidas=usuario.zonas_permitidas,
+        gimnasio_id=usuario.gimnasio_id,
+        gimnasio_slug=gym_slug,
+    )
+
+
+@app.post("/auth/login-alumno", response_model=schemas.TokenResponse, tags=["Auth"])
+def login_alumno(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db)):
+    """Login de alumnos con DNI + codigo de acceso corto."""
+    gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
+    cliente = auth.autenticar_alumno(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
+    if not cliente:
+        raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
+
+    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    return schemas.TokenResponse(access_token=token, rol="alumno", nombre=cliente.nombre, gimnasio_id=cliente.gimnasio_id)
+
+
+@app.post("/auth/login-profesor", response_model=schemas.TokenResponse, tags=["Auth"])
+def login_profesor(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db)):
+    """
+    Login de profesores de sala a su Zona de Profesores (portal
+    aparte, sin acceso al software de staff): DNI + codigo corto.
+    """
+    gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
+    profesor = auth.autenticar_profesor(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
+    if not profesor:
+        raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
+
+    token = auth.crear_access_token({"sub": str(profesor.id), "tipo": "profesor", "gimnasio_id": profesor.gimnasio_id})
+    return schemas.TokenResponse(access_token=token, rol="profesor_sala", nombre=profesor.nombre_completo, gimnasio_id=profesor.gimnasio_id)
+
+
+# ==================================================================
+# GESTION DE USUARIOS (staff / profesores) - solo STAFF administra
+# ==================================================================
+
+@app.get("/usuarios/", response_model=List[schemas.Usuario], tags=["Usuarios"])
+def listar_usuarios(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    return q(db, models.Usuario, usuario).order_by(models.Usuario.nombre_completo).all()
+
+
+@app.post("/usuarios/", response_model=schemas.Usuario, tags=["Usuarios"])
+def crear_usuario(datos: schemas.UsuarioCreate, db: Session = Depends(get_db), usuario_admin: models.Usuario = Depends(auth.requiere_administrador)):
+    """
+    Crea una cuenta de acceso para staff o profesor. Si se asocia
+    a un empleado_id, ese Empleado debe existir y, para un usuario
+    con rol PROFESOR, debe ser de tipo PROFESOR_DE_SALA.
+    """
+    _validar_limite_plan(db, usuario_admin, "usuarios_staff")
+    existente = db.query(models.Usuario).filter(models.Usuario.username == datos.username).first()
+    if existente:
+        raise HTTPException(status_code=400, detail="Ese nombre de usuario ya esta en uso")
+
+    if datos.empleado_id:
+        empleado = db.query(models.Empleado).filter(models.Empleado.id == datos.empleado_id).first()
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Empleado no encontrado")
+        if datos.rol == models.RolUsuario.PROFESOR and empleado.tipo != models.TipoEmpleado.PROFESOR_DE_SALA:
+            raise HTTPException(status_code=400, detail="El empleado asociado no es un profesor de sala")
+        ya_ligado = db.query(models.Usuario).filter(models.Usuario.empleado_id == datos.empleado_id, models.Usuario.activo == True).first()
+        if ya_ligado:
+            raise HTTPException(status_code=400, detail=f"Ese empleado ya tiene una cuenta de acceso activa ('{ya_ligado.username}')")
+
+    db_usuario = models.Usuario(
+        nombre_completo=datos.nombre_completo,
+        username=datos.username,
+        password_hash=auth.hash_password(datos.password),
+        rol=datos.rol,
+        empleado_id=datos.empleado_id,
+        es_administrador=datos.es_administrador,
+        puede_eliminar=datos.puede_eliminar,
+        puede_exportar=datos.puede_exportar,
+        zonas_permitidas=datos.zonas_permitidas,
+        gimnasio_id=get_gid(usuario_admin),
+    )
+    db.add(db_usuario)
+    db.commit()
+    db.refresh(db_usuario)
+    return db_usuario
+
+
+@app.put("/usuarios/{usuario_id}", response_model=schemas.Usuario, tags=["Usuarios"])
+def actualizar_usuario(
+    usuario_id: int,
+    datos: schemas.UsuarioUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Cualquier staff puede cambiar su propia contraseña (usuario_id
+    igual al suyo). Cualquier otro cambio (a otra cuenta, o a
+    permisos/zonas/estado propios) requiere ser administrador.
+    """
+    es_uno_mismo = usuario_id == usuario_actual.id
+    datos_dict = datos.model_dump(exclude_unset=True)
+    campos_autoservicio = {"password"}
+
+    if not usuario_actual.es_administrador:
+        if not es_uno_mismo:
+            raise HTTPException(status_code=403, detail="Requiere permisos de administrador")
+        if set(datos_dict.keys()) - campos_autoservicio:
+            raise HTTPException(status_code=403, detail="Solo puedes cambiar tu propia contraseña")
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if "password" in datos_dict:
+        nueva_password = datos_dict.pop("password")
+        if nueva_password:
+            usuario.password_hash = auth.hash_password(nueva_password)
+
+    for campo, valor in datos_dict.items():
+        setattr(usuario, campo, valor)
+
+    db.commit()
+    db.refresh(usuario)
+    return usuario
+
+
+@app.delete("/usuarios/{usuario_id}", tags=["Usuarios"])
+def desactivar_usuario(usuario_id: int, db: Session = Depends(get_db), usuario_actual=Depends(auth.requiere_administrador)):
+    if usuario_id == usuario_actual.id:
+        raise HTTPException(status_code=400, detail="No puedes desactivar tu propia cuenta")
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    usuario.activo = False
+    db.commit()
+    return {"message": "Usuario desactivado correctamente"}
+
+
+@app.get("/usuarios/me", response_model=schemas.Usuario, tags=["Usuarios"])
+def mi_cuenta(usuario: models.Usuario = Depends(auth.get_usuario_actual)):
+    """Devuelve los datos del usuario (staff o profesor) actualmente logueado."""
+    return usuario
+
+
+# ==================================================================
+# DASHBOARD (staff)
+# ==================================================================
+
+# ==================================================================
+# INGRESOS / EGRESOS (vistas agregadas filtrables para el panel)
+# ==================================================================
+
+@app.get("/ingresos/", tags=["Finanzas"])
+def listar_ingresos(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    solo_hoy: bool = False,
+    tipo: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    hoy = date.today()
+    if solo_hoy:
+        desde = hasta = hoy
+    if not desde:
+        desde = hoy.replace(day=1)
+    if not hasta:
+        import calendar as _cal
+        hasta = hoy.replace(day=_cal.monthrange(hoy.year, hoy.month)[1])
+    desde_dt = datetime.combine(desde, datetime.min.time())
+    hasta_dt  = datetime.combine(hasta, datetime.max.time())
+    config = _get_o_crear_configuracion(db)
+    detalle = []
+
+    if not tipo or tipo == "membresias":
+        for cm in db.query(models.ClienteMembresia).join(
+            models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id
+        ).filter(
+            models.Cliente.gimnasio_id == get_gid(usuario),
+            models.ClienteMembresia.fecha_inicio >= desde,
+            models.ClienteMembresia.fecha_inicio <= hasta,
+            models.ClienteMembresia.monto_pagado > 0,
+        ).all():
+            cli  = db.query(models.Cliente).filter(models.Cliente.id == cm.cliente_id).first()
+            plan = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
+            metodo = cm.metodo_pago or "efectivo"
+            comision_gym = 0.0
+            if metodo == "tarjeta":
+                comision_gym = round((cm.monto_pagado or 0.0) * (config.comision_tarjeta or 0.0) / 100, 2)
+            elif metodo == "qr":
+                comision_gym = round((cm.monto_pagado or 0.0) * (config.comision_qr or 0.0) / 100, 2)
+            detalle.append({"id": cm.id,
+                "fecha": datetime.combine(cm.fecha_inicio, datetime.min.time()).isoformat(),
+                "categoria": "membresias",
+                "descripcion": f"{plan.nombre if plan else 'Plan ?'} — {(cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'}",
+                "monto": cm.monto_pagado,
+                "metodo_pago": metodo,
+                "comision_gym": comision_gym})
+
+    if not tipo or tipo == "productos":
+        for v in db.query(models.Venta).filter(
+            models.Venta.gimnasio_id == get_gid(usuario),
+            models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt
+        ).all():
+            cli  = db.query(models.Cliente).filter(models.Cliente.id == v.cliente_id).first() if v.cliente_id else None
+            prod = ", ".join(f"{d.cantidad}x {d.producto.nombre}" for d in v.detalles if d.producto) or "Venta"
+            detalle.append({"id": v.id, "fecha": v.fecha_venta.isoformat(), "categoria": "productos",
+                "descripcion": f"{prod}{' — ' + cli.nombre if cli else ''}", "monto": v.total,
+                "metodo_pago": v.metodo_pago.value if hasattr(v.metodo_pago, "value") else v.metodo_pago,
+                "comision_gym": v.costo_comision_gym or 0.0})
+
+    detalle.sort(key=lambda x: x["fecha"], reverse=True)
+    tot_m = sum(d["monto"] for d in detalle if d["categoria"] == "membresias")
+    tot_p = sum(d["monto"] for d in detalle if d["categoria"] == "productos")
+    tot_o = sum(d["monto"] for d in detalle if d["categoria"] == "otros")
+    return {"total": round(tot_m + tot_p + tot_o, 2), "membresias": round(tot_m, 2),
+            "productos": round(tot_p, 2), "otros": round(tot_o, 2), "detalle": detalle}
+
+
+@app.get("/egresos/", tags=["Finanzas"])
+def listar_egresos(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    solo_hoy: bool = False,
+    tipo: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    hoy = date.today()
+    if solo_hoy:
+        desde = hasta = hoy
+    if not desde:
+        desde = hoy.replace(day=1)
+    if not hasta:
+        import calendar as _cal
+        hasta = hoy.replace(day=_cal.monthrange(hoy.year, hoy.month)[1])
+    desde_dt = datetime.combine(desde, datetime.min.time())
+    hasta_dt  = datetime.combine(hasta, datetime.max.time())
+    config = _get_o_crear_configuracion(db)
+    detalle = []
+
+    if not tipo or tipo == "compra_producto":
+        for c in db.query(models.Compra).filter(
+            models.Compra.gimnasio_id == get_gid(usuario),
+            models.Compra.fecha >= desde_dt, models.Compra.fecha <= hasta_dt
+        ).all():
+            detalle.append({"id": c.id, "fecha": c.fecha.isoformat(), "categoria": "compra_producto",
+                "descripcion": f"{c.cantidad} x {c.producto.nombre if c.producto else '?'} (S/{c.costo_unitario}/u)",
+                "monto": c.costo_total})
+
+    if not tipo or tipo == "pago_staff":
+        for p in db.query(models.PagoPlanilla).filter(
+            models.PagoPlanilla.gimnasio_id == get_gid(usuario),
+            models.PagoPlanilla.tipo == "staff",
+            models.PagoPlanilla.fecha_pago >= desde_dt, models.PagoPlanilla.fecha_pago <= hasta_dt,
+        ).all():
+            detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_staff",
+                "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {p.mes}/{p.anio}{' (' + p.notas + ')' if p.notas else ''}",
+                "monto": p.monto_total})
+
+    if not tipo or tipo == "pago_profesor":
+        for p in db.query(models.PagoPlanilla).filter(
+            models.PagoPlanilla.gimnasio_id == get_gid(usuario),
+            models.PagoPlanilla.tipo == "profesor",
+            models.PagoPlanilla.fecha_pago >= desde_dt, models.PagoPlanilla.fecha_pago <= hasta_dt,
+        ).all():
+            periodo = f"{p.desde} al {p.hasta}" if p.desde and p.hasta else f"{p.mes}/{p.anio}"
+            detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_profesor",
+                "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {periodo}",
+                "monto": p.monto_total})
+
+    if not tipo or tipo == "pago_servicio":
+        for p in db.query(models.PagoServicio).filter(
+            models.PagoServicio.fecha_pago >= desde_dt, models.PagoServicio.fecha_pago <= hasta_dt,
+        ).all():
+            cargo = p.cargo
+            servicio_nombre = cargo.servicio.nombre if cargo and cargo.servicio else "Servicio"
+            periodo = f"{cargo.mes}/{cargo.anio}" if cargo else ""
+            detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_servicio",
+                "descripcion": f"{servicio_nombre} — {(cargo.concepto + ' ' if cargo and cargo.concepto else '')}{periodo}".strip(),
+                "monto": p.monto})
+
+    if not tipo or tipo == "otros":
+        for g in db.query(models.Gasto).filter(
+            models.Gasto.gimnasio_id == get_gid(usuario),
+            models.Gasto.categoria == models.CategoriaGasto.OTROS,
+            models.Gasto.fecha >= desde_dt, models.Gasto.fecha <= hasta_dt,
+        ).all():
+            detalle.append({"id": g.id, "fecha": g.fecha.isoformat(), "categoria": "otros",
+                "descripcion": g.descripcion or "Gasto general", "monto": g.monto})
+
+    # ---- Comision de pasarela (tarjeta/QR): no es un registro propio
+    # en la base, se deriva de las Ventas y Membresias cobradas con
+    # tarjeta/QR en el rango, para que se vea como un egreso explicito
+    # justo debajo del ingreso que lo genero (misma fecha). No es
+    # eliminable por si sola: se borra automaticamente si se borra la
+    # venta/membresia de la que viene.
+    if not tipo or tipo == "comision":
+        for v in db.query(models.Venta).filter(
+            models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt,
+            models.Venta.metodo_pago != models.MetodoPago.EFECTIVO,
+        ).all():
+            if (v.costo_comision_gym or 0.0) <= 0:
+                continue
+            metodo_txt = "Tarjeta" if v.metodo_pago == models.MetodoPago.TARJETA else "QR"
+            detalle.append({"id": v.id, "fecha": v.fecha_venta.isoformat(), "categoria": "comision",
+                "descripcion": f"Comisión {metodo_txt} — Venta #{v.id}", "monto": v.costo_comision_gym})
+
+        for cm in db.query(models.ClienteMembresia).filter(
+            models.ClienteMembresia.fecha_inicio >= desde,
+            models.ClienteMembresia.fecha_inicio <= hasta,
+            models.ClienteMembresia.monto_pagado > 0,
+        ).all():
+            metodo = cm.metodo_pago or "efectivo"
+            if metodo not in ("tarjeta", "qr"):
+                continue
+            porcentaje = config.comision_tarjeta if metodo == "tarjeta" else config.comision_qr
+            comision = round((cm.monto_pagado or 0.0) * (porcentaje or 0.0) / 100, 2)
+            if comision <= 0:
+                continue
+            cli = db.query(models.Cliente).filter(models.Cliente.id == cm.cliente_id).first()
+            metodo_txt = "Tarjeta" if metodo == "tarjeta" else "QR"
+            detalle.append({"id": cm.id, "fecha": datetime.combine(cm.fecha_inicio, datetime.min.time()).isoformat(),
+                "categoria": "comision",
+                "descripcion": f"Comisión {metodo_txt} — Membresía {(cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'}",
+                "monto": comision})
+
+    detalle.sort(key=lambda x: x["fecha"], reverse=True)
+    tot_c = sum(d["monto"] for d in detalle if d["categoria"] == "compra_producto")
+    tot_s = sum(d["monto"] for d in detalle if d["categoria"] == "pago_staff")
+    tot_p = sum(d["monto"] for d in detalle if d["categoria"] == "pago_profesor")
+    tot_sv = sum(d["monto"] for d in detalle if d["categoria"] == "pago_servicio")
+    tot_o = sum(d["monto"] for d in detalle if d["categoria"] == "otros")
+    tot_com = sum(d["monto"] for d in detalle if d["categoria"] == "comision")
+    return {"total": round(tot_c + tot_s + tot_p + tot_sv + tot_o + tot_com, 2), "compras_producto": round(tot_c, 2),
+            "pago_staff": round(tot_s, 2), "pago_profesor": round(tot_p, 2), "pago_servicio": round(tot_sv, 2),
+            "otros": round(tot_o, 2), "comisiones": round(tot_com, 2), "detalle": detalle}
+
+
+@app.post("/gastos/", tags=["Finanzas"])
+def crear_gasto(
+    datos: schemas.GastoCreate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    if datos.monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    g = models.Gasto(
+        fecha=datos.fecha or datetime.now(),
+        categoria=datos.categoria,
+        monto=datos.monto,
+        descripcion=datos.descripcion,
+        referencia_id=datos.referencia_id,
+        usuario_id=getattr(usuario, "id", None),
+        notas=datos.notas,
+        gimnasio_id=get_gid(usuario),
+    )
+    db.add(g); db.commit(); db.refresh(g)
+    return g
+
+
+@app.delete("/gastos/{gasto_id}", tags=["Finanzas"])
+def eliminar_gasto(gasto_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_administrador)):
+    g = db.query(models.Gasto).filter(models.Gasto.id == gasto_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    db.delete(g); db.commit()
+    return {"message": "Gasto eliminado"}
+
+
+@app.get("/dashboard/stats", response_model=schemas.DashboardStats, tags=["Dashboard"])
+def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    gid = get_gid(usuario)
+    total_clientes = db.query(models.Cliente).filter(
+        models.Cliente.activo == True,
+        models.Cliente.gimnasio_id == gid,
+    ).count()
+
+    membresias_activas = (
+        db.query(models.ClienteMembresia)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.activo == True,
+            models.Cliente.gimnasio_id == gid,
+        )
+        .count()
+    )
+
+    inicio_mes = date.today().replace(day=1)
+    ingresos_mes = (
+        db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
+        .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid)
+        .scalar()
+    )
+
+    productos_bajo_stock = (
+        db.query(models.Producto)
+        .filter(
+            models.Producto.stock <= models.Producto.stock_minimo,
+            models.Producto.activo == True,
+            models.Producto.gimnasio_id == gid,
+        )
+        .count()
+    )
+
+    hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    asistencias_hoy_query = db.query(models.Asistencia).filter(
+        models.Asistencia.fecha_hora_entrada >= hoy,
+        models.Asistencia.gimnasio_id == gid,
+    )
+    asistencias_hoy = asistencias_hoy_query.count()
+    presentes_ahora = asistencias_hoy_query.filter(models.Asistencia.fecha_hora_salida.is_(None)).count()
+
+    config = _get_o_crear_configuracion(db)
+    limite_aviso = date.today() + timedelta(days=config.dias_aviso_vencimiento or 7)
+    membresias_por_vencer = (
+        db.query(models.ClienteMembresia)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.activo == True,
+            models.ClienteMembresia.fecha_fin.isnot(None),
+            models.ClienteMembresia.fecha_fin >= date.today(),
+            models.ClienteMembresia.fecha_fin <= limite_aviso,
+            models.Cliente.gimnasio_id == gid,
+        )
+        .count()
+    )
+
+    hoy_fecha = date.today()
+    clientes_activos = (
+        db.query(models.Cliente)
+        .join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+        .filter(
+            models.Cliente.activo == True,
+            models.Cliente.gimnasio_id == gid,
+            models.ClienteMembresia.activo == True,
+            (models.ClienteMembresia.fecha_fin.is_(None)) | (models.ClienteMembresia.fecha_fin >= hoy_fecha),
+        )
+        .distinct()
+        .count()
+    )
+
+    ingresos_hoy_membresias = (
+        db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.fecha_inicio == hoy_fecha,
+            models.ClienteMembresia.monto_pagado > 0,
+            models.Cliente.gimnasio_id == gid,
+        )
+        .scalar()
+    )
+    ingresos_hoy_venta_rapida = (
+        db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
+        .filter(
+            models.Venta.fecha_venta >= hoy,
+            models.Venta.es_venta_rapida == True,
+            models.Venta.gimnasio_id == gid,
+        )
+        .scalar()
+    )
+
+    ventas_hoy = db.query(models.Venta).filter(
+        models.Venta.fecha_venta >= hoy,
+        models.Venta.gimnasio_id == gid,
+    ).all()
+    membresias_hoy = (
+        db.query(models.ClienteMembresia)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.fecha_inicio == hoy_fecha,
+            models.ClienteMembresia.monto_pagado > 0,
+            models.Cliente.gimnasio_id == gid,
+        )
+        .all()
+    )
+
+    balance_efectivo_hoy = sum(v.total for v in ventas_hoy if v.metodo_pago == models.MetodoPago.EFECTIVO)
+    balance_efectivo_hoy += sum(cm.monto_pagado or 0.0 for cm in membresias_hoy if (cm.metodo_pago or "efectivo") == "efectivo")
+
+    balance_cuenta_hoy = sum(
+        v.total - (v.costo_comision_gym or 0.0) for v in ventas_hoy if v.metodo_pago != models.MetodoPago.EFECTIVO
+    )
+    for cm in membresias_hoy:
+        metodo = cm.metodo_pago or "efectivo"
+        if metodo == "tarjeta":
+            balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_tarjeta or 0.0) / 100)
+        elif metodo == "qr":
+            balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_qr or 0.0) / 100)
+
+    return schemas.DashboardStats(
+        total_clientes=total_clientes,
+        membresias_activas=membresias_activas,
+        ingresos_mes=ingresos_mes,
+        productos_bajo_stock=productos_bajo_stock,
+        asistencias_hoy=asistencias_hoy,
+        presentes_ahora=presentes_ahora,
+        membresias_por_vencer=membresias_por_vencer,
+        clientes_activos=clientes_activos,
+        ingresos_hoy_membresias=round(ingresos_hoy_membresias, 2),
+        ingresos_hoy_venta_rapida=round(ingresos_hoy_venta_rapida, 2),
+        balance_efectivo_hoy=round(balance_efectivo_hoy, 2),
+        balance_cuenta_hoy=round(balance_cuenta_hoy, 2),
+    )
+
+
+# ==================================================================
+# CLIENTES
+# ==================================================================
+
+@app.get("/clientes/listado-completo", response_model=List[schemas.ClienteListadoRow], tags=["Clientes"])
+def listado_completo_clientes(
+    filtro: str = Query("activos", description="todos | activos | por_vencer"),
+    dias_vencimiento: int = Query(30, description="Solo aplica si filtro=por_vencer"),
+    desde: Optional[date] = Query(None, description="Filtra por fecha_registro >= desde"),
+    hasta: Optional[date] = Query(None, description="Filtra por fecha_registro <= hasta"),
+    orden: Optional[str] = Query(None, description="vencer ordena por dias restantes ascendente"),
+    buscar: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    hoy = date.today()
+    query = db.query(models.Cliente).filter(models.Cliente.gimnasio_id == get_gid(_))
+
+    if filtro == "activos":
+        # "Activos" = clientes con una ClienteMembresia VIGENTE del
+        # catalogo (no basta el membresia_texto importado del sistema
+        # anterior). Se usa un JOIN para exigir una fila real en
+        # ClienteMembresia con fecha_fin >= hoy.
+        query = (
+            query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+            .filter(
+                models.Cliente.activo == True,
+                models.ClienteMembresia.activo == True,
+                models.ClienteMembresia.fecha_fin.isnot(None),
+                models.ClienteMembresia.fecha_fin >= hoy,
+            )
+            .distinct()
+        )
+    elif filtro == "por_vencer":
+        limite = hoy + timedelta(days=max(dias_vencimiento, 0))
+        query = (
+            query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+            .filter(
+                models.Cliente.activo == True,
+                models.ClienteMembresia.activo == True,
+                models.ClienteMembresia.fecha_fin.isnot(None),
+                models.ClienteMembresia.fecha_fin >= hoy,
+                models.ClienteMembresia.fecha_fin <= limite,
+            )
+            .distinct()
+        )
+
+    if desde:
+        query = query.filter(func.date(models.Cliente.fecha_registro) >= desde.isoformat())
+    if hasta:
+        query = query.filter(func.date(models.Cliente.fecha_registro) <= hasta.isoformat())
+
+    if buscar:
+        for palabra in buscar.split():
+            like = f"%{palabra}%"
+            query = query.filter(
+                (models.Cliente.nombre.ilike(like))
+                | (models.Cliente.apellidos.ilike(like))
+                | (models.Cliente.dni.ilike(like))
+            )
+
+    clientes = query.order_by(models.Cliente.nombre).all()
+
+    filas: List[schemas.ClienteListadoRow] = []
+    for c in clientes:
+        ultimo_plan_cm = (
+            db.query(models.ClienteMembresia)
+            .filter(models.ClienteMembresia.cliente_id == c.id)
+            .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
+            .first()
+        )
+        ultimo_plan_nombre, costo, pagado, saldo, dias_para_vencer = None, None, None, None, None
+        if ultimo_plan_cm:
+            membresia = db.query(models.Membresia).filter(models.Membresia.id == ultimo_plan_cm.membresia_id).first()
+            ultimo_plan_nombre = membresia.nombre if membresia else None
+            costo = membresia.precio if membresia else None
+            pagado = ultimo_plan_cm.monto_pagado or 0.0
+            saldo = max((costo or 0.0) - pagado, 0.0)
+            if ultimo_plan_cm.fecha_fin:
+                dias_para_vencer = (ultimo_plan_cm.fecha_fin - hoy).days
+
+        # Determinar si tiene membresia del catalogo vigente
+        tiene_cm_vigente = bool(
+            ultimo_plan_cm and ultimo_plan_cm.fecha_fin and ultimo_plan_cm.fecha_fin >= hoy
+        )
+
+        filas.append(schemas.ClienteListadoRow(
+            id=c.id,
+            nombre_completo=f"{c.nombre} {c.apellidos or ''}".strip(),
+            activo=c.activo,
+            fecha_vencimiento=ultimo_plan_cm.fecha_fin if ultimo_plan_cm else c.fecha_vencimiento,
+            dias_para_vencer=dias_para_vencer if ultimo_plan_cm else (
+                (c.fecha_vencimiento - hoy).days if c.fecha_vencimiento else None
+            ),
+            ultimo_plan=ultimo_plan_nombre if ultimo_plan_cm else c.membresia_texto,
+            costo=costo,
+            pagado=pagado,
+            saldo=saldo,
+            porcentaje_asistencia=_calcular_porcentaje_asistencia(db, c.id),
+            tiene_membresia_catalogo=tiene_cm_vigente,
+        ))
+
+    if orden == "vencer":
+        filas.sort(key=lambda f: (f.dias_para_vencer is None, f.dias_para_vencer))
+    elif orden == "deuda":
+        filas.sort(key=lambda f: (f.saldo or 0.0), reverse=True)
+
+    return filas
+
+
+@app.get("/clientes/", response_model=List[schemas.ClienteListItem], tags=["Clientes"])
+def listar_clientes(
+    skip: int = 0,
+    limit: int = 50,
+    buscar: Optional[str] = Query(None, description="Busca por nombre, DNI o email"),
+    solo_con_membresia_activa: bool = Query(False, description="Filtra solo clientes con una membresia vigente hoy"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Listado paginado y con busqueda server-side. Nunca devuelve
+    todo el historico de una vez (importante con 8000 clientes
+    historicos).
+    """
+    query = db.query(models.Cliente).filter(models.Cliente.activo == True, models.Cliente.gimnasio_id == get_gid(usuario))
+
+    if solo_con_membresia_activa:
+        hoy = date.today()
+        query = (
+            query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+            .filter(
+                models.ClienteMembresia.activo == True,
+                (models.ClienteMembresia.fecha_fin.is_(None)) | (models.ClienteMembresia.fecha_fin >= hoy),
+            )
+            .distinct()
+        )
+
+    if buscar:
+        # Busqueda por palabras, independiente del orden: "Ramos Jorge"
+        # y "Jorge Ramos" encuentran lo mismo. Cada palabra debe
+        # coincidir con nombre, apellidos, dni o email.
+        for palabra in buscar.split():
+            like = f"%{palabra}%"
+            query = query.filter(
+                (models.Cliente.nombre.ilike(like))
+                | (models.Cliente.apellidos.ilike(like))
+                | (models.Cliente.dni.ilike(like))
+                | (models.Cliente.email.ilike(like))
+            )
+
+    return query.order_by(models.Cliente.nombre).offset(skip).limit(limit).all()
+
+
+@app.get("/clientes/ultimos-ingresos", response_model=List[schemas.Asistencia], tags=["Clientes"])
+def ultimos_clientes_con_ingreso(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Los ultimos N alumnos que marcaron entrada, pensado para la
+    pantalla de Asistencias + Venta Rapida (acceso directo a
+    asignarles producto).
+    """
+    return (
+        db.query(models.Asistencia)
+        .filter(models.Asistencia.gimnasio_id == get_gid(usuario))
+        .order_by(models.Asistencia.fecha_hora_entrada.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@app.post("/clientes/", response_model=schemas.Cliente, tags=["Clientes"])
+def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    _validar_limite_plan(db, usuario, "clientes")
+    db_cliente = models.Cliente(**cliente.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_cliente)
+    db.commit()
+    db.refresh(db_cliente)
+    db_cliente.porcentaje_asistencia = None  # recien creado, todavia no tiene plan
+    return db_cliente
+
+
+def _calcular_porcentaje_asistencia(db: Session, cliente_id: int) -> Optional[float]:
+    """Porcentaje de asistencia del cliente segun su ultimo plan."""
+    ultimo_plan = (
+        db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id)
+        .order_by(models.ClienteMembresia.fecha_inicio.desc())
+        .first()
+    )
+    if not ultimo_plan or not ultimo_plan.fecha_inicio or not ultimo_plan.fecha_fin:
+        return None
+
+    hoy = date.today()
+    fecha_limite = min(ultimo_plan.fecha_fin, hoy)
+    if fecha_limite < ultimo_plan.fecha_inicio:
+        return 0.0
+
+    # Dias transcurridos desde el inicio del plan hasta hoy (o hasta
+    # que vencio, si ya vencio). Minimo 1 para evitar division por 0.
+    dias_transcurridos = max((fecha_limite - ultimo_plan.fecha_inicio).days, 1)
+
+    dias_asistidos = (
+        db.query(func.count(func.distinct(func.date(models.Asistencia.fecha_hora_entrada))))
+        .filter(
+            models.Asistencia.cliente_id == cliente_id,
+            models.Asistencia.fecha_hora_entrada >= datetime.combine(ultimo_plan.fecha_inicio, datetime.min.time()),
+            models.Asistencia.fecha_hora_entrada <= datetime.combine(fecha_limite, datetime.max.time()),
+        )
+        .scalar()
+    )
+    return round(min((dias_asistidos or 0) / dias_transcurridos * 100, 100.0), 1)
+
+
+# ---- Importacion directa de clientes ACTIVOS (no historicos) ----
+# Columnas esperadas (no sensible a mayusculas ni al orden):
+#   ID_Cliente, Nombres, Apellidos, Direccion, DNI, fec_reg, sexo,
+#   Celular, email, fec_nac, fec_ren, fec_ven, Membresia, asistencia
+# ID_Cliente se inserta como el id REAL del Cliente (no autogenerado).
+# Gracias a como SQLite maneja INTEGER PRIMARY KEY, el siguiente
+# cliente creado a mano (sin id explicito) continua solo desde el
+# ID mas alto que haya en la tabla + 1 - no requiere logica extra.
+
+_COLUMNAS_PLANTILLA_CLIENTES = [
+    "id_cliente", "nombres", "apellidos", "direccion", "dni", "fec_reg", "sexo",
+    "celular", "correo", "fec_nac", "fec_ren", "fec_ven", "membresia", "asistencia",
+]
+
+_FILA_EJEMPLO_PLANTILLA_CLIENTES = {
+    "id_cliente": "101",
+    "nombres": "Juan Carlos",
+    "apellidos": "Perez Garcia",
+    "direccion": "Av. Siempre Viva 123",
+    "dni": "12345678",
+    "fec_reg": "15/03/2024",
+    "sexo": "M",
+    "celular": "987654321",
+    "correo": "juan.perez@email.com",
+    "fec_nac": "20/05/1990",
+    "fec_ren": "15/03/2024",
+    "fec_ven": "15/04/2024",
+    "membresia": "Mensual Full",
+    "asistencia": "12",
+}
+
+
+def _mapear_sexo_a_genero(valor: Optional[str]) -> Optional[str]:
+    """
+    Mapea 'M'/'F' a Masculino/Femenino. Si viene un codigo numerico
+    (ej. planillas viejas con 0/1/2 sin significado documentado), NO
+    se adivina: se guarda el codigo tal cual en Cliente.genero para
+    no perder el dato ni asignar un genero incorrecto. El staff puede
+    corregirlo manualmente despues desde la ficha del cliente.
+    """
+    v = (valor or "").strip().upper()
+    if v == "M":
+        return "Masculino"
+    if v == "F":
+        return "Femenino"
+    return (valor or "").strip() or None
+
+
+@app.get("/clientes/plantilla-importacion", tags=["Clientes"])
+def plantilla_importacion_clientes(_=Depends(auth.requiere_permiso_exportar)):
+    """CSV modelo con las columnas exactas que espera POST /clientes/importar."""
+    return _respuesta_csv(
+        _COLUMNAS_PLANTILLA_CLIENTES,
+        [_FILA_EJEMPLO_PLANTILLA_CLIENTES],
+        "plantilla_importacion_clientes.csv",
+    )
+
+
+@app.post("/clientes/importar", response_model=schemas.ImportarClientesResultado, tags=["Clientes"])
+async def importar_clientes(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_permiso_exportar),
+):
+    """
+    Importa clientes ACTIVOS directo a la tabla Cliente (distinto de
+    /clientes-historicos/importar, que llena ClienteHistorico). Usa
+    ID_Cliente como el id real del registro.
+    """
+    _validar_limite_plan(db, _, "clientes")
+    contenido = (await archivo.read()).decode("utf-8-sig", errors="replace")
+    lineas = contenido.splitlines()
+    if not lineas:
+        raise HTTPException(status_code=400, detail="El archivo esta vacio")
+    delimitador = _detectar_delimitador(lineas[0])
+
+    lector = csv.DictReader(io.StringIO(contenido), delimiter=delimitador)
+    lector.fieldnames = [(c or "").strip().lower() for c in (lector.fieldnames or [])]
+
+    total_leidas = 0
+    total_importados = 0
+    total_omitidos = 0
+    errores: List[str] = []
+
+    ids_existentes = {fila[0] for fila in db.query(models.Cliente.id).all()}
+    dnis_existentes = {fila[0] for fila in db.query(models.Cliente.dni).all() if fila[0]}
+    ids_vistos_en_archivo = set()
+
+    for fila in lector:
+        total_leidas += 1
+        try:
+            id_cliente = _parsear_entero_legado(fila.get("id_cliente"))
+            nombres = (fila.get("nombres") or "").strip()
+            if not id_cliente or not nombres:
+                total_omitidos += 1
+                continue
+            if id_cliente in ids_existentes or id_cliente in ids_vistos_en_archivo:
+                total_omitidos += 1
+                continue
+
+            dni = (fila.get("dni") or "").strip() or None
+            if dni and dni in dnis_existentes:
+                errores.append(f"Fila {total_leidas}: DNI {dni} ya existe, se omitio")
+                total_omitidos += 1
+                continue
+
+            email_raw = (fila.get("correo") or fila.get("email") or "").strip()
+            fecha_reg = _parsear_fecha_legado(fila.get("fec_reg"))
+
+            nuevo = models.Cliente(
+                id=id_cliente,
+                nombre=nombres,
+                apellidos=(fila.get("apellidos") or "").strip() or None,
+                direccion=(fila.get("direccion") or "").strip() or None,
+                dni=dni,
+                fecha_registro=datetime.combine(fecha_reg, datetime.min.time()) if fecha_reg else datetime.now(),
+                genero=_mapear_sexo_a_genero(fila.get("sexo")),
+                telefono=(fila.get("celular") or "").strip() or None,
+                email=email_raw if "@" in email_raw else None,
+                fecha_nacimiento=_parsear_fecha_legado(fila.get("fec_nac")),
+                fecha_renovacion=_parsear_fecha_legado(fila.get("fec_ren")),
+                fecha_vencimiento=_parsear_fecha_legado(fila.get("fec_ven")),
+                membresia_texto=(fila.get("membresia") or "").strip() or None,
+                asistencias_legado=_parsear_entero_legado(fila.get("asistencia")) or 0,
+            )
+            db.add(nuevo)
+            ids_vistos_en_archivo.add(id_cliente)
+            if dni:
+                dnis_existentes.add(dni)
+            total_importados += 1
+        except Exception as e:
+            errores.append(f"Fila {total_leidas}: {e}")
+
+    db.commit()
+    return schemas.ImportarClientesResultado(
+        total_filas_leidas=total_leidas,
+        total_importados=total_importados,
+        total_omitidos_duplicados=total_omitidos,
+        errores=errores[:20],
+    )
+
+
+@app.get("/clientes/{cliente_id}", response_model=schemas.Cliente, tags=["Clientes"])
+def obtener_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cliente.porcentaje_asistencia = _calcular_porcentaje_asistencia(db, cliente_id)
+    return cliente
+
+
+@app.put("/clientes/{cliente_id}", response_model=schemas.Cliente, tags=["Clientes"])
+def actualizar_cliente(
+    cliente_id: int,
+    datos: schemas.ClienteUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(cliente, campo, valor)
+
+    db.commit()
+    db.refresh(cliente)
+    return cliente
+
+
+@app.delete("/clientes/{cliente_id}", tags=["Clientes"])
+def eliminar_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cliente.activo = False  # soft delete: no se borra el historico
+    db.commit()
+    return {"message": "Cliente desactivado correctamente"}
+
+
+@app.post("/clientes/{cliente_id}/foto", response_model=schemas.Cliente, tags=["Clientes"])
+async def subir_foto_cliente(
+    cliente_id: int,
+    foto: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Sube/reemplaza la foto de perfil de un cliente. Acepta JPEG, PNG
+    o WEBP hasta 5MB, la guarda en backend/uploads/clientes/ y
+    actualiza foto_url con la ruta servida en /uploads/...
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    contenido = await foto.read()
+    _eliminar_foto_anterior(cliente.foto_url)
+    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR)
+    db.commit()
+    db.refresh(cliente)
+    return cliente
+
+
+# ==================================================================
+# REPORTES (Clientes, Ventas, Productos)
+# Modulo centralizado de reportes con filtros por entidad: cada uno
+# se puede "ver" como tabla (JSON) o "exportar" a CSV con los MISMOS
+# filtros aplicados. Requiere el permiso fino puede_exportar (ver
+# auth.requiere_permiso_exportar) - no basta con ser staff comun.
+# ==================================================================
+
+import enum as _enum_module
+
+
+def _serializar_valor_reporte(valor):
+    if isinstance(valor, (datetime, date)):
+        return valor.isoformat()
+    if isinstance(valor, _enum_module.Enum):
+        return valor.value
+    return valor
+
+
+def _fila_a_dict_reporte(obj, campos: List[str]) -> dict:
+    return {campo: _serializar_valor_reporte(getattr(obj, campo)) for campo in campos}
+
+
+def _respuesta_csv(campos: List[str], filas: List[dict], nombre_archivo: str) -> StreamingResponse:
+    salida = io.StringIO()
+    writer = csv.DictWriter(salida, fieldnames=campos)
+    writer.writeheader()
+    for fila in filas:
+        writer.writerow(fila)
+    salida.seek(0)
+    return StreamingResponse(
+        io.BytesIO(salida.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"},
+    )
+
+
+# ---- Clientes ----
+
+_CAMPOS_CLIENTE_EXPORTABLES = [
+    "id", "nombre", "apellidos", "dni", "telefono", "email",
+    "genero", "fecha_nacimiento", "direccion", "codigo_acceso",
+    "fecha_registro", "fecha_renovacion", "fecha_vencimiento",
+    "membresia_texto", "porcentaje_asistencia", "activo",
+]
+
+
+def _query_reporte_clientes(
+    db: Session,
+    filtro: str,
+    desde: Optional[date],
+    hasta: Optional[date],
+    dias_vencimiento: int,
+    gid: Optional[int] = None,
+):
+    query = db.query(models.Cliente)
+    if gid is not None:
+        query = query.filter(models.Cliente.gimnasio_id == gid)
+
+    if filtro == "activos":
+        query = query.filter(models.Cliente.activo == True)
+    elif filtro == "por_vencer":
+        hoy = date.today()
+        limite = hoy + timedelta(days=max(dias_vencimiento, 0))
+        query = (
+            query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+            .filter(
+                models.Cliente.activo == True,
+                models.ClienteMembresia.activo == True,
+                models.ClienteMembresia.fecha_fin.isnot(None),
+                models.ClienteMembresia.fecha_fin >= hoy,
+                models.ClienteMembresia.fecha_fin <= limite,
+            )
+            .distinct()
+        )
+    # filtro == "todos": sin filtro de estado
+
+    if desde:
+        query = query.filter(func.date(models.Cliente.fecha_registro) >= desde.isoformat())
+    if hasta:
+        query = query.filter(func.date(models.Cliente.fecha_registro) <= hasta.isoformat())
+
+    return query.order_by(models.Cliente.nombre)
+
+
+@app.get("/reportes/clientes", tags=["Reportes"])
+def reporte_clientes(
+    filtro: str = Query("activos", description="todos | activos | por_vencer"),
+    desde: Optional[date] = Query(None, description="Filtra por fecha_registro >= desde"),
+    hasta: Optional[date] = Query(None, description="Filtra por fecha_registro <= hasta"),
+    dias_vencimiento: int = Query(7, description="Solo aplica si filtro=por_vencer"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    clientes = _query_reporte_clientes(db, filtro, desde, hasta, dias_vencimiento, gid=get_gid(usuario)).all()
+    for c in clientes:
+        c.porcentaje_asistencia = _calcular_porcentaje_asistencia(db, c.id)
+    return [_fila_a_dict_reporte(c, _CAMPOS_CLIENTE_EXPORTABLES) for c in clientes]
+
+
+@app.get("/reportes/clientes/exportar", tags=["Reportes"])
+def exportar_reporte_clientes(
+    filtro: str = Query("activos", description="todos | activos | por_vencer"),
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    dias_vencimiento: int = 7,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    clientes = _query_reporte_clientes(db, filtro, desde, hasta, dias_vencimiento, gid=get_gid(usuario)).all()
+    for c in clientes:
+        c.porcentaje_asistencia = _calcular_porcentaje_asistencia(db, c.id)
+    filas = [_fila_a_dict_reporte(c, _CAMPOS_CLIENTE_EXPORTABLES) for c in clientes]
+    return _respuesta_csv(_CAMPOS_CLIENTE_EXPORTABLES, filas, "reporte_clientes.csv")
+
+
+# Mismas columnas que espera /clientes-historicos/importar: sirve de
+# "modelo" para que el staff arme su CSV/Excel de origen antes de
+# importar clientes antiguos.
+_COLUMNAS_PLANTILLA_HISTORICOS = [
+    "num_carnet", "apellidos", "fec_reg", "sexo", "estado", "situacion",
+    "direccion", "fono1", "fono2", "email", "fec_nac", "edad", "cdistrito",
+    "cplan", "fec_sus", "fec_ren", "fec_ven", "tarbases", "distrito", "asistencia",
+]
+
+_FILA_EJEMPLO_PLANTILLA_HISTORICOS = {
+    "num_carnet": "1024",
+    "apellidos": "Perez Garcia, Juan",
+    "fec_reg": "15/03/2020",
+    "sexo": "1",
+    "estado": "1",
+    "situacion": "1",
+    "direccion": "Av. Siempre Viva 123",
+    "fono1": "987654321",
+    "fono2": "",
+    "email": "juan.perez@email.com",
+    "fec_nac": "20/05/1990",
+    "edad": "34",
+    "cdistrito": "1",
+    "cplan": "3",
+    "fec_sus": "15/03/2020",
+    "fec_ren": "15/03/2024",
+    "fec_ven": "15/04/2024",
+    "tarbases": "TRIMESTRAL BASICO",
+    "distrito": "La Molina",
+    "asistencia": "120",
+}
+
+
+@app.get("/reportes/clientes/plantilla-importacion", tags=["Reportes"])
+def plantilla_importacion_clientes(_=Depends(auth.requiere_permiso_exportar)):
+    """CSV modelo con las columnas exactas que espera /clientes-historicos/importar (mas una fila de ejemplo)."""
+    return _respuesta_csv(
+        _COLUMNAS_PLANTILLA_HISTORICOS,
+        [_FILA_EJEMPLO_PLANTILLA_HISTORICOS],
+        "plantilla_importacion_clientes.csv",
+    )
+
+
+# ---- Ventas ----
+
+_CAMPOS_VENTA_EXPORTABLES = [
+    "id", "fecha_venta", "cliente_id", "usuario_id", "total",
+    "metodo_pago", "es_venta_rapida", "costo_comision_gym", "notas",
+]
+
+
+def _query_reporte_ventas(db: Session, desde: Optional[date], hasta: Optional[date], metodo_pago: Optional[str], gid: Optional[int] = None):
+    query = db.query(models.Venta)
+    if gid is not None:
+        query = query.filter(models.Venta.gimnasio_id == gid)
+    if desde:
+        query = query.filter(models.Venta.fecha_venta >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.Venta.fecha_venta <= datetime.combine(hasta, datetime.max.time()))
+    if metodo_pago:
+        query = query.filter(models.Venta.metodo_pago == metodo_pago)
+    return query.order_by(models.Venta.fecha_venta.desc())
+
+
+@app.get("/reportes/ventas", tags=["Reportes"])
+def reporte_ventas(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    metodo_pago: Optional[models.MetodoPago] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    ventas = _query_reporte_ventas(db, desde, hasta, metodo_pago, gid=get_gid(usuario)).all()
+    return [_fila_a_dict_reporte(v, _CAMPOS_VENTA_EXPORTABLES) for v in ventas]
+
+
+@app.get("/reportes/ventas/exportar", tags=["Reportes"])
+def exportar_reporte_ventas(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    metodo_pago: Optional[models.MetodoPago] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    ventas = _query_reporte_ventas(db, desde, hasta, metodo_pago, gid=get_gid(usuario)).all()
+    filas = [_fila_a_dict_reporte(v, _CAMPOS_VENTA_EXPORTABLES) for v in ventas]
+    return _respuesta_csv(_CAMPOS_VENTA_EXPORTABLES, filas, "reporte_ventas.csv")
+
+
+# ---- Productos ----
+
+_CAMPOS_PRODUCTO_EXPORTABLES = [
+    "id", "nombre", "categoria", "precio_compra", "precio_venta",
+    "stock", "stock_minimo", "activo", "fecha_creacion",
+]
+
+
+def _query_reporte_productos(db: Session, filtro: str, gid: Optional[int] = None):
+    query = db.query(models.Producto)
+    if gid is not None:
+        query = query.filter(models.Producto.gimnasio_id == gid)
+    if filtro == "activos":
+        query = query.filter(models.Producto.activo == True)
+    elif filtro == "bajo_stock":
+        query = query.filter(models.Producto.stock <= models.Producto.stock_minimo, models.Producto.activo == True)
+    return query.order_by(models.Producto.nombre)
+
+
+@app.get("/reportes/productos", tags=["Reportes"])
+def reporte_productos(
+    filtro: str = Query("activos", description="todos | activos | bajo_stock"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    productos = _query_reporte_productos(db, filtro, gid=get_gid(usuario)).all()
+    return [_fila_a_dict_reporte(p, _CAMPOS_PRODUCTO_EXPORTABLES) for p in productos]
+
+
+@app.get("/reportes/productos/exportar", tags=["Reportes"])
+def exportar_reporte_productos(
+    filtro: str = Query("activos", description="todos | activos | bajo_stock"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_exportar),
+):
+    productos = _query_reporte_productos(db, filtro, gid=get_gid(usuario)).all()
+    filas = [_fila_a_dict_reporte(p, _CAMPOS_PRODUCTO_EXPORTABLES) for p in productos]
+    return _respuesta_csv(_CAMPOS_PRODUCTO_EXPORTABLES, filas, "reporte_productos.csv")
+
+
+@app.post("/reportes/clientes/importar-historicos", response_model=schemas.ImportarClientesHistoricosResultado, tags=["Reportes"])
+async def importar_historicos_desde_reportes(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_permiso_exportar),
+):
+    """Alias de /clientes-historicos/importar, expuesto tambien bajo /reportes para la pantalla de Reportes."""
+    return await importar_clientes_historicos(archivo=archivo, db=db)
+
+
+# ==================================================================
+# ZONA DE PROFESORES (portal separado, requiere token tipo "profesor")
+# ==================================================================
+
+@app.get("/portal-profesor/mi-agenda", response_model=List[schemas.ClaseDictada], tags=["Portal Profesor"])
+def mi_agenda_profesor(
+    profesor: models.Empleado = Depends(auth.get_profesor_actual),
+    db: Session = Depends(get_db),
+):
+    """Las clases propias del profesor, de hoy en adelante."""
+    hoy = date.today()
+    return (
+        db.query(models.ClaseDictada)
+        .filter(models.ClaseDictada.profesor_id == profesor.id, models.ClaseDictada.fecha >= hoy)
+        .order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio)
+        .all()
+    )
+
+
+@app.get("/portal-profesor/otros-profesores", response_model=List[schemas.ProfesorMinimo], tags=["Portal Profesor"])
+def otros_profesores(
+    profesor: models.Empleado = Depends(auth.get_profesor_actual),
+    db: Session = Depends(get_db),
+):
+    """Lista de profesores de sala activos (excepto el mismo), para elegir un reemplazo puntual."""
+    return (
+        db.query(models.Empleado)
+        .filter(
+            models.Empleado.tipo == models.TipoEmpleado.PROFESOR_DE_SALA,
+            models.Empleado.activo == True,
+            models.Empleado.id != profesor.id,
+        )
+        .order_by(models.Empleado.nombre_completo)
+        .all()
+    )
+
+
+@app.put("/portal-profesor/clases/{clase_id}/reemplazo", response_model=schemas.ClaseDictada, tags=["Portal Profesor"])
+def asignar_reemplazo_desde_portal(
+    clase_id: int,
+    datos: schemas.ReemplazoRequest,
+    profesor: models.Empleado = Depends(auth.get_profesor_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Permite que el propio profesor asigne (o quite) un reemplazo
+    para una fecha puntual de SU clase (ej. si va a faltar). Solo
+    puede hacerlo sobre clases donde el es el titular o el actual
+    reemplazo (no sobre clases de otros profesores).
+    """
+    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id).first()
+    if not clase:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    if clase.profesor_id != profesor.id and clase.profesor_reemplazo_id != profesor.id:
+        raise HTTPException(status_code=403, detail="Solo puedes modificar tus propias clases")
+    if datos.profesor_reemplazo_id:
+        reemplazo = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_reemplazo_id).first()
+        if not reemplazo or reemplazo.tipo != models.TipoEmpleado.PROFESOR_DE_SALA or not reemplazo.activo:
+            raise HTTPException(status_code=400, detail="El reemplazo debe ser un profesor de sala activo")
+    clase.profesor_reemplazo_id = datos.profesor_reemplazo_id
+    db.commit()
+    db.refresh(clase)
+    return clase
+
+
+@app.get("/portal-profesor/ocupado", response_model=List[schemas.ClaseOcupada], tags=["Portal Profesor"])
+def ocupado_salas(
+    dias: int = 7,
+    _: models.Empleado = Depends(auth.get_profesor_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Calendario de ocupacion de TODAS las salas/clases (de cualquier
+    profesor) en los proximos N dias, para que un profesor sepa que
+    horarios/salas ya estan tomados antes de coordinar los suyos.
+    """
+    hoy = date.today()
+    limite = hoy + timedelta(days=dias)
+    filas = (
+        db.query(models.ClaseDictada)
+        .filter(models.ClaseDictada.fecha >= hoy, models.ClaseDictada.fecha <= limite)
+        .order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio)
+        .all()
+    )
+    return [
+        schemas.ClaseOcupada(
+            fecha=clase.fecha,
+            hora_inicio=clase.hora_inicio,
+            hora_fin=clase.hora_fin,
+            sala=clase.sala,
+            nombre_clase=clase.nombre_clase,
+            nombre_profesor=clase.profesor.nombre_completo if clase.profesor else "—",
+            nombre_profesor_reemplazo=clase.profesor_reemplazo.nombre_completo if clase.profesor_reemplazo else None,
+        )
+        for clase in filas
+    ]
+
+
+# ==================================================================
+# CLIENTES ANTIGUOS / HISTORICOS (importacion + reingreso)
+# ==================================================================
+
+def _parsear_fecha_legado(texto: Optional[str]):
+    texto = (texto or "").strip()
+    if not texto or texto.replace(" ", "").replace("-", "") == "":
+        return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(texto, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parsear_entero_legado(texto: Optional[str]):
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    try:
+        return int(float(texto))
+    except ValueError:
+        return None
+
+
+@app.get("/clientes-historicos/", response_model=List[schemas.ClienteHistoricoItem], tags=["Clientes Historicos"])
+def buscar_clientes_historicos(
+    buscar: str = Query(..., min_length=2, description="Busca por nombre, telefono o email"),
+    incluir_migrados: bool = False,
+    limit: int = 15,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Busca en la base historica de clientes antiguos (puede tener
+    miles de filas), usada por la intencion 'Reingreso de cliente
+    antiguo' del Panel Principal. Exige al menos 2 caracteres para
+    evitar escanear toda la tabla sin filtro.
+    """
+    # Busqueda por palabras, independiente del orden (los historicos
+    # guardan "Apellidos, Nombres" y el staff suele buscar al reves).
+    query = db.query(models.ClienteHistorico)
+    for palabra in buscar.split():
+        like = f"%{palabra}%"
+        query = query.filter(
+            (models.ClienteHistorico.nombre_completo.ilike(like))
+            | (models.ClienteHistorico.telefono1.ilike(like))
+            | (models.ClienteHistorico.telefono2.ilike(like))
+            | (models.ClienteHistorico.email.ilike(like))
+        )
+    if not incluir_migrados:
+        query = query.filter(models.ClienteHistorico.migrado == False)
+    return query.order_by(models.ClienteHistorico.nombre_completo).limit(limit).all()
+
+
+@app.post("/clientes-historicos/importar", response_model=schemas.ImportarClientesHistoricosResultado, tags=["Clientes Historicos"])
+async def importar_clientes_historicos(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_permiso_exportar),
+):
+    """
+    Importa clientes antiguos desde un CSV/TSV exportado de un
+    sistema anterior. Columnas esperadas en el encabezado (no
+    sensible a mayusculas): num_carnet, apellidos, fec_reg, sexo,
+    estado, situacion, direccion, fono1, fono2, email, fec_nac,
+    edad, cdistrito, cplan, fec_sus, fec_ren, fec_ven, tarbases,
+    distrito, asistencia. Detecta automaticamente si el separador es
+    tabulacion o coma. Si un num_carnet ya existe, la fila se omite
+    (evita duplicar en reimportaciones).
+    """
+    contenido = (await archivo.read()).decode("utf-8-sig", errors="replace")
+    lineas = contenido.splitlines()
+    if not lineas:
+        raise HTTPException(status_code=400, detail="El archivo esta vacio")
+    delimitador = _detectar_delimitador(lineas[0])
+
+    lector = csv.DictReader(io.StringIO(contenido), delimiter=delimitador)
+    lector.fieldnames = [(c or "").strip().lower() for c in (lector.fieldnames or [])]
+
+    total_leidas = 0
+    total_importados = 0
+    total_omitidos = 0
+    errores: List[str] = []
+
+    carnets_existentes = {
+        fila[0] for fila in db.query(models.ClienteHistorico.num_carnet).all() if fila[0] is not None
+    }
+
+    for fila in lector:
+        total_leidas += 1
+        try:
+            nombre_raw = (fila.get("apellidos") or "").strip()
+            if not nombre_raw:
+                total_omitidos += 1
+                continue
+
+            num_carnet = _parsear_entero_legado(fila.get("num_carnet"))
+            if num_carnet is not None and num_carnet in carnets_existentes:
+                total_omitidos += 1
+                continue
+
+            apellidos, nombres = None, None
+            if "," in nombre_raw:
+                partes = nombre_raw.split(",", 1)
+                apellidos = partes[0].strip()
+                nombres = partes[1].strip()
+
+            sexo_raw = (fila.get("sexo") or "").strip()
+            sexo = {"1": "M", "2": "F"}.get(sexo_raw, sexo_raw or None)
+
+            email_raw = (fila.get("email") or "").strip()
+
+            registro = models.ClienteHistorico(
+                num_carnet=num_carnet,
+                nombre_completo=nombre_raw,
+                apellidos=apellidos,
+                nombres=nombres,
+                fecha_registro=_parsear_fecha_legado(fila.get("fec_reg")),
+                sexo=sexo,
+                estado_legado=_parsear_entero_legado(fila.get("estado")),
+                situacion_legado=_parsear_entero_legado(fila.get("situacion")),
+                direccion=(fila.get("direccion") or "").strip() or None,
+                telefono1=(fila.get("fono1") or "").strip() or None,
+                telefono2=(fila.get("fono2") or "").strip() or None,
+                email=email_raw or None,
+                fecha_nacimiento=_parsear_fecha_legado(fila.get("fec_nac")),
+                edad_legado=_parsear_entero_legado(fila.get("edad")),
+                distrito=(fila.get("distrito") or "").strip() or None,
+                codigo_distrito_legado=_parsear_entero_legado(fila.get("cdistrito")),
+                codigo_plan_legado=_parsear_entero_legado(fila.get("cplan")),
+                plan_texto=(fila.get("tarbases") or "").strip() or None,
+                fecha_suscripcion=_parsear_fecha_legado(fila.get("fec_sus")),
+                fecha_renovacion=_parsear_fecha_legado(fila.get("fec_ren")),
+                fecha_vencimiento=_parsear_fecha_legado(fila.get("fec_ven")),
+                total_asistencias_legado=_parsear_entero_legado(fila.get("asistencia")),
+            )
+            db.add(registro)
+            if num_carnet is not None:
+                carnets_existentes.add(num_carnet)
+            total_importados += 1
+        except Exception as e:
+            errores.append(f"Fila {total_leidas}: {e}")
+
+    db.commit()
+    return schemas.ImportarClientesHistoricosResultado(
+        total_filas_leidas=total_leidas,
+        total_importados=total_importados,
+        total_omitidos_duplicados=total_omitidos,
+        errores=errores[:20],
+    )
+
+
+@app.post("/clientes-historicos/{historico_id}/reingresar", response_model=schemas.Cliente, tags=["Clientes Historicos"])
+def reingresar_cliente_historico(
+    historico_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Convierte un registro historico en un Cliente activo nuevo
+    (o devuelve el ya existente si este registro ya fue migrado
+    antes), pensado para el flujo de 'Reingreso' en Busqueda
+    inteligente: tras esto, el cliente queda listo para venderle
+    una nueva membresia en Venta Rapida.
+    """
+    _validar_limite_plan(db, _, "clientes")
+    historico = db.query(models.ClienteHistorico).filter(models.ClienteHistorico.id == historico_id).first()
+    if not historico:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    if historico.migrado and historico.cliente_nuevo_id:
+        cliente_existente = db.query(models.Cliente).filter(models.Cliente.id == historico.cliente_nuevo_id).first()
+        if cliente_existente:
+            return cliente_existente
+
+    email_valido = historico.email if historico.email and "@" in historico.email else None
+
+    nuevo_cliente = models.Cliente(
+        nombre=historico.nombres or historico.nombre_completo,
+        apellidos=historico.apellidos,
+        telefono=historico.telefono1 or historico.telefono2,
+        email=email_valido,
+        fecha_nacimiento=historico.fecha_nacimiento,
+        direccion=historico.direccion,
+    )
+    db.add(nuevo_cliente)
+    db.commit()
+    db.refresh(nuevo_cliente)
+
+    historico.migrado = True
+    historico.cliente_nuevo_id = nuevo_cliente.id
+    db.commit()
+
+    return nuevo_cliente
+
+
+# ==================================================================
+# MEMBRESIAS
+# ==================================================================
+
+@app.get("/membresias/", response_model=List[schemas.Membresia], tags=["Membresias"])
+def listar_membresias(
+    incluir_inactivas: bool = Query(False, description="Si es true, incluye tambien las tarifas desactivadas"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    query = db.query(models.Membresia).filter(models.Membresia.gimnasio_id == get_gid(usuario))
+    if not incluir_inactivas:
+        query = query.filter(models.Membresia.activo == True)
+    return query.order_by(models.Membresia.id.desc()).all()
+
+
+@app.get("/membresias/por-vencer", response_model=List[schemas.MembresiaPorVencer], tags=["Membresias"])
+def membresias_por_vencer(
+    dias: Optional[int] = Query(None, description="Si no se envia, usa dias_aviso_vencimiento de Configuracion"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Clientes con una membresia activa cuya fecha_fin cae dentro de
+    los proximos N dias. N es configurable (ver /configuracion/),
+    pensado para la tarjeta clickeable 'Membresias por vencer' del
+    panel principal.
+    """
+    config = _get_o_crear_configuracion(db)
+    dias_efectivos = dias if dias is not None else (config.dias_aviso_vencimiento or 7)
+    hoy = date.today()
+    limite = hoy + timedelta(days=dias_efectivos)
+
+    filas = (
+        db.query(models.ClienteMembresia, models.Cliente, models.Membresia)
+        .join(models.Cliente, models.ClienteMembresia.cliente_id == models.Cliente.id)
+        .join(models.Membresia, models.ClienteMembresia.membresia_id == models.Membresia.id)
+        .filter(
+            models.Cliente.gimnasio_id == get_gid(usuario),
+            models.ClienteMembresia.activo == True,
+            models.ClienteMembresia.fecha_fin.isnot(None),
+            models.ClienteMembresia.fecha_fin >= hoy,
+            models.ClienteMembresia.fecha_fin <= limite,
+        )
+        .order_by(models.ClienteMembresia.fecha_fin)
+        .all()
+    )
+
+    resultado = []
+    for cm, cliente, membresia in filas:
+        nombre_completo = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
+        resultado.append(
+            schemas.MembresiaPorVencer(
+                cliente_membresia_id=cm.id,
+                cliente_id=cliente.id,
+                nombre_cliente=nombre_completo,
+                telefono=cliente.telefono,
+                membresia_nombre=membresia.nombre,
+                fecha_fin=cm.fecha_fin,
+                dias_restantes=(cm.fecha_fin - hoy).days,
+            )
+        )
+    return resultado
+
+
+@app.post("/membresias/", response_model=schemas.Membresia, tags=["Membresias"])
+def crear_membresia(membresia: schemas.MembresiaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    db_membresia = models.Membresia(**membresia.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_membresia)
+    db.commit()
+    db.refresh(db_membresia)
+    return db_membresia
+
+
+@app.put("/membresias/{membresia_id}", response_model=schemas.Membresia, tags=["Membresias"])
+def actualizar_membresia(
+    membresia_id: int,
+    datos: schemas.MembresiaUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    membresia = db.query(models.Membresia).filter(models.Membresia.id == membresia_id, models.Membresia.gimnasio_id == get_gid(usuario)).first()
+    if not membresia:
+        raise HTTPException(status_code=404, detail="Membresia no encontrada")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(membresia, campo, valor)
+    db.commit()
+    db.refresh(membresia)
+    return membresia
+
+
+@app.delete("/membresias/{membresia_id}", tags=["Membresias"])
+def eliminar_membresia(membresia_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    membresia = db.query(models.Membresia).filter(models.Membresia.id == membresia_id, models.Membresia.gimnasio_id == get_gid(usuario)).first()
+    if not membresia:
+        raise HTTPException(status_code=404, detail="Membresia no encontrada")
+    membresia.activo = False
+    db.commit()
+    return {"message": "Membresia desactivada correctamente"}
+
+
+_CAMPOS_MEMBRESIA_EXPORTABLES = [
+    "id", "nombre", "descripcion", "precio", "duracion_dias", "duracion_meses", "duracion_dias_extra",
+    "monto_inicial", "fracciones_pago_deuda", "penalizacion", "dias_gracia_pago", "monto_mensual",
+    "dias_congelamiento", "permite_congelamiento", "dias_acceso_periodo", "hora_inicio_acceso",
+    "hora_fin_acceso", "dias_semana_acceso", "password_tarifa", "congelado_no_aparece_pagos",
+    "no_aparecer_reporte_cruce_medidas", "incluye_nutricion", "activo",
+]
+
+
+@app.get("/membresias/exportar", tags=["Membresias"])
+def exportar_membresias(
+    incluir_inactivas: bool = True,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Exporta el catalogo completo de tarifas a CSV (compatible para reimportar despues)."""
+    query = q(db, models.Membresia, usuario)
+    if not incluir_inactivas:
+        query = query.filter(models.Membresia.activo == True)
+    membresias = query.order_by(models.Membresia.id).all()
+
+    salida = io.StringIO()
+    writer = csv.DictWriter(salida, fieldnames=_CAMPOS_MEMBRESIA_EXPORTABLES)
+    writer.writeheader()
+    for m in membresias:
+        writer.writerow({campo: getattr(m, campo) for campo in _CAMPOS_MEMBRESIA_EXPORTABLES})
+    salida.seek(0)
+
+    return StreamingResponse(
+        io.BytesIO(salida.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=membresias.csv"},
+    )
+
+
+@app.post("/membresias/importar", tags=["Membresias"])
+async def importar_membresias(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Importa tarifas desde un CSV con las mismas columnas que exporta
+    /membresias/exportar. La columna 'id' se ignora (siempre se
+    crean como registros nuevos).
+    """
+    contenido = (await archivo.read()).decode("utf-8-sig", errors="replace")
+    lineas = contenido.splitlines()
+    if not lineas:
+        raise HTTPException(status_code=400, detail="El archivo esta vacio")
+    delimitador = _detectar_delimitador(lineas[0])
+
+    lector = csv.DictReader(io.StringIO(contenido), delimiter=delimitador)
+    lector.fieldnames = [(c or "").strip().lower() for c in (lector.fieldnames or [])]
+
+    campos_bool = {"activo", "permite_congelamiento", "congelado_no_aparece_pagos", "no_aparecer_reporte_cruce_medidas", "incluye_nutricion"}
+    campos_int = {"duracion_dias", "duracion_meses", "duracion_dias_extra", "fracciones_pago_deuda", "dias_gracia_pago", "dias_congelamiento", "dias_acceso_periodo"}
+    campos_float = {"precio", "monto_inicial", "penalizacion", "monto_mensual"}
+    campos_validos = set(_CAMPOS_MEMBRESIA_EXPORTABLES) - {"id"}
+
+    total_importadas = 0
+    errores: List[str] = []
+
+    for indice, fila in enumerate(lector, start=1):
+        try:
+            datos = {}
+            for campo, valor in fila.items():
+                campo = (campo or "").strip()
+                if campo not in campos_validos or valor is None or str(valor).strip() == "":
+                    continue
+                valor = str(valor).strip()
+                if campo in campos_bool:
+                    datos[campo] = valor.lower() in ("1", "true", "si", "s\u00ed", "yes")
+                elif campo in campos_int:
+                    datos[campo] = int(float(valor))
+                elif campo in campos_float:
+                    datos[campo] = float(valor)
+                else:
+                    datos[campo] = valor
+
+            if not datos.get("nombre") or "precio" not in datos or "duracion_dias" not in datos:
+                errores.append(f"Fila {indice}: falta nombre, precio o duracion_dias")
+                continue
+
+            db.add(models.Membresia(**datos, gimnasio_id=get_gid(usuario)))
+            total_importadas += 1
+        except Exception as e:
+            errores.append(f"Fila {indice}: {e}")
+
+    db.commit()
+    return {"total_importadas": total_importadas, "errores": errores[:20]}
+
+
+@app.post("/clientes/{cliente_id}/membresias", response_model=schemas.ClienteMembresia, tags=["Membresias"])
+def asignar_membresia_a_cliente(
+    cliente_id: int,
+    datos: schemas.ClienteMembresiaCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(auth.requiere_staff),
+):
+    gid = get_gid(usuario_actual)
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == gid).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    membresia = db.query(models.Membresia).filter(models.Membresia.id == datos.membresia_id, models.Membresia.gimnasio_id == gid).first()
+    if not membresia:
+        raise HTTPException(status_code=404, detail="Membresia no encontrada")
+
+    fecha_inicio = datos.fecha_inicio or date.today()
+    fecha_fin = datos.fecha_fin or (fecha_inicio + timedelta(days=membresia.duracion_dias))
+
+    db_cm = models.ClienteMembresia(
+        cliente_id=cliente_id,
+        membresia_id=datos.membresia_id,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        monto_pagado=datos.monto_pagado if datos.monto_pagado is not None else membresia.precio,
+        fecha_pago_saldo=datos.fecha_pago_saldo,
+        metodo_pago=datos.metodo_pago or "efectivo",
+        vendido_por_id=usuario_actual.id,
+    )
+    db.add(db_cm)
+
+    # Al matricular/renovar, estos datos del cliente se recalculan
+    # solos (no se ingresan a mano en el formulario de Cliente).
+    cliente.fecha_renovacion = fecha_inicio
+    cliente.fecha_vencimiento = fecha_fin
+    # Si el cliente tenia un texto de membresia importado del sistema
+    # anterior (membresia_texto), lo limpiamos porque ahora ya tiene
+    # una ClienteMembresia real que reemplaza esa referencia vieja.
+    if cliente.membresia_texto:
+        cliente.membresia_texto = None
+    # Si el cliente estaba inactivo (por ejemplo, importado de otra
+    # base y nunca editado), reactivarlo al asignarle una membresia.
+    if not cliente.activo:
+        cliente.activo = True
+
+    db.commit()
+    db.refresh(db_cm)
+    return db_cm
+
+
+@app.get("/clientes/{cliente_id}/membresias", response_model=List[schemas.ClienteMembresia], tags=["Membresias"])
+def listar_membresias_de_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff),
+):
+    """Historial completo de membresias asignadas a un cliente (incluye inactivas), de la mas reciente a la mas antigua."""
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return (
+        db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id)
+        .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
+        .all()
+    )
+
+
+def _sincronizar_fechas_cliente(db: Session, cliente_id: int):
+    """
+    Recalcula fecha_renovacion / fecha_vencimiento del cliente a
+    partir de su membresia mas reciente (por fecha_inicio). Se llama
+    tras editar o eliminar un ClienteMembresia para que la ficha del
+    cliente no quede desincronizada.
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        return
+    ultima = (
+        db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id)
+        .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
+        .first()
+    )
+    cliente.fecha_renovacion = ultima.fecha_inicio if ultima else None
+    cliente.fecha_vencimiento = ultima.fecha_fin if ultima else None
+
+
+@app.get("/cliente-membresias/{cm_id}", response_model=schemas.ClienteMembresia, tags=["Membresias"])
+def obtener_cliente_membresia(cm_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff)):
+    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+    if not cm:
+        raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+    return cm
+
+
+@app.put("/cliente-membresias/{cm_id}", response_model=schemas.ClienteMembresia, tags=["Membresias"])
+def editar_cliente_membresia(
+    cm_id: int,
+    datos: schemas.ClienteMembresiaUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_administrador),
+):
+    """
+    Correccion administrativa de una membresia asignada: plan,
+    fechas, monto pagado, fecha de pago del saldo y estado. Solo
+    administrador. Tras guardar, se resincronizan las fechas de
+    renovacion/vencimiento de la ficha del cliente.
+    """
+    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+    if not cm:
+        raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+
+    datos_dict = datos.model_dump(exclude_unset=True)
+
+    if "membresia_id" in datos_dict:
+        membresia = db.query(models.Membresia).filter(models.Membresia.id == datos_dict["membresia_id"]).first()
+        if not membresia:
+            raise HTTPException(status_code=404, detail="Membresia no encontrada")
+
+    if "monto_pagado" in datos_dict and datos_dict["monto_pagado"] is not None and datos_dict["monto_pagado"] < 0:
+        raise HTTPException(status_code=400, detail="El monto pagado no puede ser negativo")
+
+    for campo, valor in datos_dict.items():
+        setattr(cm, campo, valor)
+
+    if cm.fecha_fin and cm.fecha_inicio and cm.fecha_fin < cm.fecha_inicio:
+        raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
+
+    _sincronizar_fechas_cliente(db, cm.cliente_id)
+    db.commit()
+    db.refresh(cm)
+    return cm
+
+
+@app.delete("/cliente-membresias/{cm_id}", tags=["Membresias"])
+def eliminar_cliente_membresia(cm_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_administrador)):
+    """Elimina una membresia asignada por error (borrado real, corrige el historial). Solo administrador. Resincroniza las fechas de la ficha del cliente."""
+    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+    if not cm:
+        raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+    cliente_id = cm.cliente_id
+    db.delete(cm)
+    db.flush()
+    _sincronizar_fechas_cliente(db, cliente_id)
+    db.commit()
+    return {"message": "Membresia asignada eliminada"}
+
+
+@app.get("/clientes/{cliente_id}/membresias/{cm_id}/recibo.pdf", tags=["Membresias"])
+def recibo_membresia_pdf(
+    cliente_id: int,
+    cm_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id, models.ClienteMembresia.cliente_id == cliente_id).first()
+    if not cliente or not cm:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    membresia = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
+    config = _get_o_crear_configuracion(db)
+    pdf_bytes = pdf_generator.generar_recibo_membresia_pdf(cm, cliente, membresia, config)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=recibo_membresia_{cm_id}.pdf"},
+    )
+
+
+@app.get("/clientes/{cliente_id}/membresias/{cm_id}/contrato.pdf", tags=["Membresias"])
+def contrato_matricula_pdf(
+    cliente_id: int,
+    cm_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id, models.ClienteMembresia.cliente_id == cliente_id).first()
+    if not cliente or not cm:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    membresia = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
+    config = _get_o_crear_configuracion(db)
+    pdf_bytes = pdf_generator.generar_contrato_pdf(cliente, cm, membresia, config)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=contrato_{cm_id}.pdf"},
+    )
+
+
+@app.get("/clientes/{cliente_id}/ficha", response_model=schemas.ClienteFicha, tags=["Clientes"])
+def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+    """
+    Resumen agregado para la columna de busqueda inteligente del
+    panel principal: membresia activa, deuda pendiente (precio de
+    la membresia menos lo pagado), % de asistencia de los ultimos
+    30 dias y los ultimos 2 ingresos.
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    hoy = date.today()
+    cm_activa = (
+        db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id, models.ClienteMembresia.activo == True)
+        .order_by(models.ClienteMembresia.fecha_fin.desc())
+        .first()
+    )
+
+    membresia_actual = None
+    if cm_activa:
+        membresia = db.query(models.Membresia).filter(models.Membresia.id == cm_activa.membresia_id).first()
+        deuda = max((membresia.precio if membresia else 0.0) - (cm_activa.monto_pagado or 0.0), 0.0)
+        dias_restantes = (cm_activa.fecha_fin - hoy).days if cm_activa.fecha_fin else None
+        membresia_actual = schemas.FichaMembresiaActual(
+            cm_id=cm_activa.id,
+            nombre=membresia.nombre if membresia else "—",
+            fecha_fin=cm_activa.fecha_fin,
+            dias_restantes=dias_restantes,
+            precio=membresia.precio if membresia else 0.0,
+            monto_pagado=cm_activa.monto_pagado or 0.0,
+            deuda_pendiente=deuda,
+            fecha_pago_saldo=cm_activa.fecha_pago_saldo,
+        )
+
+    desde_30_dias = datetime.now() - timedelta(days=30)
+    dias_con_ingreso = (
+        db.query(func.count(func.distinct(func.date(models.Asistencia.fecha_hora_entrada))))
+        .filter(models.Asistencia.cliente_id == cliente_id, models.Asistencia.fecha_hora_entrada >= desde_30_dias)
+        .scalar()
+    )
+    porcentaje_asistencia = min(round((dias_con_ingreso or 0) / 30 * 100, 1), 100.0)
+
+    ultimos_ingresos = (
+        db.query(models.Asistencia)
+        .filter(models.Asistencia.cliente_id == cliente_id)
+        .order_by(models.Asistencia.fecha_hora_entrada.desc())
+        .limit(2)
+        .all()
+    )
+
+    nombre_completo = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
+    return schemas.ClienteFicha(
+        cliente_id=cliente.id,
+        nombre_completo=nombre_completo,
+        foto_url=cliente.foto_url,
+        membresia_actual=membresia_actual,
+        porcentaje_asistencia=porcentaje_asistencia,
+        ultimos_ingresos=ultimos_ingresos,
+    )
+
+
+# ==================================================================
+# PRODUCTOS E INVENTARIO
+# ==================================================================
+
+@app.get("/productos/", response_model=List[schemas.Producto], tags=["Productos"])
+def listar_productos(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    return q(db, models.Producto, usuario).filter(models.Producto.activo == True).order_by(models.Producto.nombre).all()
+
+
+@app.get("/productos/mas-vendidos", response_model=List[schemas.ProductoVendido], tags=["Productos"])
+def productos_mas_vendidos(
+    limit: int = 30,
+    buscar: Optional[str] = Query(None, description="Filtra por nombre o categoria"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Catalogo de productos activos ordenado de mayor a menor por
+    unidades vendidas historicamente (para la Venta Rapida mini del
+    panel principal). Los productos sin ventas aun aparecen al
+    final, con cantidad_vendida = 0.
+    """
+    ventas_por_producto = (
+        db.query(
+            models.DetalleVenta.producto_id,
+            func.coalesce(func.sum(models.DetalleVenta.cantidad), 0).label("total_vendido"),
+        )
+        .group_by(models.DetalleVenta.producto_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(models.Producto, func.coalesce(ventas_por_producto.c.total_vendido, 0))
+        .outerjoin(ventas_por_producto, models.Producto.id == ventas_por_producto.c.producto_id)
+        .filter(models.Producto.activo == True, models.Producto.gimnasio_id == get_gid(usuario))
+    )
+
+    if buscar:
+        like = f"%{buscar}%"
+        query = query.filter((models.Producto.nombre.ilike(like)) | (models.Producto.categoria.ilike(like)))
+
+    filas = (
+        query.order_by(func.coalesce(ventas_por_producto.c.total_vendido, 0).desc(), models.Producto.nombre)
+        .limit(limit)
+        .all()
+    )
+
+    return [schemas.ProductoVendido(producto=producto, cantidad_vendida=int(cantidad)) for producto, cantidad in filas]
+
+
+@app.post("/productos/", response_model=schemas.Producto, tags=["Productos"])
+def crear_producto(producto: schemas.ProductoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    _validar_limite_plan(db, usuario, "productos")
+    db_producto = models.Producto(**producto.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_producto)
+    db.commit()
+    db.refresh(db_producto)
+    return db_producto
+
+
+@app.put("/productos/{producto_id}", response_model=schemas.Producto, tags=["Productos"])
+def actualizar_producto(
+    producto_id: int,
+    datos: schemas.ProductoUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id, models.Producto.gimnasio_id == get_gid(usuario)).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(producto, campo, valor)
+    db.commit()
+    db.refresh(producto)
+    return producto
+
+
+@app.delete("/productos/{producto_id}", tags=["Productos"])
+def eliminar_producto(producto_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id, models.Producto.gimnasio_id == get_gid(usuario)).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    producto.activo = False
+    db.commit()
+    return {"message": "Producto desactivado correctamente"}
+
+
+@app.post("/productos/{producto_id}/foto", response_model=schemas.Producto, tags=["Productos"])
+async def subir_foto_producto(
+    producto_id: int,
+    foto: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Sube/reemplaza la foto de un producto. Si hay foto, tiene prioridad sobre el icono emoji en Venta Rapida."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id, models.Producto.gimnasio_id == get_gid(usuario)).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    contenido = await foto.read()
+    _eliminar_foto_anterior(producto.foto_url)
+    producto.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_PRODUCTOS_DIR)
+    db.commit()
+    db.refresh(producto)
+    return producto
+
+
+# ---- Compras (reposicion de stock con costo, alimenta Egresos) ----
+# AUDITORIA: este endpoint no existia. Sin el, el modelo Compra nunca
+# se llenaba y "Compra de productos" en Egresos/Resumen siempre
+# mostraba S/0, aunque se repusiera stock a mano desde "Ajustar Stock".
+
+@app.get("/compras/", response_model=List[schemas.Compra], tags=["Productos"])
+def listar_compras(
+    producto_id: Optional[int] = None,
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    query = db.query(models.Compra).join(models.Producto, models.Compra.producto_id == models.Producto.id).filter(models.Producto.gimnasio_id == get_gid(usuario))
+    if producto_id:
+        query = query.filter(models.Compra.producto_id == producto_id)
+    if desde:
+        query = query.filter(models.Compra.fecha >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.Compra.fecha <= datetime.combine(hasta, datetime.max.time()))
+    return query.order_by(models.Compra.fecha.desc()).limit(limit).all()
+
+
+@app.post("/compras/", response_model=schemas.Compra, tags=["Productos"])
+def registrar_compra(
+    datos: schemas.CompraCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Registra una compra real de mercaderia: aumenta el stock del
+    producto, actualiza su precio_compra (el mas reciente) y queda
+    como egreso en /egresos/ y /resumen (categoria compra_producto).
+    """
+    if datos.cantidad <= 0:
+        raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
+    if datos.costo_unitario < 0:
+        raise HTTPException(status_code=400, detail="El costo unitario no puede ser negativo")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == datos.producto_id, models.Producto.gimnasio_id == get_gid(usuario_actual)).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    costo_total = round(datos.cantidad * datos.costo_unitario, 2)
+    db_compra = models.Compra(
+        producto_id=datos.producto_id,
+        cantidad=datos.cantidad,
+        costo_unitario=datos.costo_unitario,
+        costo_total=costo_total,
+        usuario_id=usuario_actual.id,
+        notas=datos.notas,
+    )
+    db.add(db_compra)
+
+    producto.stock += datos.cantidad
+    producto.precio_compra = datos.costo_unitario
+
+    db.commit()
+    db.refresh(db_compra)
+    return db_compra
+
+
+@app.delete("/compras/{compra_id}", tags=["Productos"])
+def eliminar_compra(compra_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Elimina una compra registrada por error y resta el stock que habia sumado. Solo administrador."""
+    compra = (
+        db.query(models.Compra)
+        .join(models.Producto, models.Compra.producto_id == models.Producto.id)
+        .filter(models.Compra.id == compra_id, models.Producto.gimnasio_id == get_gid(usuario))
+        .first()
+    )
+    if not compra:
+        raise HTTPException(status_code=404, detail="Compra no encontrada")
+    producto = db.query(models.Producto).filter(models.Producto.id == compra.producto_id).first()
+    if producto:
+        producto.stock = max(producto.stock - compra.cantidad, 0)
+    db.delete(compra)
+    db.commit()
+    return {"message": "Compra eliminada y stock corregido"}
+
+
+# ==================================================================
+# VENTAS (incluye venta rapida)
+# ==================================================================
+
+def _escalar_porcion(porcion_casera: str, factor: float) -> str:
+    """Escala una porcion casera segun el factor de gramos.
+    Ej: porcion_casera='1 unidad', factor=2.0 -> '2 unidades'
+        porcion_casera='1/2 vaso', factor=1.5 -> 'aprox 3/4 vaso'
+    """
+    import re
+    if not porcion_casera or factor <= 0:
+        return porcion_casera or ""
+    # Extraer numero (entero, decimal o fraccion) al inicio
+    m = re.match(r'^([\d./]+)\s*(.*)$', porcion_casera.strip())
+    if not m:
+        return porcion_casera  # no empieza con numero, devolver tal cual
+    num_str, resto = m.group(1), m.group(2).strip()
+    try:
+        if '/' in num_str:
+            partes = num_str.split('/')
+            base = float(partes[0]) / float(partes[1])
+        else:
+            base = float(num_str)
+    except (ValueError, ZeroDivisionError):
+        return porcion_casera
+    resultado = round(base * factor, 1)
+    # Formatear bonito: 1.0->"1", 0.5->"1/2", 0.25->"1/4", 1.5->"1 1/2", 0.33->"1/3"
+    fracciones_comunes = {0.25: "1/4", 0.33: "1/3", 0.5: "1/2", 0.67: "2/3", 0.75: "3/4"}
+    if resultado == int(resultado):
+        num_fmt = str(int(resultado))
+    else:
+        parte_entera = int(resultado)
+        parte_decimal = round(resultado - parte_entera, 2)
+        frac = fracciones_comunes.get(parte_decimal)
+        if frac:
+            num_fmt = f"{parte_entera} {frac}" if parte_entera else frac
+        else:
+            num_fmt = f"{resultado:.1f}"
+    return f"{num_fmt} {resto}"
+
+
+def _calcular_costo_comision_gym(subtotal: float, metodo_pago: models.MetodoPago, config: models.Configuracion) -> float:
+    """
+    La comision de la pasarela (tarjeta/QR) NO se le cobra al
+    cliente: el gimnasio la asume como gasto. Esta funcion devuelve
+    cuanto absorbe el gimnasio (solo para fines contables), y el
+    total que paga el cliente sigue siendo el subtotal tal cual.
+    """
+    if metodo_pago == models.MetodoPago.TARJETA:
+        return round(subtotal * config.comision_tarjeta / 100, 2)
+    if metodo_pago == models.MetodoPago.QR:
+        return round(subtotal * config.comision_qr / 100, 2)
+    return 0.0
+
+
+def _get_o_crear_configuracion(db: Session) -> models.Configuracion:
+    config = db.query(models.Configuracion).filter(models.Configuracion.id == 1).first()
+    if not config:
+        config = models.Configuracion(id=1)
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+    return config
+
+
+@app.get("/ventas/", response_model=List[schemas.Venta], tags=["Ventas"])
+def listar_ventas(
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    return (
+        q(db, models.Venta, usuario)
+        .order_by(models.Venta.fecha_venta.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+@app.get("/ventas/recientes", response_model=List[schemas.Venta], tags=["Ventas"])
+def ventas_recientes(limit: int = 5, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    return q(db, models.Venta, usuario).order_by(models.Venta.fecha_venta.desc()).limit(limit).all()
+
+
+class VentaUpdateAdmin(schemas.BaseModel):
+    cliente_id: Optional[int] = None
+    metodo_pago: Optional[models.MetodoPago] = None
+    notas: Optional[str] = None
+
+
+@app.put("/ventas/{venta_id}", response_model=schemas.Venta, tags=["Ventas"])
+def editar_venta(
+    venta_id: int,
+    datos: VentaUpdateAdmin,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """
+    Correccion administrativa de una venta: cliente, metodo de pago
+    y notas. NO permite editar los productos/montos de la venta (eso
+    afectaria el stock ya descontado); para corregir productos, se
+    recomienda eliminar la venta y registrarla de nuevo.
+    """
+    venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(venta, campo, valor)
+    db.commit()
+    db.refresh(venta)
+    return venta
+
+
+@app.delete("/ventas/{venta_id}", tags=["Ventas"])
+def eliminar_venta(venta_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Elimina una venta y restaura el stock de los productos vendidos. Solo administrador (corrige errores de registro)."""
+    venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    for detalle in venta.detalles:
+        producto = db.query(models.Producto).filter(models.Producto.id == detalle.producto_id).first()
+        if producto:
+            producto.stock += detalle.cantidad
+    db.delete(venta)
+    db.commit()
+    return {"message": "Venta eliminada y stock restaurado"}
+
+
+@app.get("/ventas/{venta_id}/boleta.pdf", tags=["Ventas"])
+def boleta_venta_pdf(venta_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == venta.cliente_id).first() if venta.cliente_id else None
+    config = _get_o_crear_configuracion(db)
+    pdf_bytes = pdf_generator.generar_boleta_pdf(venta, cliente, config)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=boleta_{venta_id}.pdf"},
+    )
+
+
+@app.post("/ventas/", response_model=schemas.Venta, tags=["Ventas"])
+def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuario_actual: models.Usuario = Depends(auth.requiere_staff)):
+    if not venta.detalles:
+        raise HTTPException(status_code=400, detail="La venta debe tener al menos un producto")
+
+    config = _get_o_crear_configuracion(db)
+    gid = get_gid(usuario_actual)
+
+    subtotal_total = 0.0
+    detalles_db = []
+
+    for item in venta.detalles:
+        producto = db.query(models.Producto).filter(models.Producto.id == item.producto_id, models.Producto.gimnasio_id == gid).first()
+        if not producto:
+            raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no encontrado")
+        if producto.stock < item.cantidad:
+            raise HTTPException(status_code=400, detail=f"Stock insuficiente para {producto.nombre}")
+
+        subtotal_item = item.cantidad * item.precio_unitario
+        subtotal_total += subtotal_item
+
+        producto.stock -= item.cantidad
+
+        detalles_db.append(
+            models.DetalleVenta(
+                producto_id=item.producto_id,
+                cantidad=item.cantidad,
+                precio_unitario=item.precio_unitario,
+                subtotal=subtotal_item,
+            )
+        )
+
+    total_final = subtotal_total  # el cliente paga el subtotal exacto; la comision la absorbe el gimnasio
+    costo_comision_gym = _calcular_costo_comision_gym(subtotal_total, venta.metodo_pago, config)
+
+    db_venta = models.Venta(
+        cliente_id=venta.cliente_id,
+        total=total_final,
+        metodo_pago=venta.metodo_pago,
+        es_venta_rapida=venta.es_venta_rapida,
+        notas=venta.notas,
+        detalles=detalles_db,
+        usuario_id=usuario_actual.id,
+        costo_comision_gym=costo_comision_gym,
+        gimnasio_id=gid,
+    )
+    db.add(db_venta)
+    db.commit()
+    db.refresh(db_venta)
+    return db_venta
+
+
+# ==================================================================
+# ASISTENCIAS (clientes)
+# ==================================================================
+
+@app.get("/asistencias/", response_model=List[schemas.Asistencia], tags=["Asistencias"])
+def listar_asistencias(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    cliente_id: Optional[int] = None,
+    limit: int = 1000,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Listado general de asistencias de alumnos con filtros de rango
+    de fechas y de cliente (para la pantalla de Asistencias: vista
+    general, por alumno y por horarios). Si no se envian fechas,
+    devuelve las mas recientes hasta el limite.
+    """
+    query = q(db, models.Asistencia, usuario)
+    if desde:
+        query = query.filter(models.Asistencia.fecha_hora_entrada >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.Asistencia.fecha_hora_entrada <= datetime.combine(hasta, datetime.max.time()))
+    if cliente_id:
+        query = query.filter(models.Asistencia.cliente_id == cliente_id)
+    return query.order_by(models.Asistencia.fecha_hora_entrada.desc()).limit(limit).all()
+
+
+@app.get("/asistencias/hoy", response_model=List[schemas.Asistencia], tags=["Asistencias"])
+def asistencias_de_hoy(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return (
+        q(db, models.Asistencia, usuario)
+        .filter(models.Asistencia.fecha_hora_entrada >= hoy)
+        .order_by(models.Asistencia.fecha_hora_entrada.desc())
+        .all()
+    )
+
+
+@app.post("/asistencias/", response_model=schemas.Asistencia, tags=["Asistencias"])
+def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    db_asistencia = models.Asistencia(cliente_id=datos.cliente_id, gimnasio_id=get_gid(usuario))
+    db.add(db_asistencia)
+    db.commit()
+    db.refresh(db_asistencia)
+    return db_asistencia
+
+
+@app.put("/asistencias/registrar-salida", response_model=schemas.Asistencia, tags=["Asistencias"])
+def registrar_salida(datos: schemas.RegistrarSalidaRequest, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+    asistencia = db.query(models.Asistencia).filter(models.Asistencia.id == datos.asistencia_id).first()
+    if not asistencia:
+        raise HTTPException(status_code=404, detail="Asistencia no encontrada")
+    asistencia.fecha_hora_salida = datetime.now()
+    db.commit()
+    db.refresh(asistencia)
+    return asistencia
+
+
+# ==================================================================
+# ASISTENCIA DE STAFF FIJO (AsistenciaEmpleado)
+# ==================================================================
+
+@app.get("/asistencias-empleado/", response_model=List[schemas.AsistenciaEmpleado], tags=["Personal"])
+def listar_asistencias_empleado(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    empleado_id: Optional[int] = None,
+    limit: int = 1000,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Listado de marcajes de entrada/salida del personal (staff fijo), con filtros de fechas y de empleado."""
+    query = db.query(models.AsistenciaEmpleado).join(models.Empleado, models.AsistenciaEmpleado.empleado_id == models.Empleado.id).filter(models.Empleado.gimnasio_id == get_gid(usuario))
+    if desde:
+        query = query.filter(models.AsistenciaEmpleado.fecha_hora_entrada >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.AsistenciaEmpleado.fecha_hora_entrada <= datetime.combine(hasta, datetime.max.time()))
+    if empleado_id:
+        query = query.filter(models.AsistenciaEmpleado.empleado_id == empleado_id)
+    return query.order_by(models.AsistenciaEmpleado.fecha_hora_entrada.desc()).limit(limit).all()
+
+
+@app.post("/asistencias-empleado/", response_model=schemas.AsistenciaEmpleado, tags=["Personal"])
+def registrar_entrada_empleado(
+    datos: schemas.AsistenciaEmpleadoCreate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    empleado = db.query(models.Empleado).filter(models.Empleado.id == datos.empleado_id, models.Empleado.gimnasio_id == get_gid(usuario)).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    db_asistencia = models.AsistenciaEmpleado(empleado_id=datos.empleado_id)
+    db.add(db_asistencia)
+    db.commit()
+    db.refresh(db_asistencia)
+    return db_asistencia
+
+
+@app.put("/asistencias-empleado/{asistencia_id}/salida", response_model=schemas.AsistenciaEmpleado, tags=["Personal"])
+def registrar_salida_empleado(asistencia_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    asistencia = db.query(models.AsistenciaEmpleado).filter(models.AsistenciaEmpleado.id == asistencia_id).first()
+    if not asistencia:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    asistencia.fecha_hora_salida = datetime.now()
+    db.commit()
+    db.refresh(asistencia)
+    return asistencia
+
+
+# ==================================================================
+# PROGRESO FISICO
+# ==================================================================
+
+@app.get("/progreso/cliente/{cliente_id}", response_model=List[schemas.Progreso], tags=["Progreso"])
+def progreso_de_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+    return (
+        db.query(models.Progreso)
+        .filter(models.Progreso.cliente_id == cliente_id)
+        .order_by(models.Progreso.fecha.desc())
+        .all()
+    )
+
+
+@app.post("/progreso/", response_model=schemas.Progreso, tags=["Progreso"])
+def registrar_progreso(datos: schemas.ProgresoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    db_progreso = models.Progreso(**datos.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_progreso)
+    db.commit()
+    db.refresh(db_progreso)
+    return db_progreso
+
+
+# ==================================================================
+# ENTRENAMIENTOS / RUTINAS
+# ==================================================================
+
+# ---- Catalogo de Ejercicios (antes 'Entrenamientos' en el menu) ----
+FOTOS_EJERCICIOS_DIR = os.path.join(UPLOADS_DIR, "ejercicios")
+os.makedirs(FOTOS_EJERCICIOS_DIR, exist_ok=True)
+
+
+@app.get("/tipos-ejercicio/", response_model=List[schemas.TipoEjercicio], tags=["Entrenamientos"])
+def listar_tipos_ejercicio(
+    solo_activos: bool = True,
+    grupo_muscular: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    query = q(db, models.TipoEjercicio, usuario)
+    if solo_activos:
+        query = query.filter(models.TipoEjercicio.activo == True)
+    if grupo_muscular:
+        query = query.filter(models.TipoEjercicio.grupo_muscular == grupo_muscular)
+    return query.order_by(models.TipoEjercicio.nombre).all()
+
+
+@app.post("/tipos-ejercicio/", response_model=schemas.TipoEjercicio, tags=["Entrenamientos"])
+def crear_tipo_ejercicio(datos: schemas.TipoEjercicioCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    db_te = models.TipoEjercicio(**datos.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_te)
+    db.commit()
+    db.refresh(db_te)
+    return db_te
+
+
+@app.put("/tipos-ejercicio/{tipo_id}", response_model=schemas.TipoEjercicio, tags=["Entrenamientos"])
+def actualizar_tipo_ejercicio(tipo_id: int, datos: schemas.TipoEjercicioUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.gimnasio_id == get_gid(usuario)).first()
+    if not te:
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(te, campo, valor)
+    db.commit()
+    db.refresh(te)
+    return te
+
+
+@app.delete("/tipos-ejercicio/{tipo_id}", tags=["Entrenamientos"])
+def eliminar_tipo_ejercicio(tipo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.gimnasio_id == get_gid(usuario)).first()
+    if not te:
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+    te.activo = False
+    db.commit()
+    return {"message": "Ejercicio desactivado correctamente"}
+
+
+@app.post("/tipos-ejercicio/{tipo_id}/imagen", response_model=schemas.TipoEjercicio, tags=["Entrenamientos"])
+async def subir_imagen_tipo_ejercicio(
+    tipo_id: int,
+    foto: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Sube/reemplaza la imagen demostrativa de un ejercicio del catalogo."""
+    te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.gimnasio_id == get_gid(usuario)).first()
+    if not te:
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+    contenido = await foto.read()
+    _eliminar_foto_anterior(te.imagen_url)
+    te.imagen_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_EJERCICIOS_DIR)
+    db.commit()
+    db.refresh(te)
+    return te
+
+
+@app.get("/rutinas/cliente/{cliente_id}", response_model=List[schemas.Rutina], tags=["Entrenamientos"])
+def rutinas_de_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+    return db.query(models.Rutina).filter(models.Rutina.cliente_id == cliente_id, models.Rutina.activo == True).all()
+
+
+@app.post("/rutina-dias/{dia_id}/ejercicios", response_model=schemas.RutinaEjercicio, tags=["Entrenamientos"])
+def agregar_ejercicio_a_dia(
+    dia_id: int,
+    datos: schemas.RutinaEjercicioCreate,
+    db: Session = Depends(get_db),
+    _=Depends(auth.requiere_staff_o_profesor),
+):
+    """Agrega un ejercicio a un dia de rutina ya existente. Si tipo_ejercicio_id viene del catalogo, el nombre puede autocompletarse en el frontend pero queda editable."""
+    dia = db.query(models.RutinaDia).filter(models.RutinaDia.id == dia_id).first()
+    if not dia:
+        raise HTTPException(status_code=404, detail="Dia de rutina no encontrado")
+    ej = models.RutinaEjercicio(dia_id=dia_id, **datos.model_dump())
+    db.add(ej)
+    db.commit()
+    db.refresh(ej)
+    return ej
+
+
+@app.delete("/rutina-ejercicios/{ejercicio_id}", tags=["Entrenamientos"])
+def eliminar_ejercicio_de_dia(ejercicio_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+    ej = db.query(models.RutinaEjercicio).filter(models.RutinaEjercicio.id == ejercicio_id).first()
+    if not ej:
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+    db.delete(ej)
+    db.commit()
+    return {"message": "Ejercicio eliminado"}
+
+
+@app.post("/rutinas/", response_model=schemas.Rutina, tags=["Entrenamientos"])
+def crear_rutina(datos: schemas.RutinaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    _validar_limite_plan(db, usuario, "rutinas")
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    dias_db = []
+    for dia in datos.dias:
+        ejercicios_db = [models.RutinaEjercicio(**ej.model_dump()) for ej in dia.ejercicios]
+        dias_db.append(models.RutinaDia(nombre=dia.nombre, orden=dia.orden, ejercicios=ejercicios_db))
+
+    db_rutina = models.Rutina(cliente_id=datos.cliente_id, nombre=datos.nombre, dias=dias_db, gimnasio_id=get_gid(usuario))
+    db.add(db_rutina)
+    db.commit()
+    db.refresh(db_rutina)
+    return db_rutina
+
+
+@app.delete("/rutinas/{rutina_id}", tags=["Entrenamientos"])
+def eliminar_rutina(rutina_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff)):
+    rutina = db.query(models.Rutina).filter(models.Rutina.id == rutina_id).first()
+    if not rutina:
+        raise HTTPException(status_code=404, detail="Rutina no encontrada")
+    db.delete(rutina)
+    db.commit()
+    return {"ok": True}
+
+
+# ==================================================================
+# NUTRICION
+# ==================================================================
+
+# ---- Catalogo de Alimentos (editable, base peruana precargada) ----
+
+@app.get("/alimentos/", response_model=List[schemas.Alimento], tags=["Nutricion"])
+def listar_alimentos(
+    solo_activos: bool = True,
+    categoria: Optional[models.CategoriaAlimento] = None,
+    buscar: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    query = q(db, models.Alimento, usuario)
+    if solo_activos:
+        query = query.filter(models.Alimento.activo == True)
+    if categoria:
+        query = query.filter(models.Alimento.categoria == categoria)
+    if buscar:
+        query = query.filter(models.Alimento.nombre.ilike(f"%{buscar}%"))
+    return query.order_by(models.Alimento.nombre).all()
+
+
+@app.post("/alimentos/", response_model=schemas.Alimento, tags=["Nutricion"])
+def crear_alimento(datos: schemas.AlimentoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    db_al = models.Alimento(**datos.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_al)
+    db.commit()
+    db.refresh(db_al)
+    return db_al
+
+
+@app.put("/alimentos/{alimento_id}", response_model=schemas.Alimento, tags=["Nutricion"])
+def actualizar_alimento(alimento_id: int, datos: schemas.AlimentoUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    al = db.query(models.Alimento).filter(models.Alimento.id == alimento_id, models.Alimento.gimnasio_id == get_gid(usuario)).first()
+    if not al:
+        raise HTTPException(status_code=404, detail="Alimento no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(al, campo, valor)
+    db.commit()
+    db.refresh(al)
+    return al
+
+
+@app.delete("/alimentos/{alimento_id}", tags=["Nutricion"])
+def eliminar_alimento(alimento_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    al = db.query(models.Alimento).filter(models.Alimento.id == alimento_id, models.Alimento.gimnasio_id == get_gid(usuario)).first()
+    if not al:
+        raise HTTPException(status_code=404, detail="Alimento no encontrado")
+    al.activo = False
+    db.commit()
+    return {"message": "Alimento desactivado correctamente"}
+
+
+# ---- Paquetes de nutricion (plantillas desayuno/almuerzo/cena por proposito) ----
+
+@app.get("/paquetes-nutricion/", response_model=List[schemas.PaqueteNutricion], tags=["Nutricion"])
+def listar_paquetes_nutricion(
+    tipo_comida: Optional[models.TipoComida] = None,
+    proposito: Optional[models.PropositoNutricion] = None,
+    solo_activos: bool = True,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    query = q(db, models.PaqueteNutricion, usuario)
+    if solo_activos:
+        query = query.filter(models.PaqueteNutricion.activo == True)
+    if tipo_comida:
+        query = query.filter(models.PaqueteNutricion.tipo_comida == tipo_comida)
+    if proposito:
+        query = query.filter(models.PaqueteNutricion.proposito == proposito)
+    return query.order_by(models.PaqueteNutricion.nombre).all()
+
+
+@app.post("/paquetes-nutricion/", response_model=schemas.PaqueteNutricion, tags=["Nutricion"])
+def crear_paquete_nutricion(datos: schemas.PaqueteNutricionCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    items_db = [models.PaqueteAlimento(alimento_id=i.alimento_id, cantidad_gramos=i.cantidad_gramos) for i in datos.items]
+    db_paq = models.PaqueteNutricion(
+        nombre=datos.nombre, tipo_comida=datos.tipo_comida, proposito=datos.proposito,
+        notas=datos.notas, items=items_db, gimnasio_id=get_gid(usuario),
+    )
+    db.add(db_paq)
+    db.commit()
+    db.refresh(db_paq)
+    return db_paq
+
+
+@app.put("/paquetes-nutricion/{paquete_id}", response_model=schemas.PaqueteNutricion, tags=["Nutricion"])
+def actualizar_paquete_nutricion(
+    paquete_id: int,
+    datos: schemas.PaqueteNutricionUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    paq = db.query(models.PaqueteNutricion).filter(models.PaqueteNutricion.id == paquete_id, models.PaqueteNutricion.gimnasio_id == get_gid(usuario)).first()
+    if not paq:
+        raise HTTPException(status_code=404, detail="Paquete no encontrado")
+    datos_dict = datos.model_dump(exclude_unset=True)
+    items_nuevos = datos_dict.pop("items", None)
+    for campo, valor in datos_dict.items():
+        setattr(paq, campo, valor)
+    if items_nuevos is not None:
+        db.query(models.PaqueteAlimento).filter(models.PaqueteAlimento.paquete_id == paquete_id).delete()
+        for item in items_nuevos:
+            db.add(models.PaqueteAlimento(paquete_id=paquete_id, alimento_id=item["alimento_id"], cantidad_gramos=item["cantidad_gramos"]))
+    db.commit()
+    db.refresh(paq)
+    return paq
+
+
+@app.delete("/paquetes-nutricion/{paquete_id}", tags=["Nutricion"])
+def eliminar_paquete_nutricion(paquete_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    paq = db.query(models.PaqueteNutricion).filter(models.PaqueteNutricion.id == paquete_id, models.PaqueteNutricion.gimnasio_id == get_gid(usuario)).first()
+    if not paq:
+        raise HTTPException(status_code=404, detail="Paquete no encontrado")
+    paq.activo = False
+    db.commit()
+    return {"message": "Paquete desactivado correctamente"}
+
+
+@app.post("/paquetes-nutricion/{paquete_id}/aplicar", response_model=List[schemas.ComidaPlan], tags=["Nutricion"])
+def aplicar_paquete_a_plan(
+    paquete_id: int,
+    datos: schemas.AplicarPaqueteRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """Genera las filas ComidaPlan de un plan de cliente a partir de los alimentos de un Paquete (calcula las calorias segun la cantidad_gramos de cada item)."""
+    paquete = db.query(models.PaqueteNutricion).filter(models.PaqueteNutricion.id == paquete_id).first()
+    if not paquete:
+        raise HTTPException(status_code=404, detail="Paquete no encontrado")
+    plan = db.query(models.PlanNutricion).filter(models.PlanNutricion.id == datos.plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan de nutricion no encontrado")
+
+    # tipo de ComidaPlan: 'comida' es el nombre historico para almuerzo
+    tipo_comida_map = {
+        models.TipoComida.DESAYUNO: models.TipoComida.DESAYUNO,
+        models.TipoComida.COMIDA: models.TipoComida.COMIDA,
+        models.TipoComida.CENA: models.TipoComida.CENA,
+        models.TipoComida.APERITIVO: models.TipoComida.APERITIVO,
+    }
+
+    creadas = []
+    for item in paquete.items:
+        alimento = item.alimento
+        factor = (item.cantidad_gramos or 0.0) / (alimento.porcion_gramos or 100.0)
+        calorias_item = round((alimento.calorias or 0.0) * factor)
+        # Porcion legible: "Huevo cocido (100g) - 1.5 unidades" si hay porcion_casera
+        porcion_txt = f" - {_escalar_porcion(alimento.porcion_casera, factor)}" if alimento.porcion_casera else ""
+        comida = models.ComidaPlan(
+            plan_id=plan.id,
+            tipo=tipo_comida_map[paquete.tipo_comida],
+            alimento_id=alimento.id,
+            nombre_alimento=f"{alimento.nombre} ({item.cantidad_gramos:.0f}g){porcion_txt}",
+            calorias=calorias_item,
+            cantidad_gramos=item.cantidad_gramos,
+        )
+        db.add(comida)
+        creadas.append(comida)
+
+    db.commit()
+    for c in creadas:
+        db.refresh(c)
+    return creadas
+
+
+@app.get("/nutricion/", response_model=List[schemas.PlanNutricion], tags=["Nutricion"])
+def listar_planes_nutricion(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    return q(db, models.PlanNutricion, usuario).filter(models.PlanNutricion.activo == True).all()
+
+
+@app.get("/nutricion/cliente/{cliente_id}", response_model=List[schemas.PlanNutricion], tags=["Nutricion"])
+def planes_de_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    return (
+        db.query(models.PlanNutricion)
+        .filter(models.PlanNutricion.cliente_id == cliente_id, models.PlanNutricion.activo == True)
+        .all()
+    )
+
+
+@app.post("/nutricion/", response_model=schemas.PlanNutricion, tags=["Nutricion"])
+def crear_plan_nutricion(datos: schemas.PlanNutricionCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    _validar_nutricion_habilitada(db, usuario)
+    comidas_db = [models.ComidaPlan(**c.model_dump()) for c in datos.comidas]
+    db_plan = models.PlanNutricion(
+        cliente_id=datos.cliente_id,
+        titulo=datos.titulo,
+        descripcion=datos.descripcion,
+        calorias_objetivo=datos.calorias_objetivo,
+        comidas=comidas_db,
+        gimnasio_id=get_gid(usuario),
+    )
+    db.add(db_plan)
+    db.commit()
+    db.refresh(db_plan)
+    return db_plan
+
+
+@app.put("/nutricion/{plan_id}", response_model=schemas.PlanNutricion, tags=["Nutricion"])
+def actualizar_plan_nutricion(plan_id: int, datos: schemas.PlanNutricionUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    """
+    Actualiza campos sueltos de un plan (titulo, descripcion, calorias
+    objetivo o activo). Se usa sobre todo para desactivar un plan
+    (activo=False) cuando se lo reemplaza por una version adaptada
+    nueva, sin borrar el historico.
+    """
+    plan = db.query(models.PlanNutricion).filter(models.PlanNutricion.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(plan, campo, valor)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+# ---- Generacion automatica de plan segun medidas (peso/estatura/edad/sexo) ----
+
+def _cliente_tiene_nutricion_incluida(db: Session, cliente_id: int) -> bool:
+    """True si el cliente tiene una membresia activa y vigente cuyo plan incluye nutricion (Membresia.incluye_nutricion)."""
+    hoy = date.today()
+    cm = (
+        db.query(models.ClienteMembresia)
+        .join(models.Membresia, models.ClienteMembresia.membresia_id == models.Membresia.id)
+        .filter(
+            models.ClienteMembresia.cliente_id == cliente_id,
+            models.ClienteMembresia.activo == True,
+            models.Membresia.incluye_nutricion == True,
+            (models.ClienteMembresia.fecha_fin.is_(None)) | (models.ClienteMembresia.fecha_fin >= hoy),
+        )
+        .first()
+    )
+    return cm is not None
+
+
+def _computar_perfil_nutricional(cliente: models.Cliente, medida: Optional[models.Medida]) -> Optional[dict]:
+    """
+    Calcula BMR (formula Mifflin-St Jeor, distinta para hombre/mujer),
+    el gasto energetico total (TDEE, actividad moderada por defecto ya
+    que el nivel de actividad no se persiste en Medida) y determina el
+    proposito nutricional segun el IMC:
+        IMC < 18.5        -> ganar_masa   (superavit)
+        18.5 <= IMC < 25  -> mantenimiento
+        25   <= IMC < 30  -> definicion   (deficit leve)
+        IMC >= 30         -> bajar_peso   (deficit mayor)
+    Devuelve None si faltan datos indispensables (fecha de nacimiento
+    del cliente, o peso/estatura en la ultima toma de medidas).
+    """
+    if not medida or not medida.peso_kg or not medida.estatura_cm:
+        return None
+    if not cliente.fecha_nacimiento:
+        return None
+
+    hoy = date.today()
+    edad = hoy.year - cliente.fecha_nacimiento.year - ((hoy.month, hoy.day) < (cliente.fecha_nacimiento.month, cliente.fecha_nacimiento.day))
+    if edad <= 0 or edad > 110:
+        return None
+
+    peso = medida.peso_kg
+    estatura_cm = medida.estatura_cm
+    estatura_m = estatura_cm / 100
+    if estatura_m <= 0:
+        return None
+
+    es_mujer = (cliente.genero or "").strip().lower().startswith("fem")
+    bmr = 10 * peso + 6.25 * estatura_cm - 5 * edad + (-161 if es_mujer else 5)
+    tdee = bmr * 1.55  # actividad moderada (no se pide nivel de actividad al registrar medidas)
+
+    imc = peso / (estatura_m ** 2)
+    if imc < 18.5:
+        proposito, ajuste = models.PropositoNutricion.GANAR_MASA, 1.15
+    elif imc < 25:
+        proposito, ajuste = models.PropositoNutricion.MANTENIMIENTO, 1.0
+    elif imc < 30:
+        proposito, ajuste = models.PropositoNutricion.DEFINICION, 0.90
+    else:
+        proposito, ajuste = models.PropositoNutricion.BAJAR_PESO, 0.80
+
+    calorias_objetivo = round(tdee * ajuste)
+    return {
+        "imc": round(imc, 1),
+        "bmr": round(bmr),
+        "tdee": round(tdee),
+        "proposito": proposito,
+        "calorias_objetivo": calorias_objetivo,
+        "reparto": {
+            "desayuno": round(calorias_objetivo * 0.28),
+            "comida": round(calorias_objetivo * 0.42),
+            "cena": round(calorias_objetivo * 0.30),
+        },
+    }
+
+
+def _calorias_totales_paquete(paquete: models.PaqueteNutricion) -> float:
+    total = 0.0
+    for item in paquete.items:
+        alimento = item.alimento
+        if not alimento:
+            continue
+        factor = (item.cantidad_gramos or 0.0) / (alimento.porcion_gramos or 100.0)
+        total += (alimento.calorias or 0.0) * factor
+    return total
+
+
+def _elegir_paquete_por_calorias(db: Session, tipo_comida, proposito, kcal_objetivo: float) -> Optional[models.PaqueteNutricion]:
+    """De los paquetes activos que calzan con el tipo de comida y el proposito, elige el que mas se acerca a kcal_objetivo."""
+    candidatos = (
+        db.query(models.PaqueteNutricion)
+        .filter(
+            models.PaqueteNutricion.tipo_comida == tipo_comida,
+            models.PaqueteNutricion.proposito == proposito,
+            models.PaqueteNutricion.activo == True,
+        )
+        .all()
+    )
+    if not candidatos:
+        return None
+    return min(candidatos, key=lambda p: abs(_calorias_totales_paquete(p) - kcal_objetivo))
+
+
+_ETIQUETAS_PROPOSITO = {
+    models.PropositoNutricion.BAJAR_PESO: "Bajar de peso",
+    models.PropositoNutricion.GANAR_MASA: "Ganar masa muscular",
+    models.PropositoNutricion.MANTENIMIENTO: "Mantenimiento",
+    models.PropositoNutricion.DEFINICION: "Definicion",
+}
+
+
+def _generar_plan_automatico_interno(db: Session, cliente: models.Cliente, perfil: dict) -> models.PlanNutricion:
+    """
+    Crea el plan automatico del cliente (desactivando el automatico
+    anterior, si tenia uno; los planes creados a mano por el staff
+    nunca se tocan) escogiendo, para desayuno/almuerzo/cena, el
+    paquete cuyo total calorico mas se acerca al reparto calculado.
+    """
+    db.query(models.PlanNutricion).filter(
+        models.PlanNutricion.cliente_id == cliente.id,
+        models.PlanNutricion.origen == "automatico",
+        models.PlanNutricion.activo == True,
+    ).update({"activo": False})
+
+    comidas_db = []
+    tipos_map = {"desayuno": models.TipoComida.DESAYUNO, "comida": models.TipoComida.COMIDA, "cena": models.TipoComida.CENA}
+    for clave, tipo_enum in tipos_map.items():
+        paquete = _elegir_paquete_por_calorias(db, tipo_enum, perfil["proposito"], perfil["reparto"][clave])
+        if not paquete:
+            continue
+        for item in paquete.items:
+            alimento = item.alimento
+            if not alimento:
+                continue
+            factor = (item.cantidad_gramos or 0.0) / (alimento.porcion_gramos or 100.0)
+            porcion_txt = f" - {_escalar_porcion(alimento.porcion_casera, factor)}" if alimento.porcion_casera else ""
+            comidas_db.append(models.ComidaPlan(
+                tipo=tipo_enum, alimento_id=alimento.id,
+                nombre_alimento=f"{alimento.nombre} ({item.cantidad_gramos:.0f}g){porcion_txt}",
+                calorias=round((alimento.calorias or 0.0) * factor),
+                cantidad_gramos=item.cantidad_gramos,
+            ))
+
+    db_plan = models.PlanNutricion(
+        cliente_id=cliente.id,
+        titulo=f"Plan automatico - {_ETIQUETAS_PROPOSITO[perfil['proposito']]}",
+        descripcion=f"Generado segun IMC {perfil['imc']}, BMR {perfil['bmr']} kcal, gasto energetico estimado {perfil['tdee']} kcal.",
+        calorias_objetivo=perfil["calorias_objetivo"],
+        origen="automatico",
+        comidas=comidas_db,
+    )
+    db.add(db_plan)
+    db.commit()
+    db.refresh(db_plan)
+    return db_plan
+
+
+def _intentar_generar_plan_automatico(db: Session, cliente_id: int):
+    """
+    Se llama tras registrar/editar una toma de medidas. Si el cliente
+    tiene nutricion incluida en su membresia vigente y hay datos
+    suficientes, regenera su plan automatico. Nunca lanza excepcion
+    hacia el endpoint que la invoca (una toma de medidas SI debe
+    guardarse aunque el calculo nutricional no se pueda hacer todavia).
+    """
+    try:
+        if not _cliente_tiene_nutricion_incluida(db, cliente_id):
+            return
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        if not cliente:
+            return
+        ultima_medida = (
+            db.query(models.Medida)
+            .filter(models.Medida.cliente_id == cliente_id)
+            .order_by(models.Medida.fecha.desc(), models.Medida.id.desc())
+            .first()
+        )
+        perfil = _computar_perfil_nutricional(cliente, ultima_medida)
+        if not perfil:
+            return
+        _generar_plan_automatico_interno(db, cliente, perfil)
+    except Exception:
+        pass
+
+
+@app.post("/nutricion/generar-automatico/{cliente_id}", response_model=schemas.PlanNutricion, tags=["Nutricion"])
+def generar_plan_automatico(cliente_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    """
+    Genera (o regenera) el plan de nutricion AUTOMATICO de un cliente
+    a partir de su ultima toma de medidas y su perfil (genero, fecha
+    de nacimiento): calcula BMR/TDEE, determina el proposito segun su
+    IMC, y arma desayuno/almuerzo/cena con los paquetes ya creados.
+    No requiere que el cliente tenga nutricion incluida en su plan
+    (a diferencia del disparo automatico tras una toma de medidas):
+    esto permite generarlo manualmente bajo pedido para cualquier cliente.
+    """
+    _validar_nutricion_habilitada(db, usuario)
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    ultima_medida = (
+        db.query(models.Medida)
+        .filter(models.Medida.cliente_id == cliente_id)
+        .order_by(models.Medida.fecha.desc(), models.Medida.id.desc())
+        .first()
+    )
+    perfil = _computar_perfil_nutricional(cliente, ultima_medida)
+    if not perfil:
+        raise HTTPException(
+            status_code=400,
+            detail="Faltan datos para calcular el plan automatico: se necesita la fecha de nacimiento del cliente (pestaña Datos) y una toma de medidas con peso y estatura (pestaña Medidas).",
+        )
+    return _generar_plan_automatico_interno(db, cliente, perfil)
+
+
+@app.post("/nutricion/generar-automatico-masivo", tags=["Nutricion"])
+def generar_planes_automaticos_masivo(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """
+    Genera/actualiza el plan automatico de TODOS los clientes activos
+    con una membresia vigente que incluye nutricion y que ya tienen
+    al menos una toma de medidas con peso y estatura. Pensado para
+    correrlo despues de ampliar el catalogo de paquetes, o la primera
+    vez que se activa esta funcionalidad (los clientes nuevos despues
+    se actualizan solos al registrarles una toma de medidas).
+    """
+    hoy = date.today()
+    clientes_elegibles = (
+        db.query(models.Cliente)
+        .join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
+        .join(models.Membresia, models.ClienteMembresia.membresia_id == models.Membresia.id)
+        .filter(
+            models.Cliente.activo == True,
+            models.ClienteMembresia.activo == True,
+            models.Membresia.incluye_nutricion == True,
+            (models.ClienteMembresia.fecha_fin.is_(None)) | (models.ClienteMembresia.fecha_fin >= hoy),
+        )
+        .distinct()
+        .all()
+    )
+
+    generados, omitidos = 0, 0
+    for cliente in clientes_elegibles:
+        ultima_medida = (
+            db.query(models.Medida)
+            .filter(models.Medida.cliente_id == cliente.id)
+            .order_by(models.Medida.fecha.desc(), models.Medida.id.desc())
+            .first()
+        )
+        perfil = _computar_perfil_nutricional(cliente, ultima_medida)
+        if not perfil:
+            omitidos += 1
+            continue
+        _generar_plan_automatico_interno(db, cliente, perfil)
+        generados += 1
+
+    return {"total_elegibles": len(clientes_elegibles), "generados": generados, "omitidos_sin_datos": omitidos}
+
+
+# ==================================================================
+# RETOS
+# ==================================================================
+
+@app.get("/retos/", response_model=List[schemas.Reto], tags=["Retos"])
+def listar_retos(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    return q(db, models.Reto, usuario).filter(models.Reto.activo == True).all()
+
+
+@app.post("/retos/", response_model=schemas.Reto, tags=["Retos"])
+def crear_reto(reto: schemas.RetoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    db_reto = models.Reto(**reto.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_reto)
+    db.commit()
+    db.refresh(db_reto)
+    return db_reto
+
+
+# ==================================================================
+# PERSONAL Y PLANILLA
+# ==================================================================
+
+@app.get("/empleados/", response_model=List[schemas.Empleado], tags=["Personal"])
+def listar_empleados(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    return q(db, models.Empleado, usuario).filter(models.Empleado.activo == True).all()
+
+
+# ---- Puestos / especialidades (catalogo editable) ----
+
+@app.get("/puestos/", response_model=List[schemas.Puesto], tags=["Personal"])
+def listar_puestos(
+    tipo: Optional[models.TipoEmpleado] = None,
+    solo_activos: bool = True,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Catalogo de puestos (staff) / especialidades (profesor).
+    solo_activos=True (default) es lo que se usa para poblar el
+    selector al asignar puesto a personal nuevo; solo_activos=False
+    trae TODOS (incluye los desmarcados), para la pantalla de
+    gestion en Usuarios.
+    """
+    query = q(db, models.Puesto, usuario)
+    if tipo:
+        query = query.filter(models.Puesto.tipo == tipo)
+    if solo_activos:
+        query = query.filter(models.Puesto.activo == True)
+    return query.order_by(models.Puesto.nombre).all()
+
+
+@app.post("/puestos/", response_model=schemas.Puesto, tags=["Personal"])
+def crear_puesto(datos: schemas.PuestoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    gid = get_gid(usuario)
+    existente = (
+        db.query(models.Puesto)
+        .filter(models.Puesto.tipo == datos.tipo, func.lower(models.Puesto.nombre) == datos.nombre.strip().lower(), models.Puesto.gimnasio_id == gid)
+        .first()
+    )
+    if existente:
+        if not existente.activo:
+            existente.activo = True
+            db.commit()
+            db.refresh(existente)
+        return existente
+    db_puesto = models.Puesto(nombre=datos.nombre.strip(), tipo=datos.tipo, activo=True, gimnasio_id=gid)
+    db.add(db_puesto)
+    db.commit()
+    db.refresh(db_puesto)
+    return db_puesto
+
+
+@app.put("/puestos/{puesto_id}", response_model=schemas.Puesto, tags=["Personal"])
+def actualizar_puesto(puesto_id: int, datos: schemas.PuestoUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Se usa tanto para renombrar como para el checkbox de visibilidad (activo=True/False). Desactivar NO borra el puesto de los empleados que ya lo tenian."""
+    puesto = db.query(models.Puesto).filter(models.Puesto.id == puesto_id, models.Puesto.gimnasio_id == get_gid(usuario)).first()
+    if not puesto:
+        raise HTTPException(status_code=404, detail="Puesto no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(puesto, campo, valor)
+    db.commit()
+    db.refresh(puesto)
+    return puesto
+
+
+@app.post("/empleados/", response_model=schemas.Empleado, tags=["Personal"])
+def crear_empleado(empleado: schemas.EmpleadoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    db_empleado = models.Empleado(**empleado.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_empleado)
+    db.commit()
+    db.refresh(db_empleado)
+    return db_empleado
+
+
+@app.put("/empleados/{empleado_id}", response_model=schemas.Empleado, tags=["Personal"])
+def actualizar_empleado(
+    empleado_id: int,
+    datos: schemas.EmpleadoUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    empleado = db.query(models.Empleado).filter(models.Empleado.id == empleado_id, models.Empleado.gimnasio_id == get_gid(usuario)).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(empleado, campo, valor)
+    db.commit()
+    db.refresh(empleado)
+    return empleado
+
+
+# ---- Agenda / Clases dictadas ----
+
+@app.get("/clases/", response_model=List[schemas.ClaseDictada], tags=["Agenda"])
+def listar_clases(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    profesor_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    query = q(db, models.ClaseDictada, usuario)
+    if desde:
+        query = query.filter(models.ClaseDictada.fecha >= desde)
+    if hasta:
+        query = query.filter(models.ClaseDictada.fecha <= hasta)
+    if profesor_id:
+        query = query.filter(models.ClaseDictada.profesor_id == profesor_id)
+    return query.order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio).all()
+
+
+@app.post("/clases/", response_model=List[schemas.ClaseDictada], tags=["Agenda"])
+def agendar_clase(datos: schemas.ClaseDictadaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """
+    Agenda una clase. Si se envian dias_semana (lunes=0..sabado=5) y
+    semanas > 1, crea una SERIE: una clase por cada dia de semana
+    elegido, repetida esa cantidad de semanas (todas comparten
+    serie_id, lo que permite despues borrar 'esta' o 'esta y las
+    futuras'). Sin repeticion, crea una sola clase (lista de 1).
+    """
+    profesor = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+    if profesor.tipo != models.TipoEmpleado.PROFESOR_DE_SALA:
+        raise HTTPException(status_code=400, detail="El empleado seleccionado no es un profesor de sala")
+
+    dias_semana = sorted(set(d for d in datos.dias_semana if 0 <= d <= 5))
+    semanas = max(datos.semanas or 1, 1)
+
+    hora_inicio_t = datos.hora_inicio.time()
+    hora_fin_t = datos.hora_fin.time() if datos.hora_fin else None
+
+    fechas_a_crear: List[date] = []
+    if not dias_semana or semanas <= 1:
+        fechas_a_crear = [datos.fecha]
+    else:
+        lunes_base = datos.fecha - timedelta(days=datos.fecha.weekday())
+        for semana in range(semanas):
+            for dia in dias_semana:
+                candidata = lunes_base + timedelta(days=semana * 7 + dia)
+                if candidata >= datos.fecha:
+                    fechas_a_crear.append(candidata)
+        fechas_a_crear = sorted(set(fechas_a_crear))
+
+    serie_id = uuid.uuid4().hex if len(fechas_a_crear) > 1 else None
+
+    clases_creadas = []
+    for fecha_clase in fechas_a_crear:
+        db_clase = models.ClaseDictada(
+            profesor_id=datos.profesor_id,
+            nombre_clase=datos.nombre_clase,
+            sala=datos.sala,
+            fecha=fecha_clase,
+            hora_inicio=datetime.combine(fecha_clase, hora_inicio_t),
+            hora_fin=datetime.combine(fecha_clase, hora_fin_t) if hora_fin_t else None,
+            notas=datos.notas,
+            serie_id=serie_id,
+            gimnasio_id=get_gid(usuario),
+        )
+        db.add(db_clase)
+        clases_creadas.append(db_clase)
+
+    db.commit()
+    for c in clases_creadas:
+        db.refresh(c)
+    return clases_creadas
+
+
+@app.put("/clases/{clase_id}/reemplazo", response_model=schemas.ClaseDictada, tags=["Agenda"])
+def asignar_reemplazo_staff(
+    clase_id: int,
+    datos: schemas.ReemplazoRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Asigna (o quita, si profesor_reemplazo_id es null) un profesor de reemplazo puntual para esta fecha. No afecta al resto de la serie."""
+    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id, models.ClaseDictada.gimnasio_id == get_gid(usuario)).first()
+    if not clase:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+    if datos.profesor_reemplazo_id:
+        reemplazo = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_reemplazo_id).first()
+        if not reemplazo or reemplazo.tipo != models.TipoEmpleado.PROFESOR_DE_SALA or not reemplazo.activo:
+            raise HTTPException(status_code=400, detail="El reemplazo debe ser un profesor de sala activo")
+    clase.profesor_reemplazo_id = datos.profesor_reemplazo_id
+    db.commit()
+    db.refresh(clase)
+    return clase
+
+
+@app.delete("/clases/{clase_id}", tags=["Agenda"])
+def eliminar_clase(
+    clase_id: int,
+    alcance: str = Query("una", description="una | futuras"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar),
+):
+    """
+    Elimina una clase. alcance='futuras' borra esta clase y todas
+    las de la misma serie con fecha >= esta (util cuando una clase
+    recurrente ya no va mas desde cierta fecha). Si la clase no
+    pertenece a una serie (serie_id nulo), 'futuras' se comporta
+    igual que 'una'.
+    """
+    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id, models.ClaseDictada.gimnasio_id == get_gid(usuario)).first()
+    if not clase:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+
+    if alcance == "futuras" and clase.serie_id:
+        eliminadas = (
+            db.query(models.ClaseDictada)
+            .filter(models.ClaseDictada.serie_id == clase.serie_id, models.ClaseDictada.fecha >= clase.fecha)
+            .delete(synchronize_session=False)
+        )
+    else:
+        db.delete(clase)
+        eliminadas = 1
+
+    db.commit()
+    return {"message": "Clase(s) eliminada(s)", "cantidad": eliminadas}
+
+
+@app.put("/clases/{clase_id}/marcar-dictada", response_model=schemas.ClaseDictada, tags=["Agenda"])
+def marcar_clase_dictada(
+    clase_id: int,
+    datos: schemas.MarcarDictadaRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Cierra una clase: registra cuantos alumnos asistieron y calcula
+    automaticamente el monto a pagar. Las tarifas del profesor
+    (tarifa_por_clase / tarifa_reducida) son MONTO POR HORA: se
+    multiplican por la duracion real de la clase (hora_fin -
+    hora_inicio; si no hay hora_fin, se asume 1 hora), y se usa la
+    completa o la reducida segun si se cumplio el minimo de alumnos.
+    """
+    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id).first()
+    if not clase:
+        raise HTTPException(status_code=404, detail="Clase no encontrada")
+
+    profesor = db.query(models.Empleado).filter(models.Empleado.id == clase.profesor_id).first()
+
+    horas_duracion = 1.0
+    if clase.hora_fin and clase.hora_inicio:
+        horas_duracion = max((clase.hora_fin - clase.hora_inicio).total_seconds() / 3600, 0.25)
+
+    minimo = profesor.minimo_alumnos_tarifa_completa or 0
+    if datos.cantidad_alumnos >= minimo:
+        tarifa_hora = profesor.tarifa_por_clase or 0.0
+    else:
+        tarifa_hora = profesor.tarifa_reducida or 0.0
+    monto = round(tarifa_hora * horas_duracion, 2)
+
+    clase.cantidad_alumnos = datos.cantidad_alumnos
+    clase.monto_pagado = monto
+    clase.dictada = True
+
+    db.commit()
+    db.refresh(clase)
+    return clase
+
+
+@app.get("/planilla/profesor/{profesor_id}", response_model=schemas.ResumenPlanilla, tags=["Personal"])
+def calcular_planilla_profesor(
+    profesor_id: int,
+    desde: date,
+    hasta: date,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """
+    Calcula el total a pagar a un profesor de sala en un periodo,
+    sumando el monto_pagado (snapshot) de cada clase marcada como
+    dictada dentro del rango. Tambien informa cuanto ya se le pago
+    para ESE MISMO rango exacto (desde/hasta) y cuanto queda
+    pendiente, para permitir pagos en partes sin pagar de mas.
+    """
+    profesor = db.query(models.Empleado).filter(models.Empleado.id == profesor_id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+
+    clases = (
+        db.query(models.ClaseDictada)
+        .filter(
+            models.ClaseDictada.profesor_id == profesor_id,
+            models.ClaseDictada.dictada == True,
+            models.ClaseDictada.fecha >= desde,
+            models.ClaseDictada.fecha <= hasta,
+        )
+        .order_by(models.ClaseDictada.fecha)
+        .all()
+    )
+
+    total = sum(c.monto_pagado or 0.0 for c in clases)
+
+    pagos = (
+        db.query(models.PagoPlanilla)
+        .filter(
+            models.PagoPlanilla.empleado_id == profesor_id,
+            models.PagoPlanilla.tipo == "profesor",
+            models.PagoPlanilla.desde == desde,
+            models.PagoPlanilla.hasta == hasta,
+        )
+        .all()
+    )
+    total_pagado = round(sum(p.monto_total for p in pagos), 2)
+
+    return schemas.ResumenPlanilla(
+        profesor_id=profesor_id,
+        nombre_profesor=profesor.nombre_completo,
+        cantidad_clases_dictadas=len(clases),
+        total_a_pagar=round(total, 2),
+        total_pagado=total_pagado,
+        pendiente=round(total - total_pagado, 2),
+        detalle_clases=clases,
+    )
+
+
+def _calcular_comisiones_periodo(db: Session, usuario_id: int, anio: int, mes: int) -> tuple:
+    """
+    Devuelve (comision_membresias, comision_productos) para un
+    usuario en un mes especifico, aplicando la meta y los tramos
+    configurados (misma logica que /comisiones/resumen, pero para
+    UN periodo puntual en vez de para todo el staff a la vez).
+    """
+    desde = date(anio, mes, 1)
+    hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+
+    meta = db.query(models.MetaMensual).filter(models.MetaMensual.anio == anio, models.MetaMensual.mes == mes).first()
+    meta_membresias = meta.meta_membresias if meta else 0.0
+
+    config = _get_o_crear_configuracion(db)
+    comision_producto_flat = config.comision_producto_porcentaje or 0.0
+
+    tramos = db.query(models.TramoComision).filter(models.TramoComision.activo == True, models.TramoComision.tipo == "membresia").all()
+
+    ventas_membresias = (
+        db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
+        .filter(
+            models.ClienteMembresia.vendido_por_id == usuario_id,
+            models.ClienteMembresia.fecha_inicio >= desde,
+            models.ClienteMembresia.fecha_inicio < hasta,
+        )
+        .scalar()
+    )
+    ventas_productos = (
+        db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
+        .filter(
+            models.Venta.usuario_id == usuario_id,
+            models.Venta.fecha_venta >= desde,
+            models.Venta.fecha_venta < hasta,
+        )
+        .scalar()
+    )
+
+    pct_meta_membresias = round((ventas_membresias / meta_membresias * 100), 1) if meta_membresias else 0.0
+    pct_comision_membresias = _comision_aplicable(pct_meta_membresias, tramos)
+
+    comision_membresias = round(ventas_membresias * pct_comision_membresias / 100, 2)
+    comision_productos = round(ventas_productos * comision_producto_flat / 100, 2)
+    return comision_membresias, comision_productos
+
+
+@app.get("/planilla/staff/{empleado_id}", response_model=schemas.ResumenPlanillaStaff, tags=["Personal"])
+def calcular_planilla_staff(
+    empleado_id: int,
+    anio: int,
+    mes: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Calcula lo que corresponde pagarle a un STAFF FIJO en un mes:
+    su sueldo fijo de ESE mes, mas las comisiones (membresias y
+    productos) que genero en el MES ANTERIOR -- se pagan con un mes
+    de arrastre (ej. sueldo de julio + comisiones de junio, se
+    cobra en julio). Tambien informa cuanto ya se le pago en este
+    periodo (pagos_planilla) y cuanto queda pendiente, para permitir
+    pagos en partes.
+    """
+    if mes < 1 or mes > 12:
+        raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
+
+    empleado = db.query(models.Empleado).filter(models.Empleado.id == empleado_id).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    mes_comision = mes - 1
+    anio_comision = anio
+    if mes_comision == 0:
+        mes_comision = 12
+        anio_comision -= 1
+
+    comision_membresias, comision_productos = 0.0, 0.0
+    if empleado.usuario:
+        comision_membresias, comision_productos = _calcular_comisiones_periodo(db, empleado.usuario.id, anio_comision, mes_comision)
+
+    sueldo = empleado.sueldo_fijo_mensual or 0.0
+    total_a_pagar = round(sueldo + comision_membresias + comision_productos, 2)
+
+    pagos = (
+        db.query(models.PagoPlanilla)
+        .filter(
+            models.PagoPlanilla.empleado_id == empleado_id,
+            models.PagoPlanilla.tipo == "staff",
+            models.PagoPlanilla.anio == anio,
+            models.PagoPlanilla.mes == mes,
+        )
+        .all()
+    )
+    total_pagado = round(sum(p.monto_total for p in pagos), 2)
+
+    return schemas.ResumenPlanillaStaff(
+        empleado_id=empleado.id,
+        nombre_empleado=empleado.nombre_completo,
+        anio=anio,
+        mes=mes,
+        sueldo_fijo_mensual=sueldo,
+        mes_comision_anio=anio_comision,
+        mes_comision_mes=mes_comision,
+        comision_membresias=comision_membresias,
+        comision_productos=comision_productos,
+        total_a_pagar=total_a_pagar,
+        total_pagado=total_pagado,
+        pendiente=round(total_a_pagar - total_pagado, 2),
+    )
+
+
+@app.post("/pagos-planilla/", response_model=schemas.PagoPlanilla, tags=["Personal"])
+def crear_pago_planilla(
+    datos: schemas.PagoPlanillaCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Registra un pago de planilla (staff o profesor). Se guarda como
+    snapshot: si luego se edita el sueldo/tarifa del empleado, este
+    registro no cambia. Admite pagos EN PARTES: se puede llamar mas
+    de una vez para el mismo periodo, sumando monto_total cada vez.
+    Valida contra el saldo pendiente real (recalculado en el
+    servidor, no confia en lo que mande el frontend): no se puede
+    registrar un pago que supere lo que efectivamente se debe.
+    """
+    if datos.tipo not in ("staff", "profesor"):
+        raise HTTPException(status_code=400, detail="tipo debe ser 'staff' o 'profesor'")
+    empleado = db.query(models.Empleado).filter(models.Empleado.id == datos.empleado_id).first()
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    if datos.mes < 1 or datos.mes > 12:
+        raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
+    if datos.monto_total <= 0:
+        raise HTTPException(status_code=400, detail="El monto a pagar debe ser mayor a 0")
+
+    if datos.tipo == "staff":
+        resumen = calcular_planilla_staff(empleado_id=datos.empleado_id, anio=datos.anio, mes=datos.mes, db=db)
+        pendiente = resumen.pendiente
+    else:
+        if not datos.desde or not datos.hasta:
+            raise HTTPException(status_code=400, detail="desde y hasta son obligatorios para pagos de profesor")
+        resumen = calcular_planilla_profesor(profesor_id=datos.empleado_id, desde=datos.desde, hasta=datos.hasta, db=db)
+        pendiente = resumen.pendiente
+
+    if datos.monto_total > pendiente + 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El monto ({datos.monto_total:.2f}) supera el saldo pendiente ({pendiente:.2f}). Ya se pago {resumen.total_pagado:.2f} de {resumen.total_a_pagar:.2f}.",
+        )
+
+    db_pago = models.PagoPlanilla(**datos.model_dump(), usuario_registro_id=usuario_actual.id)
+    db.add(db_pago)
+    db.commit()
+    db.refresh(db_pago)
+    return db_pago
+
+
+@app.get("/pagos-planilla/", response_model=List[schemas.PagoPlanilla], tags=["Personal"])
+def listar_pagos_planilla(
+    tipo: Optional[str] = Query(None, description="staff | profesor"),
+    empleado_id: Optional[int] = None,
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Historial de pagos de planilla, con filtros de tipo, trabajador/profesor y rango de fechas (sobre fecha_pago)."""
+    query = q(db, models.PagoPlanilla, usuario)
+    if tipo:
+        query = query.filter(models.PagoPlanilla.tipo == tipo)
+    if empleado_id:
+        query = query.filter(models.PagoPlanilla.empleado_id == empleado_id)
+    if desde:
+        query = query.filter(models.PagoPlanilla.fecha_pago >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.PagoPlanilla.fecha_pago <= datetime.combine(hasta, datetime.max.time()))
+    return query.order_by(models.PagoPlanilla.fecha_pago.desc()).all()
+
+
+@app.put("/pagos-planilla/{pago_id}", response_model=schemas.PagoPlanilla, tags=["Personal"])
+def editar_pago_planilla(
+    pago_id: int,
+    datos: schemas.PagoPlanillaUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """
+    Correccion administrativa de un pago ya registrado (monto y/o
+    notas). Solo administrador. El nuevo monto se revalida contra el
+    saldo pendiente REAL del periodo, excluyendo este mismo pago del
+    calculo (es decir: nuevo monto <= total del periodo - resto de
+    pagos del mismo periodo), para no permitir pagar de mas.
+    """
+    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+    datos_dict = datos.model_dump(exclude_unset=True)
+
+    if "monto_total" in datos_dict and datos_dict["monto_total"] is not None:
+        nuevo_monto = datos_dict["monto_total"]
+        if nuevo_monto <= 0:
+            raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+
+        # Total calculado del periodo (mismo calculo que al crear el pago)
+        if pago.tipo == "staff":
+            resumen = calcular_planilla_staff(empleado_id=pago.empleado_id, anio=pago.anio, mes=pago.mes, db=db)
+        else:
+            if not pago.desde or not pago.hasta:
+                raise HTTPException(status_code=400, detail="Este pago de profesor no tiene rango desde/hasta; no se puede revalidar el saldo")
+            resumen = calcular_planilla_profesor(profesor_id=pago.empleado_id, desde=pago.desde, hasta=pago.hasta, db=db)
+
+        # Pendiente excluyendo ESTE pago: lo que se debe si este pago no existiera
+        pagado_sin_este = round(resumen.total_pagado - pago.monto_total, 2)
+        pendiente_sin_este = round(resumen.total_a_pagar - pagado_sin_este, 2)
+        if nuevo_monto > pendiente_sin_este + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El monto ({nuevo_monto:.2f}) supera el saldo del periodo ({pendiente_sin_este:.2f} disponibles, sin contar este pago). Total del periodo: {resumen.total_a_pagar:.2f}, otros pagos: {pagado_sin_este:.2f}.",
+            )
+        pago.monto_total = nuevo_monto
+
+    if "notas" in datos_dict:
+        pago.notas = datos_dict["notas"]
+
+    db.commit()
+    db.refresh(pago)
+    return pago
+
+
+@app.delete("/pagos-planilla/{pago_id}", tags=["Personal"])
+def eliminar_pago_planilla(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    """Elimina un pago registrado por error. No recalcula nada automaticamente; el pendiente se vuelve a calcular solo."""
+    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    db.delete(pago)
+    db.commit()
+    return {"message": "Pago eliminado"}
+
+
+@app.get("/pagos-planilla/{pago_id}/recibo.pdf", tags=["Personal"])
+def recibo_pago_planilla_pdf(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    empleado = db.query(models.Empleado).filter(models.Empleado.id == pago.empleado_id).first()
+    config = _get_o_crear_configuracion(db)
+    pdf_bytes = pdf_generator.generar_recibo_pago_planilla(pago, empleado, config)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=recibo_pago_{pago_id}.pdf"},
+    )
+
+
+# ==================================================================
+# SERVICIOS / DEUDAS (Pagos > Servicios: limpieza, internet, agua,
+# mantenimiento, alquiler, deudas con proveedores, etc.)
+# ==================================================================
+
+@app.get("/servicios/", response_model=List[schemas.Servicio], tags=["Servicios"])
+def listar_servicios(solo_activos: bool = True, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """
+    Catalogo de servicios/conceptos de deuda. solo_activos=True
+    (default) es lo que se usa para poblar el selector al crear un
+    cargo nuevo; solo_activos=False trae TODOS, para la pantalla de
+    gestion en Pagos > Servicios.
+    """
+    query = q(db, models.Servicio, usuario)
+    if solo_activos:
+        query = query.filter(models.Servicio.activo == True)
+    return query.order_by(models.Servicio.nombre).all()
+
+
+@app.post("/servicios/", response_model=schemas.Servicio, tags=["Servicios"])
+def crear_servicio(datos: schemas.ServicioCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    gid = get_gid(usuario)
+    existente = db.query(models.Servicio).filter(func.lower(models.Servicio.nombre) == datos.nombre.strip().lower(), models.Servicio.gimnasio_id == gid).first()
+    if existente:
+        if not existente.activo:
+            existente.activo = True
+            db.commit()
+            db.refresh(existente)
+        return existente
+    db_servicio = models.Servicio(nombre=datos.nombre.strip(), notas=datos.notas, activo=True, gimnasio_id=gid)
+    db.add(db_servicio)
+    db.commit()
+    db.refresh(db_servicio)
+    return db_servicio
+
+
+@app.put("/servicios/{servicio_id}", response_model=schemas.Servicio, tags=["Servicios"])
+def actualizar_servicio(servicio_id: int, datos: schemas.ServicioUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Se usa tanto para renombrar/anotar como para el checkbox de visibilidad (activo=True/False). Desactivar NO borra los cargos ya registrados con este servicio."""
+    servicio = db.query(models.Servicio).filter(models.Servicio.id == servicio_id, models.Servicio.gimnasio_id == get_gid(usuario)).first()
+    if not servicio:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(servicio, campo, valor)
+    db.commit()
+    db.refresh(servicio)
+    return servicio
+
+
+def _cargo_con_totales(cargo: models.CargoServicio) -> models.CargoServicio:
+    total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+    cargo.total_pagado = total_pagado
+    cargo.pendiente = round(cargo.monto_total - total_pagado, 2)
+    return cargo
+
+
+@app.get("/cargos-servicio/", response_model=List[schemas.CargoServicio], tags=["Servicios"])
+def listar_cargos_servicio(
+    servicio_id: Optional[int] = None,
+    anio: Optional[int] = None,
+    mes: Optional[int] = None,
+    solo_pendientes: bool = False,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Lista de cargos (cobros/deudas) de servicios, con total_pagado y
+    pendiente ya calculados. Filtrable por servicio y/o periodo
+    (anio/mes), pensado para la vista mensual de Pagos > Servicios.
+    """
+    query = q(db, models.CargoServicio, usuario)
+    if servicio_id:
+        query = query.filter(models.CargoServicio.servicio_id == servicio_id)
+    if anio:
+        query = query.filter(models.CargoServicio.anio == anio)
+    if mes:
+        query = query.filter(models.CargoServicio.mes == mes)
+    cargos = query.order_by(models.CargoServicio.anio.asc(), models.CargoServicio.mes.asc(), models.CargoServicio.fecha_vencimiento.asc(), models.CargoServicio.id.asc()).all()
+    for c in cargos:
+        _cargo_con_totales(c)
+    if solo_pendientes:
+        cargos = [c for c in cargos if c.pendiente > 0.009]
+    return cargos
+
+
+@app.get("/cargos-servicio/{cargo_id}", response_model=schemas.CargoServicio, tags=["Servicios"])
+def obtener_cargo_servicio(cargo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == cargo_id, models.CargoServicio.gimnasio_id == get_gid(usuario)).first()
+    if not cargo:
+        raise HTTPException(status_code=404, detail="Cargo no encontrado")
+    return _cargo_con_totales(cargo)
+
+
+@app.post("/cargos-servicio/", response_model=schemas.CargoServicio, tags=["Servicios"])
+def crear_cargo_servicio(datos: schemas.CargoServicioCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """
+    Registra un cobro/deuda nuevo de un servicio para un periodo (ej.
+    'Recibo de agua - Julio 2026'). Si se marca como recurrente
+    (semanal/mensual/anual), en vez de crear un solo cargo se genera
+    de una vez toda la serie a futuro (agrupada por serie_id):
+      - semanal: un cargo por cada dia de la semana marcado, durante
+        las proximas 12 ocurrencias (se toma como fecha de partida
+        el Vencimiento indicado, o hoy si no se indico).
+      - mensual: 12 cargos (el actual + 11 meses mas), mismo dia de
+        vencimiento cada mes.
+      - anual: 5 cargos (el actual + 4 años mas), misma fecha cada año.
+    Se devuelve solo el primer cargo de la serie; el resto queda
+    creado en la base (se ven al refrescar el listado).
+    """
+    servicio = db.query(models.Servicio).filter(models.Servicio.id == datos.servicio_id).first()
+    if not servicio:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+    if datos.monto_total <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    if datos.mes < 1 or datos.mes > 12:
+        raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
+
+    gid = get_gid(usuario)
+
+    if not datos.recurrente_tipo:
+        db_cargo = models.CargoServicio(**datos.model_dump(), gimnasio_id=gid)
+        db.add(db_cargo)
+        db.commit()
+        db.refresh(db_cargo)
+        return _cargo_con_totales(db_cargo)
+
+    # ---- Generacion de una serie recurrente ----
+    import calendar as _cal
+
+    def _sumar_meses(anio, mes, cantidad):
+        total = (anio * 12 + (mes - 1)) + cantidad
+        return total // 12, (total % 12) + 1
+
+    def _clip_dia(anio, mes, dia):
+        return min(dia, _cal.monthrange(anio, mes)[1])
+
+    serie_id = str(uuid.uuid4())
+    primer_cargo = None
+
+    if datos.recurrente_tipo == "mensual":
+        dia_venc = datos.fecha_vencimiento.day if datos.fecha_vencimiento else None
+        for i in range(12):
+            nuevo_anio, nuevo_mes = _sumar_meses(datos.anio, datos.mes, i)
+            venc = date(nuevo_anio, nuevo_mes, _clip_dia(nuevo_anio, nuevo_mes, dia_venc)) if dia_venc else None
+            cargo = models.CargoServicio(
+                servicio_id=datos.servicio_id, concepto=datos.concepto, monto_total=datos.monto_total,
+                anio=nuevo_anio, mes=nuevo_mes, fecha_vencimiento=venc, notas=datos.notas,
+                recurrente_tipo=datos.recurrente_tipo, serie_id=serie_id, gimnasio_id=gid,
+            )
+            db.add(cargo)
+            if primer_cargo is None:
+                primer_cargo = cargo
+
+    elif datos.recurrente_tipo == "anual":
+        dia_venc = datos.fecha_vencimiento.day if datos.fecha_vencimiento else None
+        for i in range(5):
+            nuevo_anio = datos.anio + i
+            venc = date(nuevo_anio, datos.mes, _clip_dia(nuevo_anio, datos.mes, dia_venc)) if dia_venc else None
+            cargo = models.CargoServicio(
+                servicio_id=datos.servicio_id, concepto=datos.concepto, monto_total=datos.monto_total,
+                anio=nuevo_anio, mes=datos.mes, fecha_vencimiento=venc, notas=datos.notas,
+                recurrente_tipo=datos.recurrente_tipo, serie_id=serie_id, gimnasio_id=gid,
+            )
+            db.add(cargo)
+            if primer_cargo is None:
+                primer_cargo = cargo
+
+    elif datos.recurrente_tipo == "semanal":
+        dias_csv = datos.recurrente_dias_semana or ""
+        dias_deseados = [d for d in dias_csv.split(",") if d]
+        if not dias_deseados:
+            raise HTTPException(status_code=400, detail="Selecciona al menos un dia de la semana para un cargo semanal")
+        mapa_dias = {"lun": 0, "mar": 1, "mie": 2, "jue": 3, "vie": 4, "sab": 5, "dom": 6}
+        indices_deseados = {mapa_dias[d] for d in dias_deseados if d in mapa_dias}
+        fecha_cursor = datos.fecha_vencimiento or date(datos.anio, datos.mes, 1)
+        generados = 0
+        intentos = 0
+        while generados < 12 and intentos < 120:
+            if fecha_cursor.weekday() in indices_deseados:
+                cargo = models.CargoServicio(
+                    servicio_id=datos.servicio_id, concepto=datos.concepto, monto_total=datos.monto_total,
+                    anio=fecha_cursor.year, mes=fecha_cursor.month, fecha_vencimiento=fecha_cursor, notas=datos.notas,
+                    recurrente_tipo=datos.recurrente_tipo, recurrente_dias_semana=dias_csv, serie_id=serie_id, gimnasio_id=gid,
+                )
+                db.add(cargo)
+                if primer_cargo is None:
+                    primer_cargo = cargo
+                generados += 1
+            fecha_cursor = fecha_cursor + timedelta(days=1)
+            intentos += 1
+    else:
+        raise HTTPException(status_code=400, detail="Tipo de recurrencia invalido (usa semanal, mensual o anual)")
+
+    db.commit()
+    db.refresh(primer_cargo)
+    return _cargo_con_totales(primer_cargo)
+
+
+@app.put("/cargos-servicio/{cargo_id}", response_model=schemas.CargoServicio, tags=["Servicios"])
+def actualizar_cargo_servicio(
+    cargo_id: int,
+    datos: schemas.CargoServicioUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Correccion administrativa de un cargo (monto, periodo, vencimiento, etc). Solo administrador. No permite bajar el monto por debajo de lo ya pagado."""
+    cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == cargo_id, models.CargoServicio.gimnasio_id == get_gid(usuario)).first()
+    if not cargo:
+        raise HTTPException(status_code=404, detail="Cargo no encontrado")
+    datos_dict = datos.model_dump(exclude_unset=True)
+    if "monto_total" in datos_dict and datos_dict["monto_total"] is not None:
+        if datos_dict["monto_total"] <= 0:
+            raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+        total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+        if datos_dict["monto_total"] < total_pagado:
+            raise HTTPException(status_code=400, detail=f"El nuevo monto no puede ser menor a lo ya pagado ({total_pagado:.2f})")
+    for campo, valor in datos_dict.items():
+        setattr(cargo, campo, valor)
+    db.commit()
+    db.refresh(cargo)
+    return _cargo_con_totales(cargo)
+
+
+@app.delete("/cargos-servicio/{cargo_id}", tags=["Servicios"])
+def eliminar_cargo_servicio(cargo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    """Elimina un cargo (y sus pagos asociados, si tuviera) registrado por error."""
+    cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == cargo_id, models.CargoServicio.gimnasio_id == get_gid(usuario)).first()
+    if not cargo:
+        raise HTTPException(status_code=404, detail="Cargo no encontrado")
+    db.delete(cargo)
+    db.commit()
+    return {"message": "Cargo eliminado"}
+
+
+@app.post("/pagos-servicio/", response_model=schemas.PagoServicio, tags=["Servicios"])
+def crear_pago_servicio(
+    datos: schemas.PagoServicioCreate,
+    db: Session = Depends(get_db),
+    usuario_actual: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Registra un pago (total o parcial) contra un cargo de servicio, validando que no supere el saldo pendiente real (recalculado en el servidor)."""
+    cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == datos.cargo_id).first()
+    if not cargo:
+        raise HTTPException(status_code=404, detail="Cargo no encontrado")
+    if datos.monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+    pendiente = round(cargo.monto_total - total_pagado, 2)
+    if datos.monto > pendiente + 0.01:
+        raise HTTPException(status_code=400, detail=f"El monto ({datos.monto:.2f}) supera el saldo pendiente ({pendiente:.2f})")
+    db_pago = models.PagoServicio(
+        cargo_id=datos.cargo_id, monto=datos.monto, notas=datos.notas,
+        metodo_pago=(datos.metodo_pago.value if datos.metodo_pago else "efectivo"),
+        usuario_registro_id=usuario_actual.id,
+    )
+    db.add(db_pago)
+    db.commit()
+    db.refresh(db_pago)
+    return db_pago
+
+
+@app.get("/pagos-servicio/", response_model=List[schemas.PagoServicio], tags=["Servicios"])
+def listar_pagos_servicio(cargo_id: Optional[int] = None, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    query = db.query(models.PagoServicio)
+    if cargo_id:
+        query = query.filter(models.PagoServicio.cargo_id == cargo_id)
+    return query.order_by(models.PagoServicio.fecha_pago.desc()).all()
+
+
+@app.put("/pagos-servicio/{pago_id}", response_model=schemas.PagoServicio, tags=["Servicios"])
+def editar_pago_servicio(
+    pago_id: int,
+    datos: schemas.PagoServicioUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Correccion administrativa de un pago ya registrado. Solo administrador. El nuevo monto se revalida contra el saldo disponible del cargo, excluyendo este mismo pago del calculo."""
+    pago = db.query(models.PagoServicio).filter(models.PagoServicio.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    datos_dict = datos.model_dump(exclude_unset=True)
+    if "monto" in datos_dict and datos_dict["monto"] is not None:
+        nuevo_monto = datos_dict["monto"]
+        if nuevo_monto <= 0:
+            raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+        cargo = pago.cargo
+        pagado_sin_este = round(sum(p.monto for p in cargo.pagos if p.id != pago.id), 2)
+        pendiente_sin_este = round(cargo.monto_total - pagado_sin_este, 2)
+        if nuevo_monto > pendiente_sin_este + 0.01:
+            raise HTTPException(status_code=400, detail=f"El monto ({nuevo_monto:.2f}) supera el saldo disponible ({pendiente_sin_este:.2f}, sin contar este pago).")
+        pago.monto = nuevo_monto
+    if "notas" in datos_dict:
+        pago.notas = datos_dict["notas"]
+    if "metodo_pago" in datos_dict and datos_dict["metodo_pago"] is not None:
+        pago.metodo_pago = datos_dict["metodo_pago"].value if hasattr(datos_dict["metodo_pago"], "value") else datos_dict["metodo_pago"]
+    db.commit()
+    db.refresh(pago)
+    return pago
+
+
+@app.delete("/pagos-servicio/{pago_id}", tags=["Servicios"])
+def eliminar_pago_servicio(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    """Elimina un pago registrado por error. El pendiente del cargo se recalcula solo."""
+    pago = db.query(models.PagoServicio).filter(models.PagoServicio.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    db.delete(pago)
+    db.commit()
+    return {"message": "Pago eliminado"}
+
+
+# ==================================================================
+# MEDIDAS (toma antropometrica completa, historial por fecha)
+# ==================================================================
+
+@app.get("/medidas/cliente/{cliente_id}", response_model=List[schemas.Medida], tags=["Medidas"])
+def listar_medidas_de_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """Historial de tomas de medidas de un cliente, de la mas reciente a la mas antigua."""
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return (
+        db.query(models.Medida)
+        .filter(models.Medida.cliente_id == cliente_id)
+        .order_by(models.Medida.fecha.desc(), models.Medida.id.desc())
+        .all()
+    )
+
+
+@app.post("/medidas/", response_model=schemas.Medida, tags=["Medidas"])
+def registrar_medida(
+    datos: schemas.MedidaCreate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    """Registra una nueva toma de medidas para un cliente (el trainer llena los campos que haya medido esa vez)."""
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    datos_dict = datos.model_dump()
+    if not datos_dict.get("fecha"):
+        datos_dict["fecha"] = date.today()
+    db_medida = models.Medida(**datos_dict, gimnasio_id=get_gid(usuario))
+    db.add(db_medida)
+    db.commit()
+    db.refresh(db_medida)
+    _intentar_generar_plan_automatico(db, datos.cliente_id)
+    return db_medida
+
+
+@app.put("/medidas/{medida_id}", response_model=schemas.Medida, tags=["Medidas"])
+def editar_medida(
+    medida_id: int,
+    datos: schemas.MedidaUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
+):
+    medida = db.query(models.Medida).filter(models.Medida.id == medida_id, models.Medida.gimnasio_id == get_gid(usuario)).first()
+    if not medida:
+        raise HTTPException(status_code=404, detail="Toma de medidas no encontrada")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(medida, campo, valor)
+    db.commit()
+    db.refresh(medida)
+    _intentar_generar_plan_automatico(db, medida.cliente_id)
+    return medida
+
+
+@app.delete("/medidas/{medida_id}", tags=["Medidas"])
+def eliminar_medida(medida_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    medida = db.query(models.Medida).filter(models.Medida.id == medida_id, models.Medida.gimnasio_id == get_gid(usuario)).first()
+    if not medida:
+        raise HTTPException(status_code=404, detail="Toma de medidas no encontrada")
+    db.delete(medida)
+    db.commit()
+    return {"message": "Toma de medidas eliminada"}
+
+
+# ==================================================================
+# CONFIGURACION
+# ==================================================================
+
+@app.get("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
+def obtener_configuracion(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    return _get_o_crear_configuracion(db)
+
+
+@app.put("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
+def actualizar_configuracion(datos: schemas.ConfiguracionUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    config = _get_o_crear_configuracion(db)
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(config, campo, valor)
+    db.commit()
+    db.refresh(config)
+    return config
+
+
+# ==================================================================
+# METAS DE VENTAS Y COMISIONES (solo administrador)
+# ==================================================================
+
+@app.get("/metas/", response_model=List[schemas.MetaMensual], tags=["Metas"])
+def listar_metas(
+    anio: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    query = q(db, models.MetaMensual, usuario)
+    if anio:
+        query = query.filter(models.MetaMensual.anio == anio)
+    return query.order_by(models.MetaMensual.anio, models.MetaMensual.mes).all()
+
+
+@app.put("/metas/{anio}/{mes}", response_model=schemas.MetaMensual, tags=["Metas"])
+def guardar_meta_mensual(
+    anio: int,
+    mes: int,
+    datos: schemas.MetaMensualUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """
+    Crea o actualiza (upsert) la meta de un mes especifico. Pensado
+    para la grilla editable de proyeccion a 1 anio: cada celda
+    guardada llama a este endpoint con su anio/mes.
+    """
+    if mes < 1 or mes > 12:
+        raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
+
+    meta = db.query(models.MetaMensual).filter(models.MetaMensual.anio == anio, models.MetaMensual.mes == mes, models.MetaMensual.gimnasio_id == get_gid(usuario)).first()
+    if not meta:
+        meta = models.MetaMensual(anio=anio, mes=mes, gimnasio_id=get_gid(usuario))
+        db.add(meta)
+
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(meta, campo, valor)
+
+    db.commit()
+    db.refresh(meta)
+    return meta
+
+
+@app.get("/comisiones/tramos", response_model=List[schemas.TramoComision], tags=["Metas"])
+def listar_tramos_comision(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    return q(db, models.TramoComision, usuario).order_by(models.TramoComision.tipo, models.TramoComision.porcentaje_meta_minimo).all()
+
+
+@app.post("/comisiones/tramos", response_model=schemas.TramoComision, tags=["Metas"])
+def crear_tramo_comision(datos: schemas.TramoComisionCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    if datos.tipo not in ("membresia", "producto"):
+        raise HTTPException(status_code=400, detail="tipo debe ser 'membresia' o 'producto'")
+    db_tramo = models.TramoComision(**datos.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(db_tramo)
+    db.commit()
+    db.refresh(db_tramo)
+    return db_tramo
+
+
+@app.put("/comisiones/tramos/{tramo_id}", response_model=schemas.TramoComision, tags=["Metas"])
+def actualizar_tramo_comision(
+    tramo_id: int,
+    datos: schemas.TramoComisionUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    tramo = db.query(models.TramoComision).filter(models.TramoComision.id == tramo_id, models.TramoComision.gimnasio_id == get_gid(usuario)).first()
+    if not tramo:
+        raise HTTPException(status_code=404, detail="Tramo no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(tramo, campo, valor)
+    db.commit()
+    db.refresh(tramo)
+    return tramo
+
+
+@app.delete("/comisiones/tramos/{tramo_id}", tags=["Metas"])
+def eliminar_tramo_comision(tramo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    tramo = db.query(models.TramoComision).filter(models.TramoComision.id == tramo_id, models.TramoComision.gimnasio_id == get_gid(usuario)).first()
+    if not tramo:
+        raise HTTPException(status_code=404, detail="Tramo no encontrado")
+    db.delete(tramo)
+    db.commit()
+    return {"message": "Tramo eliminado"}
+
+
+def _comision_aplicable(porcentaje_meta: float, tramos: List[models.TramoComision]) -> float:
+    """Devuelve el % de comision del tramo mas alto que se alcanza (0 si ninguno)."""
+    mejor = 0.0
+    for tramo in tramos:
+        if tramo.activo and porcentaje_meta >= tramo.porcentaje_meta_minimo:
+            mejor = max(mejor, tramo.porcentaje_comision)
+    return mejor
+
+
+@app.get("/comisiones/resumen", response_model=List[schemas.ResumenComisionUsuario], tags=["Metas"])
+def resumen_comisiones(
+    anio: int,
+    mes: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """
+    Calcula, para cada trabajador de staff activo, sus ventas de
+    membresias y productos en el mes, el % de cumplimiento respecto
+    a la meta mensual, y la comision resultante segun los tramos
+    configurados (se aplica el tramo mas alto alcanzado).
+    """
+    if mes < 1 or mes > 12:
+        raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
+
+    desde = date(anio, mes, 1)
+    hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+
+    meta = db.query(models.MetaMensual).filter(models.MetaMensual.anio == anio, models.MetaMensual.mes == mes).first()
+    meta_membresias = meta.meta_membresias if meta else 0.0
+    meta_productos = meta.meta_productos if meta else 0.0
+
+    config = _get_o_crear_configuracion(db)
+    comision_producto_flat = config.comision_producto_porcentaje or 0.0
+
+    tramos = q(db, models.TramoComision, usuario).filter(models.TramoComision.activo == True, models.TramoComision.tipo == "membresia").all()
+
+    usuarios = q(db, models.Usuario, usuario).filter(models.Usuario.activo == True).all()
+
+    resultado = []
+    for usuario in usuarios:
+        ventas_membresias = (
+            db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
+            .filter(
+                models.ClienteMembresia.vendido_por_id == usuario.id,
+                models.ClienteMembresia.fecha_inicio >= desde,
+                models.ClienteMembresia.fecha_inicio < hasta,
+            )
+            .scalar()
+        )
+        ventas_productos = (
+            db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
+            .filter(
+                models.Venta.usuario_id == usuario.id,
+                models.Venta.fecha_venta >= desde,
+                models.Venta.fecha_venta < hasta,
+            )
+            .scalar()
+        )
+
+        if ventas_membresias == 0 and ventas_productos == 0:
+            continue
+
+        pct_meta_membresias = round((ventas_membresias / meta_membresias * 100), 1) if meta_membresias else 0.0
+        pct_meta_productos = round((ventas_productos / meta_productos * 100), 1) if meta_productos else 0.0
+
+        pct_comision_membresias = _comision_aplicable(pct_meta_membresias, tramos)
+        # Productos: comision plana por cada venta, NO depende de metas.
+        pct_comision_productos = comision_producto_flat
+
+        comision_membresias = round(ventas_membresias * pct_comision_membresias / 100, 2)
+        comision_productos = round(ventas_productos * pct_comision_productos / 100, 2)
+
+        resultado.append(
+            schemas.ResumenComisionUsuario(
+                usuario_id=usuario.id,
+                nombre_completo=usuario.nombre_completo,
+                ventas_membresias=ventas_membresias,
+                ventas_productos=ventas_productos,
+                meta_membresias=meta_membresias,
+                meta_productos=meta_productos,
+                porcentaje_meta_membresias=pct_meta_membresias,
+                porcentaje_meta_productos=pct_meta_productos,
+                porcentaje_comision_membresias=pct_comision_membresias,
+                porcentaje_comision_productos=pct_comision_productos,
+                comision_membresias=comision_membresias,
+                comision_productos=comision_productos,
+                comision_total=round(comision_membresias + comision_productos, 2),
+            )
+        )
+
+    resultado.sort(key=lambda r: r.comision_total, reverse=True)
+    return resultado
+
+
+# ==================================================================
+# SAAS / SUPER-ADMIN (gestion de gimnasios y planes)
+# ==================================================================
+
+
+@app.post("/auth/registro-gimnasio", response_model=schemas.TokenResponse, tags=["Auth"])
+def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depends(get_db)):
+    """
+    Registro publico: un dueño de gimnasio crea su cuenta.
+    Crea el gimnasio (plan Free), su usuario admin, siembra datos
+    iniciales y devuelve un token listo para usar.
+    """
+    import re
+    slug = datos.slug.strip().lower()
+    if not re.match(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$', slug):
+        raise HTTPException(status_code=400, detail="El slug debe tener 3-50 caracteres, solo letras minusculas, numeros y guiones, sin empezar ni terminar en guion")
+    if db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug).first():
+        raise HTTPException(status_code=400, detail=f"Ya existe un gimnasio con el identificador '{slug}'")
+    username = datos.username.strip()
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="El usuario debe tener al menos 3 caracteres")
+    if db.query(models.Usuario).filter(models.Usuario.username == username).first():
+        raise HTTPException(status_code=400, detail=f"El usuario '{username}' ya esta en uso")
+    if len(datos.password) < 4:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 4 caracteres")
+
+    plan_free = db.query(models.PlanSaas).filter_by(nombre="Free").first()
+
+    db_gimnasio = models.Gimnasio(
+        nombre=datos.nombre_gimnasio.strip(),
+        slug=slug,
+        plan_id=plan_free.id if plan_free else None,
+        email_contacto=datos.email,
+        telefono=datos.telefono,
+    )
+    db.add(db_gimnasio)
+    db.flush()
+
+    db_admin = models.Usuario(
+        gimnasio_id=db_gimnasio.id,
+        nombre_completo=datos.nombre_admin.strip(),
+        username=username,
+        password_hash=auth.hash_password(datos.password),
+        rol=models.RolUsuario.STAFF,
+        es_administrador=True,
+        puede_eliminar=True,
+        puede_exportar=True,
+    )
+    db.add(db_admin)
+    db.flush()
+
+    _sembrar_datos_gimnasio_nuevo(db, db_gimnasio.id)
+    db.commit()
+    db.refresh(db_admin)
+
+    token = auth.crear_access_token({
+        "sub": str(db_admin.id),
+        "tipo": "usuario",
+        "rol": db_admin.rol.value,
+        "gimnasio_id": db_gimnasio.id,
+    })
+    return schemas.TokenResponse(
+        access_token=token,
+        rol=db_admin.rol.value,
+        nombre=db_admin.nombre_completo,
+        es_administrador=True,
+        puede_eliminar=True,
+        puede_exportar=True,
+        gimnasio_id=db_gimnasio.id,
+    )
+
+def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
+    """
+    Copia los datos iniciales (ejercicios, alimentos, paquetes de
+    nutricion, puestos, servicios) del gimnasio 1 (template) al
+    nuevo gimnasio. Asi cada gym nuevo arranca con el catalogo
+    completo sin hardcodear la data aqui.
+    """
+    GYM_TEMPLATE = 1
+    if gimnasio_id == GYM_TEMPLATE:
+        return
+
+    # --- Ejercicios ---
+    for ej in db.query(models.TipoEjercicio).filter(models.TipoEjercicio.gimnasio_id == GYM_TEMPLATE).all():
+        db.add(models.TipoEjercicio(
+            gimnasio_id=gimnasio_id, nombre=ej.nombre, grupo_muscular=ej.grupo_muscular,
+            categoria=ej.categoria, equipamiento=ej.equipamiento, nivel=ej.nivel,
+            genero_recomendado=ej.genero_recomendado, objetivo=ej.objetivo,
+            descripcion=ej.descripcion,
+        ))
+
+    # --- Alimentos ---
+    mapa_alimentos = {}  # id_viejo -> obj_nuevo (para paquetes)
+    for al in db.query(models.Alimento).filter(models.Alimento.gimnasio_id == GYM_TEMPLATE).all():
+        nuevo = models.Alimento(
+            gimnasio_id=gimnasio_id, nombre=al.nombre, categoria=al.categoria,
+            calorias=al.calorias, proteinas_g=al.proteinas_g,
+            carbohidratos_g=al.carbohidratos_g, grasas_g=al.grasas_g,
+            fibra_g=al.fibra_g, porcion_gramos=al.porcion_gramos,
+            porcion_casera=al.porcion_casera,
+        )
+        db.add(nuevo)
+        db.flush()
+        mapa_alimentos[al.id] = nuevo
+
+    # --- Paquetes de nutricion (con sus items) ---
+    for paq in db.query(models.PaqueteNutricion).filter(models.PaqueteNutricion.gimnasio_id == GYM_TEMPLATE).all():
+        nuevo_paq = models.PaqueteNutricion(
+            gimnasio_id=gimnasio_id, nombre=paq.nombre,
+            tipo_comida=paq.tipo_comida, proposito=paq.proposito, notas=paq.notas,
+        )
+        db.add(nuevo_paq)
+        db.flush()
+        for item in paq.items:
+            nuevo_al = mapa_alimentos.get(item.alimento_id)
+            if nuevo_al:
+                db.add(models.PaqueteAlimento(
+                    paquete_id=nuevo_paq.id, alimento_id=nuevo_al.id,
+                    cantidad_gramos=item.cantidad_gramos,
+                ))
+
+    # --- Puestos ---
+    for p in db.query(models.Puesto).filter(models.Puesto.gimnasio_id == GYM_TEMPLATE).all():
+        db.add(models.Puesto(gimnasio_id=gimnasio_id, nombre=p.nombre, tipo=p.tipo))
+
+    # --- Servicios ---
+    for s in db.query(models.Servicio).filter(models.Servicio.gimnasio_id == GYM_TEMPLATE).all():
+        db.add(models.Servicio(gimnasio_id=gimnasio_id, nombre=s.nombre, notas=s.notas))
+
+    db.flush()
+
+@app.get("/saas/planes", response_model=List[schemas.PlanSaas], tags=["SaaS"])
+def listar_planes_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
+    return db.query(models.PlanSaas).order_by(models.PlanSaas.id).all()
+
+
+@app.post("/saas/planes", response_model=schemas.PlanSaas, tags=["SaaS"])
+def crear_plan_saas(datos: schemas.PlanSaasCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
+    db_plan = models.PlanSaas(**datos.model_dump())
+    db.add(db_plan)
+    db.commit()
+    db.refresh(db_plan)
+    return db_plan
+
+
+@app.put("/saas/planes/{plan_id}", response_model=schemas.PlanSaas, tags=["SaaS"])
+def actualizar_plan_saas(plan_id: int, datos: schemas.PlanSaasUpdate, db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
+    plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(plan, campo, valor)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+@app.get("/saas/gimnasios", response_model=List[schemas.GimnasioDetalle], tags=["SaaS"])
+def listar_gimnasios(db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
+    """Dashboard de gimnasios con stats basicas."""
+    gimnasios = db.query(models.Gimnasio).order_by(models.Gimnasio.id).all()
+    resultado = []
+    for g in gimnasios:
+        total_clientes = db.query(func.count(models.Cliente.id)).filter(
+            models.Cliente.gimnasio_id == g.id, models.Cliente.activo == True
+        ).scalar() or 0
+        total_usuarios = db.query(func.count(models.Usuario.id)).filter(
+            models.Usuario.gimnasio_id == g.id, models.Usuario.activo == True
+        ).scalar() or 0
+        nombre_plan = g.plan.nombre if g.plan else None
+        resultado.append(schemas.GimnasioDetalle(
+            id=g.id, nombre=g.nombre, slug=g.slug, plan_id=g.plan_id,
+            activo=g.activo, fecha_registro=g.fecha_registro,
+            email_contacto=g.email_contacto, telefono=g.telefono,
+            direccion=g.direccion, logo_url=g.logo_url,
+            total_clientes=total_clientes, total_usuarios=total_usuarios,
+            nombre_plan=nombre_plan,
+        ))
+    return resultado
+
+
+@app.post("/saas/gimnasios", response_model=schemas.Gimnasio, tags=["SaaS"])
+def crear_gimnasio(
+    datos: schemas.GimnasioCreate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    """
+    Crea un gimnasio nuevo con su usuario admin inicial.
+    El slug debe ser unico (URL-friendly).
+    """
+    existente = db.query(models.Gimnasio).filter(models.Gimnasio.slug == datos.slug).first()
+    if existente:
+        raise HTTPException(status_code=400, detail=f"Ya existe un gimnasio con slug '{datos.slug}'")
+    existente_user = db.query(models.Usuario).filter(models.Usuario.username == datos.admin_username).first()
+    if existente_user:
+        raise HTTPException(status_code=400, detail=f"Ya existe un usuario con username '{datos.admin_username}'")
+
+    db_gimnasio = models.Gimnasio(
+        nombre=datos.nombre, slug=datos.slug, plan_id=datos.plan_id,
+        email_contacto=datos.email_contacto, telefono=datos.telefono, direccion=datos.direccion,
+    )
+    db.add(db_gimnasio)
+    db.flush()
+
+    db_admin = models.Usuario(
+        gimnasio_id=db_gimnasio.id,
+        nombre_completo=datos.admin_nombre,
+        username=datos.admin_username,
+        password_hash=auth.hash_password(datos.admin_password),
+        rol=models.RolUsuario.STAFF,
+        es_administrador=True,
+        puede_eliminar=True,
+        puede_exportar=True,
+    )
+    db.add(db_admin)
+    _sembrar_datos_gimnasio_nuevo(db, db_gimnasio.id)
+    db.commit()
+    db.refresh(db_gimnasio)
+    return db_gimnasio
+
+
+@app.put("/saas/gimnasios/{gimnasio_id}", response_model=schemas.Gimnasio, tags=["SaaS"])
+def actualizar_gimnasio(
+    gimnasio_id: int,
+    datos: schemas.GimnasioUpdate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    datos_dict = datos.model_dump(exclude_unset=True)
+    if "slug" in datos_dict:
+        otro = db.query(models.Gimnasio).filter(
+            models.Gimnasio.slug == datos_dict["slug"], models.Gimnasio.id != gimnasio_id
+        ).first()
+        if otro:
+            raise HTTPException(status_code=400, detail=f"Ya existe otro gimnasio con slug '{datos_dict['slug']}'")
+    for campo, valor in datos_dict.items():
+        setattr(gimnasio, campo, valor)
+    db.commit()
+    db.refresh(gimnasio)
+    return gimnasio
+
+
+@app.delete("/saas/gimnasios/{gimnasio_id}", tags=["SaaS"])
+def eliminar_gimnasio(
+    gimnasio_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    """
+    Elimina un gimnasio y TODOS sus datos asociados. Irreversible.
+    No permite eliminar el gimnasio template (id=1).
+    """
+    if gimnasio_id == 1:
+        raise HTTPException(status_code=400, detail="No se puede eliminar el gimnasio principal (template)")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+
+    # Eliminar datos en orden (hijos antes que padres)
+    tablas_con_gimnasio_id = [
+        models.Medida, models.Progreso, models.Asistencia,
+        models.PagoPlanilla, models.CargoServicio,
+        models.Venta, models.Compra, models.Producto,
+        models.ClaseDictada, models.Empleado, models.Puesto,
+        models.Servicio, models.MetaMensual, models.TramoComision,
+        models.PaqueteNutricion, models.PlanNutricion,
+        models.Alimento, models.TipoEjercicio, models.Rutina,
+        models.Reto, models.Membresia, models.Cliente,
+        models.Usuario,
+    ]
+    for modelo in tablas_con_gimnasio_id:
+        db.query(modelo).filter(modelo.gimnasio_id == gimnasio_id).delete(synchronize_session=False)
+
+    db.delete(gimnasio)
+    db.commit()
+    return {"ok": True, "detalle": f"Gimnasio '{gimnasio.nombre}' y todos sus datos eliminados"}
+
+
+@app.get("/saas/dashboard", tags=["SaaS"])
+def dashboard_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
+    """Stats globales de la plataforma para el super-admin."""
+    total_gimnasios = db.query(func.count(models.Gimnasio.id)).scalar() or 0
+    gimnasios_activos = db.query(func.count(models.Gimnasio.id)).filter(models.Gimnasio.activo == True).scalar() or 0
+    total_clientes = db.query(func.count(models.Cliente.id)).filter(models.Cliente.activo == True).scalar() or 0
+    total_usuarios = db.query(func.count(models.Usuario.id)).filter(models.Usuario.activo == True).scalar() or 0
+    return {
+        "total_gimnasios": total_gimnasios,
+        "gimnasios_activos": gimnasios_activos,
+        "total_clientes_plataforma": total_clientes,
+        "total_usuarios_plataforma": total_usuarios,
+    }
+
+
+# ==================================================================
+# PORTAL DEL ALUMNO (solo lectura, requiere token de tipo "alumno")
+# ==================================================================
+
+@app.get("/portal-alumno/mi-perfil", response_model=schemas.Cliente, tags=["Portal Alumno"])
+def mi_perfil(cliente: models.Cliente = Depends(auth.get_cliente_actual)):
+    return cliente
+
+
+@app.get("/portal-alumno/mi-rutina", response_model=List[schemas.Rutina], tags=["Portal Alumno"])
+def mi_rutina(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    return db.query(models.Rutina).filter(models.Rutina.cliente_id == cliente.id, models.Rutina.activo == True).all()
+
+
+@app.get("/portal-alumno/mi-nutricion", response_model=List[schemas.PlanNutricion], tags=["Portal Alumno"])
+def mi_nutricion(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    return (
+        db.query(models.PlanNutricion)
+        .filter(models.PlanNutricion.cliente_id == cliente.id, models.PlanNutricion.activo == True)
+        .all()
+    )
+
+
+@app.get("/portal-alumno/mi-progreso", response_model=List[schemas.Progreso], tags=["Portal Alumno"])
+def mi_progreso(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    return (
+        db.query(models.Progreso)
+        .filter(models.Progreso.cliente_id == cliente.id)
+        .order_by(models.Progreso.fecha.desc())
+        .all()
+    )
+
+
+@app.get("/portal-alumno/retos", response_model=List[schemas.Reto], tags=["Portal Alumno"])
+def retos_disponibles(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    return db.query(models.Reto).filter(models.Reto.activo == True, models.Reto.gimnasio_id == cliente.gimnasio_id).all()
+
+
+@app.post("/portal-alumno/mi-foto", response_model=schemas.Cliente, tags=["Portal Alumno"])
+async def actualizar_mi_foto(
+    foto: UploadFile = File(...),
+    cliente: models.Cliente = Depends(auth.get_cliente_actual),
+    db: Session = Depends(get_db),
+):
+    """
+    Permite que el propio alumno actualice su foto desde el portal,
+    pero solo si su cuenta esta activa y no tiene deuda pendiente en
+    su membresia vigente (mismo calculo de deuda que /clientes/{id}/ficha).
+    """
+    if not cliente.activo:
+        raise HTTPException(status_code=403, detail="Tu cuenta esta inactiva. Acercate a recepcion.")
+
+    cm_activa = (
+        db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente.id, models.ClienteMembresia.activo == True)
+        .order_by(models.ClienteMembresia.fecha_fin.desc())
+        .first()
+    )
+    if cm_activa:
+        membresia = db.query(models.Membresia).filter(models.Membresia.id == cm_activa.membresia_id).first()
+        deuda = max((membresia.precio if membresia else 0.0) - (cm_activa.monto_pagado or 0.0), 0.0)
+        if deuda > 0:
+            raise HTTPException(status_code=403, detail="Tienes pagos pendientes. Acercate a recepcion para actualizar tu foto.")
+
+    contenido = await foto.read()
+    _eliminar_foto_anterior(cliente.foto_url)
+    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR)
+    db.commit()
+    db.refresh(cliente)
+    return cliente

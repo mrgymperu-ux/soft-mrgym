@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Membresias - Soft-MrGym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="js/tema.js"></script>
+    <style>
+        .modal-content.ancho { max-width: 720px; }
+        .tarifa-seccion { border: 1px solid var(--color-borde); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+        .tarifa-seccion h4 { margin: 0 0 12px; font-size: 0.85em; color: var(--color-texto-secundario); text-transform: uppercase; letter-spacing: 0.03em; }
+        .tarifa-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .tarifa-grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        .tarifa-hint { font-size: 0.72em; color: var(--color-texto-secundario); margin: -8px 0 10px; }
+        .dias-semana-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .dias-semana-chips label { display: flex; align-items: center; gap: 4px; font-size: 0.78em; background: var(--color-fondo); padding: 5px 9px; border-radius: 14px; cursor: pointer; }
+        .checkbox-linea { display: flex; align-items: center; gap: 8px; font-size: 0.85em; margin-bottom: 8px; }
+        .checkbox-linea input { width: auto; }
+        @media (max-width: 700px) { .tarifa-grid2, .tarifa-grid3 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Membresias</h1><p class="header-subtitle">Tarifas y planes disponibles</p></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <input type="file" id="input-importar-membresias" accept=".csv" style="display:none;" onchange="importarMembresias(this)">
+                <button class="btn btn-secondary" onclick="exportarMembresias()">⬇️ Exportar CSV</button>
+                <button class="btn btn-secondary" onclick="document.getElementById('input-importar-membresias').click()">⬆️ Importar CSV</button>
+                <button class="btn btn-secondary" onclick="abrirModalAsignar()">Asignar a cliente</button>
+                <button class="btn btn-primary" onclick="abrirModalNuevo()">+ Nueva Tarifa</button>
+            </div>
+        </div>
+        <div style="margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;cursor:pointer;width:fit-content;">
+                <input type="checkbox" id="chk-incluir-inactivas" onchange="cargarMembresias()"> Mostrar todas (incluir tarifas desactivadas)
+            </label>
+        </div>
+        <div class="card">
+            <div class="table-container">
+                <table class="table">
+                    <thead><tr><th>Tipo</th><th>Descripcion</th><th>Monto base</th><th>Duracion</th><th>Mensual</th><th>Acceso</th><th>Acciones</th></tr></thead>
+                    <tbody id="tabla-membresias"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+
+<div id="modal-membresia" class="modal">
+    <div class="modal-content ancho">
+        <div class="modal-header"><h3 class="modal-title" id="titulo-modal-tarifa">Nueva Tarifa</h3><button class="modal-close" onclick="cerrarModal('modal-membresia')">✕</button></div>
+
+        <div class="tarifa-seccion">
+            <h4>Datos generales</h4>
+            <div class="form-group"><label>Descripcion *</label><input type="text" id="f-nombre" placeholder="Mensual Full"></div>
+            <div class="form-group"><label>Notas internas</label><textarea id="f-descripcion" rows="2"></textarea></div>
+            <div class="tarifa-grid2">
+                <div class="form-group"><label>Monto base *</label><input type="number" id="f-precio" step="0.01" min="0"></div>
+                <div class="form-group"><label>Password (0-10 caracteres)</label><input type="text" id="f-password" maxlength="10"></div>
+            </div>
+        </div>
+
+        <div class="tarifa-seccion">
+            <h4>Duracion de la tarifa</h4>
+            <div class="tarifa-grid2">
+                <div class="form-group"><label>Meses</label><input type="number" id="f-meses" min="0" value="0" oninput="recalcularDuracion()"></div>
+                <div class="form-group"><label>Dias adicionales</label><input type="number" id="f-dias-extra" min="0" value="0" oninput="recalcularDuracion()"></div>
+            </div>
+            <p class="tarifa-hint">Duracion total: <strong id="f-duracion-total-txt">0 dias</strong> (se calcula automaticamente y define cuando vence la membresia del cliente)</p>
+        </div>
+
+        <div class="tarifa-seccion">
+            <h4>Pago fragmentado / deuda</h4>
+            <div class="tarifa-grid3">
+                <div class="form-group"><label>Monto inicial</label><input type="number" id="f-monto-inicial" step="0.01" min="0"></div>
+                <div class="form-group"><label>Fracciones para pago</label><input type="number" id="f-fracciones" min="0"></div>
+                <div class="form-group"><label>Dias de gracia</label><input type="number" id="f-dias-gracia" min="0"></div>
+            </div>
+            <div class="form-group"><label>Penalizacion por atraso</label><input type="number" id="f-penalizacion" step="0.01" min="0"></div>
+        </div>
+
+        <div class="tarifa-seccion">
+            <h4>Mensualidad y congelamiento</h4>
+            <div class="tarifa-grid2">
+                <div class="form-group"><label>Monto mensual (si es tarifa recurrente)</label><input type="number" id="f-monto-mensual" step="0.01" min="0"></div>
+                <div class="form-group"><label>Dias de congelamiento</label><input type="number" id="f-dias-congelamiento" min="0"></div>
+            </div>
+            <div class="checkbox-linea"><input type="checkbox" id="f-permite-congelamiento" checked> <label for="f-permite-congelamiento" style="margin:0;">Permitir congelamiento (freezing)</label></div>
+            <div class="checkbox-linea"><input type="checkbox" id="f-congelado-no-pagos"> <label for="f-congelado-no-pagos" style="margin:0;">Congelado no aparece en pagos</label></div>
+            <div class="checkbox-linea"><input type="checkbox" id="f-no-cruce-medidas"> <label for="f-no-cruce-medidas" style="margin:0;">No aparecer en reporte de cruce de medidas</label></div>
+        </div>
+
+        <div class="tarifa-seccion">
+            <h4>Nutricion</h4>
+            <div class="checkbox-linea"><input type="checkbox" id="f-incluye-nutricion"> <label for="f-incluye-nutricion" style="margin:0;">Esta tarifa incluye plan de nutricion</label></div>
+            <p class="tarifa-hint" style="margin-top:2px;margin-bottom:0;">Si se activa, a los clientes con esta tarifa vigente se les puede generar un plan de nutricion automatico al registrar sus medidas (peso/estatura + fecha de nacimiento).</p>
+        </div>
+
+        <div class="tarifa-seccion">
+            <h4>Horario y dias de acceso</h4>
+            <p class="tarifa-hint" style="margin-top:-4px;">Solo aplica a tarifas con cantidad de dias limitada dentro del periodo</p>
+            <div class="tarifa-grid3">
+                <div class="form-group"><label>Dias de acceso en el periodo</label><input type="number" id="f-dias-acceso-periodo" min="0" placeholder="Ej. 3 (lu-mi-vi)"></div>
+                <div class="form-group"><label>Hora inicial</label><input type="time" id="f-hora-inicio" value="00:00"></div>
+                <div class="form-group"><label>Hora final</label><input type="text" id="f-hora-fin" value="24:00" placeholder="24:00"></div>
+            </div>
+            <div class="dias-semana-chips" id="dias-semana-chips">
+                <label><input type="checkbox" value="dom" checked> Domingo</label>
+                <label><input type="checkbox" value="lun" checked> Lunes</label>
+                <label><input type="checkbox" value="mar" checked> Martes</label>
+                <label><input type="checkbox" value="mie" checked> Miercoles</label>
+                <label><input type="checkbox" value="jue" checked> Jueves</label>
+                <label><input type="checkbox" value="vie" checked> Viernes</label>
+                <label><input type="checkbox" value="sab" checked> Sabado</label>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal('modal-membresia')">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarMembresia()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<div id="modal-asignar" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3 class="modal-title">Asignar Membresia</h3><button class="modal-close" onclick="cerrarModal('modal-asignar')">✕</button></div>
+        <div class="form-group"><label>Cliente *</label><select id="f-cliente"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group"><label>Plan *</label><select id="f-plan" onchange="onPlanAsignarChange()"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group"><label>Fecha de inicio</label><input type="date" id="f-inicio"></div>
+        <div class="form-group"><label>Monto pagado</label><input type="number" id="f-monto-pagado" step="0.01" min="0"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModal('modal-asignar')">Cancelar</button>
+            <button class="btn btn-primary" onclick="asignarMembresia()">Asignar</button>
+        </div>
+    </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let moneda = "S/";
+    let membresiasCache = [];
+
+    function recalcularDuracion() {
+        const meses = parseInt(document.getElementById("f-meses").value) || 0;
+        const diasExtra = parseInt(document.getElementById("f-dias-extra").value) || 0;
+        const total = meses * 30 + diasExtra;
+        document.getElementById("f-duracion-total-txt").textContent = `${total} dias`;
+        return total;
+    }
+
+    async function cargarMembresias() {
+        const config = await getConfiguracion(); moneda = config.moneda;
+        const incluirInactivas = document.getElementById("chk-incluir-inactivas").checked;
+        membresiasCache = await apiFetch(`/membresias/?incluir_inactivas=${incluirInactivas}`);
+        const tbody = document.getElementById("tabla-membresias");
+        if (!membresiasCache.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay tarifas</td></tr>'; return; }
+        tbody.innerHTML = membresiasCache.map(m => `<tr style="${m.activo ? "" : "opacity:0.5;"}">
+            <td>#${m.id}</td>
+            <td><strong>${m.nombre}</strong>${m.activo ? "" : ' <span class="badge badge-error" style="font-size:0.62em;">inactiva</span>'}${m.descripcion ? `<div style="font-size:0.78em;color:#636E72;">${m.descripcion}</div>` : ""}</td>
+            <td>${formatCurrency(m.precio,moneda)}</td>
+            <td>${m.duracion_dias} dias</td>
+            <td>${m.monto_mensual ? formatCurrency(m.monto_mensual,moneda) : "—"}</td>
+            <td>${m.hora_inicio_acceso||"00:00"} - ${m.hora_fin_acceso||"24:00"}</td>
+            <td>
+                <button class="btn btn-sm btn-secondary" onclick="editarMembresia(${m.id})">✏️</button>
+                <button class="btn btn-sm btn-danger" onclick="eliminarMembresia(${m.id})">🗑️</button>
+            </td>
+        </tr>`).join("");
+    }
+
+    async function exportarMembresias() {
+        try { await apiDescargarArchivo("/membresias/exportar?incluir_inactivas=true", "membresias.csv"); }
+        catch (e) { showError(e.message); }
+    }
+
+    async function importarMembresias(input) {
+        const archivo = input.files && input.files[0];
+        if (!archivo) return;
+        try {
+            const resultado = await apiUploadFile("/membresias/importar", archivo, "archivo");
+            showSuccess(`Tarifas importadas: ${resultado.total_importadas}`);
+            if (resultado.errores && resultado.errores.length) console.warn("Errores:", resultado.errores);
+            cargarMembresias();
+        } catch (e) { showError(e.message); }
+        finally { input.value = ""; }
+    }
+
+    function limpiarFormularioTarifa() {
+        document.getElementById("titulo-modal-tarifa").textContent = "Nueva Tarifa";
+        document.getElementById("f-nombre").value = "";
+        document.getElementById("f-descripcion").value = "";
+        document.getElementById("f-precio").value = "";
+        document.getElementById("f-password").value = "";
+        document.getElementById("f-meses").value = 0;
+        document.getElementById("f-dias-extra").value = 0;
+        document.getElementById("f-monto-inicial").value = "";
+        document.getElementById("f-fracciones").value = "";
+        document.getElementById("f-dias-gracia").value = "";
+        document.getElementById("f-penalizacion").value = "";
+        document.getElementById("f-monto-mensual").value = "";
+        document.getElementById("f-dias-congelamiento").value = "";
+        document.getElementById("f-permite-congelamiento").checked = true;
+        document.getElementById("f-congelado-no-pagos").checked = false;
+        document.getElementById("f-no-cruce-medidas").checked = false;
+        document.getElementById("f-incluye-nutricion").checked = false;
+        document.getElementById("f-dias-acceso-periodo").value = "";
+        document.getElementById("f-hora-inicio").value = "00:00";
+        document.getElementById("f-hora-fin").value = "24:00";
+        document.querySelectorAll("#dias-semana-chips input").forEach(chk => chk.checked = true);
+        recalcularDuracion();
+        delete document.getElementById("modal-membresia").dataset.editId;
+    }
+
+    function abrirModalNuevo() {
+        limpiarFormularioTarifa();
+        document.getElementById("modal-membresia").classList.add("active");
+    }
+
+    function editarMembresia(id) {
+        const m = membresiasCache.find(x => x.id === id);
+        if (!m) return;
+        limpiarFormularioTarifa();
+        document.getElementById("titulo-modal-tarifa").textContent = `Editar Tarifa #${m.id}`;
+        document.getElementById("f-nombre").value = m.nombre || "";
+        document.getElementById("f-descripcion").value = m.descripcion || "";
+        document.getElementById("f-precio").value = m.precio ?? "";
+        document.getElementById("f-password").value = m.password_tarifa || "";
+        document.getElementById("f-meses").value = m.duracion_meses ?? 0;
+        document.getElementById("f-dias-extra").value = m.duracion_dias_extra ?? (m.duracion_meses ? 0 : m.duracion_dias);
+        document.getElementById("f-monto-inicial").value = m.monto_inicial ?? "";
+        document.getElementById("f-fracciones").value = m.fracciones_pago_deuda ?? "";
+        document.getElementById("f-dias-gracia").value = m.dias_gracia_pago ?? "";
+        document.getElementById("f-penalizacion").value = m.penalizacion ?? "";
+        document.getElementById("f-monto-mensual").value = m.monto_mensual ?? "";
+        document.getElementById("f-dias-congelamiento").value = m.dias_congelamiento ?? "";
+        document.getElementById("f-permite-congelamiento").checked = m.permite_congelamiento !== false;
+        document.getElementById("f-congelado-no-pagos").checked = !!m.congelado_no_aparece_pagos;
+        document.getElementById("f-no-cruce-medidas").checked = !!m.no_aparecer_reporte_cruce_medidas;
+        document.getElementById("f-incluye-nutricion").checked = !!m.incluye_nutricion;
+        document.getElementById("f-dias-acceso-periodo").value = m.dias_acceso_periodo ?? "";
+        document.getElementById("f-hora-inicio").value = m.hora_inicio_acceso || "00:00";
+        document.getElementById("f-hora-fin").value = m.hora_fin_acceso || "24:00";
+        const diasHabilitados = (m.dias_semana_acceso || "dom,lun,mar,mie,jue,vie,sab").split(",");
+        document.querySelectorAll("#dias-semana-chips input").forEach(chk => chk.checked = diasHabilitados.includes(chk.value));
+        recalcularDuracion();
+        document.getElementById("modal-membresia").dataset.editId = m.id;
+        document.getElementById("modal-membresia").classList.add("active");
+    }
+
+    async function abrirModalAsignar() {
+        const [clientes, membresias] = await Promise.all([apiFetch("/clientes/?limit=200"), apiFetch("/membresias/")]);
+        document.getElementById("f-cliente").innerHTML = '<option value="">Seleccionar...</option>' + clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos||""}</option>`).join("");
+        document.getElementById("f-plan").innerHTML = '<option value="">Seleccionar...</option>' + membresias.map(m => `<option value="${m.id}" data-precio="${m.precio}">${m.nombre} — ${formatCurrency(m.precio,moneda)}</option>`).join("");
+        document.getElementById("f-inicio").value = new Date().toISOString().split("T")[0];
+        document.getElementById("f-monto-pagado").value = "";
+        document.getElementById("modal-asignar").classList.add("active");
+    }
+
+    function onPlanAsignarChange() {
+        const sel = document.getElementById("f-plan");
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById("f-monto-pagado").value = opt && opt.dataset.precio ? opt.dataset.precio : "";
+    }
+
+    function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
+
+    async function guardarMembresia() {
+        const nombre = document.getElementById("f-nombre").value.trim();
+        const precio = parseFloat(document.getElementById("f-precio").value);
+        const duracionTotal = recalcularDuracion();
+        if (!nombre || isNaN(precio) || duracionTotal <= 0) { showError("Completa descripcion, monto base y duracion (meses o dias)"); return; }
+
+        const diasSemana = Array.from(document.querySelectorAll("#dias-semana-chips input:checked")).map(c => c.value).join(",");
+
+        const datos = {
+            nombre,
+            descripcion: document.getElementById("f-descripcion").value.trim() || null,
+            precio,
+            duracion_dias: duracionTotal,
+            duracion_meses: parseInt(document.getElementById("f-meses").value) || 0,
+            duracion_dias_extra: parseInt(document.getElementById("f-dias-extra").value) || 0,
+            monto_inicial: parseFloat(document.getElementById("f-monto-inicial").value) || null,
+            fracciones_pago_deuda: parseInt(document.getElementById("f-fracciones").value) || null,
+            penalizacion: parseFloat(document.getElementById("f-penalizacion").value) || null,
+            dias_gracia_pago: parseInt(document.getElementById("f-dias-gracia").value) || null,
+            monto_mensual: parseFloat(document.getElementById("f-monto-mensual").value) || null,
+            dias_congelamiento: parseInt(document.getElementById("f-dias-congelamiento").value) || null,
+            permite_congelamiento: document.getElementById("f-permite-congelamiento").checked,
+            dias_acceso_periodo: parseInt(document.getElementById("f-dias-acceso-periodo").value) || null,
+            hora_inicio_acceso: document.getElementById("f-hora-inicio").value || "00:00",
+            hora_fin_acceso: document.getElementById("f-hora-fin").value || "24:00",
+            dias_semana_acceso: diasSemana || "dom,lun,mar,mie,jue,vie,sab",
+            password_tarifa: document.getElementById("f-password").value.trim() || null,
+            congelado_no_aparece_pagos: document.getElementById("f-congelado-no-pagos").checked,
+            no_aparecer_reporte_cruce_medidas: document.getElementById("f-no-cruce-medidas").checked,
+            incluye_nutricion: document.getElementById("f-incluye-nutricion").checked,
+        };
+
+        const editId = document.getElementById("modal-membresia").dataset.editId;
+        try {
+            if (editId) {
+                await apiFetch(`/membresias/${editId}`, { method: "PUT", body: JSON.stringify(datos) });
+                showSuccess("Tarifa actualizada");
+            } else {
+                await apiFetch("/membresias/", { method: "POST", body: JSON.stringify(datos) });
+                showSuccess("Tarifa creada");
+            }
+            cerrarModal("modal-membresia");
+            cargarMembresias();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function asignarMembresia() {
+        const clienteId = parseInt(document.getElementById("f-cliente").value);
+        const membresiaId = parseInt(document.getElementById("f-plan").value);
+        if (!clienteId || !membresiaId) { showError("Selecciona cliente y plan"); return; }
+        const montoPagado = document.getElementById("f-monto-pagado").value;
+        try {
+            await apiFetch(`/clientes/${clienteId}/membresias`, {
+                method: "POST",
+                body: JSON.stringify({
+                    cliente_id: clienteId,
+                    membresia_id: membresiaId,
+                    fecha_inicio: document.getElementById("f-inicio").value || null,
+                    monto_pagado: montoPagado !== "" ? parseFloat(montoPagado) : null,
+                }),
+            });
+            showSuccess("Membresia asignada"); cerrarModal("modal-asignar");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function eliminarMembresia(id) {
+        if (!(await confirmDialog("¿Desactivar esta tarifa?"))) return;
+        try { await apiFetch(`/membresias/${id}`, { method: "DELETE" }); showSuccess("Tarifa desactivada"); cargarMembresias(); }
+        catch (e) { showError(e.message); }
+    }
+
+    cargarMembresias();
+</script>
+</body>
+</html>
