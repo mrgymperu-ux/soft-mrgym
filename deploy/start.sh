@@ -23,7 +23,7 @@ sed -i "s|http://localhost:8000|${DOMAIN_URL}|g" /app/frontend-profesor/js/api.j
 cd /app
 gunicorn backend.main:app \
     --worker-class uvicorn.workers.UvicornWorker \
-    --workers 2 \
+    --workers 1 \
     --bind 127.0.0.1:8000 \
     --timeout 120 \
     --access-logfile - \

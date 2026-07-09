@@ -392,8 +392,13 @@ def _sembrar_gimnasio_default():
         # 2. Crear el gimnasio default si no existe
         gimnasio = db.query(models.Gimnasio).filter_by(id=1).first()
         if not gimnasio:
+            gimnasio = db.query(models.Gimnasio).filter_by(slug="mi-gimnasio").first()
+        if not gimnasio:
             # Leer configuracion existente para no perder datos
-            cfg = db.execute(text("SELECT * FROM configuracion LIMIT 1")).fetchone()
+            try:
+                cfg = db.execute(text("SELECT * FROM configuracion LIMIT 1")).fetchone()
+            except Exception:
+                cfg = None
             gimnasio = models.Gimnasio(
                 nombre="Mi Gimnasio",
                 slug="mi-gimnasio",
@@ -414,7 +419,8 @@ def _sembrar_gimnasio_default():
             db.flush()
         db.commit()
 
-        # 3. Asignar gimnasio_id=1 a todos los registros NULL (idempotente)
+        # 3. Asignar gimnasio_id al gimnasio default a todos los registros NULL (idempotente)
+        gid_default = gimnasio.id  # puede no ser 1 en PostgreSQL
         tablas_raiz = [
             "usuarios", "clientes", "clientes_historicos", "membresias",
             "productos", "ventas", "compras", "asistencias", "progresos",
@@ -427,7 +433,7 @@ def _sembrar_gimnasio_default():
             for tabla in tablas_raiz:
                 try:
                     conn.execute(text(
-                        f"UPDATE {tabla} SET gimnasio_id = 1 WHERE gimnasio_id IS NULL"
+                        f"UPDATE {tabla} SET gimnasio_id = {gid_default} WHERE gimnasio_id IS NULL"
                     ))
                 except Exception:
                     pass  # tabla puede no existir aun en una BD nueva
@@ -435,7 +441,7 @@ def _sembrar_gimnasio_default():
 
         # 4. Marcar al primer admin como superadmin (idempotente)
         primer_admin = db.query(models.Usuario).filter(
-            models.Usuario.gimnasio_id == 1,
+            models.Usuario.gimnasio_id == gid_default,
             models.Usuario.es_administrador == True,
         ).first()
         if primer_admin:
@@ -447,14 +453,31 @@ def _sembrar_gimnasio_default():
 
 @app.on_event("startup")
 def startup_event():
-    # En PostgreSQL, los ENUMs nativos pueden causar conflictos si ya existen.
-    # Envolver en try/except para que no falle si las tablas ya estan creadas.
+    # En PostgreSQL, crear ENUMs puede fallar si ya existen (race condition
+    # entre workers de gunicorn, o deploy anterior parcial). Se maneja
+    # creando las tablas en un solo intento robusto.
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # Pre-crear los ENUMs si no existen (evita el error de create_all)
+        for enum_name, enum_values in [
+            ("rolusuario", "'staff', 'profesor'"),
+            ("metodopago", "'efectivo', 'tarjeta', 'qr'"),
+            ("tipocomida", "'desayuno', 'comida', 'cena', 'aperitivo'"),
+            ("tipoempleado", "'staff_fijo', 'profesor_de_sala'"),
+            ("categoriaalimento", "'proteina', 'carbohidrato', 'grasa', 'vegetal', 'fruta', 'lacteo', 'legumbre', 'otro'"),
+            ("propositonutricion", "'bajar_peso', 'ganar_masa', 'mantenimiento', 'definicion'"),
+            ("categoriagasto", "'compra_producto', 'pago_staff', 'pago_profesor', 'pago_servicio', 'otros'"),
+        ]:
+            try:
+                conn.execute(text(f"CREATE TYPE {enum_name} AS ENUM ({enum_values})"))
+            except Exception:
+                pass  # ya existe
+        conn.commit()
+
     try:
         models.Base.metadata.create_all(bind=engine, checkfirst=True)
     except Exception as e:
-        import traceback
-        print(f"[WARN] create_all parcial: {e}")
-        traceback.print_exc()
+        print(f"[WARN] create_all: {e}")
     _migrar_columnas_nuevas()
     _sembrar_gimnasio_default()  # garantiza que exista el gimnasio 1 y asigna data existente
     _sembrar_puestos_iniciales()
