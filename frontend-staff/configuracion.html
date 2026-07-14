@@ -34,11 +34,17 @@
                 <div class="form-group"><label>Email</label><input type="email" id="c-email" placeholder="info@gimnasio.com"></div>
                 <div class="form-group"><label>Direccion</label><input type="text" id="c-direccion" placeholder="Av. Principal 123"></div>
                 <div class="form-group">
-                    <label>Logo del Gimnasio</label>
+                    <label>Logo para tema claro</label>
                     <div id="logo-preview" style="margin-bottom:8px;"><p style="font-size:0.8em;color:#636E72;">Cargando...</p></div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <input type="file" id="input-logo" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
-                        <button class="btn btn-sm btn-primary" onclick="subirLogo()">Subir</button>
+                        <button class="btn btn-sm btn-primary" onclick="subirLogo('claro')">Subir</button>
+                    </div>
+                    <label style="margin-top:14px;">Logo para tema oscuro</label>
+                    <div id="logo-oscuro-preview" style="margin-bottom:8px;"></div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="file" id="input-logo-oscuro" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
+                        <button class="btn btn-sm btn-primary" onclick="subirLogo('oscuro')">Subir</button>
                     </div>
                 </div>
                 <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
@@ -408,10 +414,14 @@
             } else {
                 prev.innerHTML = '<p style="font-size:0.8em;color:#636E72;">Sin logo. Sube uno (JPEG, PNG o WEBP, max 5MB).</p>';
             }
+            const prevOscuro = document.getElementById("logo-oscuro-preview");
+            prevOscuro.innerHTML = info && info.logo_oscuro_url
+                ? `<div style="background:#171922;padding:10px;border-radius:8px;display:inline-block;"><img src="${API_BASE_URL}${info.logo_oscuro_url}" style="max-height:80px;" alt="Logo oscuro"></div>`
+                : '<p style="font-size:0.8em;color:#636E72;">Sin logo específico; se usará el logo claro.</p>';
         } catch(e) {}
     }
-    async function subirLogo() {
-        const input = document.getElementById("input-logo");
+    async function subirLogo(modo) {
+        const input = document.getElementById(modo === "oscuro" ? "input-logo-oscuro" : "input-logo");
         if (!input.files.length) { showError("Selecciona una imagen"); return; }
         try {
             const formData = new FormData();
@@ -419,7 +429,7 @@
             const headers = {};
             const token = getToken();
             if (token) headers["Authorization"] = `Bearer ${token}`;
-            const r = await fetch(`${API_BASE_URL}/gym-actual/logo`, { method: "POST", headers, body: formData });
+            const r = await fetch(`${API_BASE_URL}/gym-actual/logo?modo=${modo}`, { method: "POST", headers, body: formData });
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || "Error al subir logo");
             showSuccess("Logo actualizado");

@@ -437,6 +437,7 @@ def _migrar_columnas_nuevas():
         return definicion_sql
 
     columnas_esperadas = {
+        "gimnasios": [("logo_oscuro_url", "VARCHAR")],
         "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
         "clientes": [
             ("foto_url", "VARCHAR"),
@@ -1509,6 +1510,7 @@ def info_publica_gimnasio(slug: str, db: Session = Depends(get_db)):
         "nombre": gimnasio.nombre,
         "slug": gimnasio.slug,
         "logo_url": gimnasio.logo_url,
+        "logo_oscuro_url": gimnasio.logo_oscuro_url,
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -1517,6 +1519,7 @@ def info_publica_gimnasio(slug: str, db: Session = Depends(get_db)):
 @app.post("/gym-actual/logo", tags=["Auth"])
 async def subir_logo_gimnasio(
     logo: UploadFile = File(...),
+    modo: str = Query("claro", pattern="^(claro|oscuro)$"),
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_administrador),
 ):
@@ -1529,13 +1532,14 @@ async def subir_logo_gimnasio(
     # Guardar en uploads/logos/
     logos_dir = os.path.join(UPLOADS_DIR, "logos")
     os.makedirs(logos_dir, exist_ok=True)
-    _eliminar_foto_anterior(gimnasio.logo_url)
+    campo_logo = "logo_oscuro_url" if modo == "oscuro" else "logo_url"
+    _eliminar_foto_anterior(getattr(gimnasio, campo_logo))
     foto_url = _validar_y_guardar_foto(contenido, logo.content_type, logos_dir)
     # _validar_y_guardar_foto usa os.path.basename, ajustar ruta
     nombre_archivo = os.path.basename(foto_url)
-    gimnasio.logo_url = f"/uploads/logos/{nombre_archivo}"
+    setattr(gimnasio, campo_logo, f"/uploads/logos/{nombre_archivo}")
     db.commit()
-    return {"logo_url": gimnasio.logo_url}
+    return {"logo_url": getattr(gimnasio, campo_logo), "modo": modo}
 
 
 @app.get("/gym-actual/", tags=["Auth"])
@@ -1552,6 +1556,7 @@ def info_gimnasio_actual(db: Session = Depends(get_db), usuario: models.Usuario 
         "nombre": gimnasio.nombre,
         "slug": gimnasio.slug,
         "logo_url": gimnasio.logo_url,
+        "logo_oscuro_url": gimnasio.logo_oscuro_url,
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -7557,8 +7562,11 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
                 "saldo": round(max(precio - pagado, 0), 2),
                 "incluye_nutricion": bool(membresia.membresia.incluye_nutricion),
                 "incluye_retos": bool(membresia.membresia.incluye_retos)}
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
     return {"perfil": schemas.Cliente.model_validate(cliente).model_dump(mode="json"), "plan": plan,
-            "asistencia_hoy": asistencia_hoy, "pago_online_url": os.getenv("IZIPAY_PAYMENT_URL") or None}
+            "asistencia_hoy": asistencia_hoy, "pago_online_url": os.getenv("IZIPAY_PAYMENT_URL") or None,
+            "gimnasio": {"nombre": gimnasio.nombre, "logo_url": gimnasio.logo_url,
+                          "logo_oscuro_url": gimnasio.logo_oscuro_url} if gimnasio else None}
 
 
 @app.put("/portal-alumno/cambiar-password", tags=["Portal Alumno"])

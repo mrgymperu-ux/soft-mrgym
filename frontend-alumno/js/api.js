@@ -217,3 +217,20 @@ function alternarTemaPortal() {
 }
 
 aplicarTemaPortal();
+
+async function aplicarBloqueoAsistenciaPortal() {
+    if (!getToken() || /login\.html$/.test(window.location.pathname)) return;
+    try {
+        const resumen = await apiFetch("/portal-alumno/resumen");
+        if (!resumen || resumen.asistencia_hoy) return;
+        const pagina = document.querySelector(".page");
+        if (!pagina || document.querySelector(".asistencia-global")) return;
+        const aviso = document.createElement("div");
+        aviso.className = "asistencia-global";
+        aviso.textContent = "Marcar asistencia en Counter";
+        pagina.prepend(aviso);
+        document.body.classList.add("asistencia-pendiente");
+    } catch (_) {}
+}
+
+setTimeout(aplicarBloqueoAsistenciaPortal, 0);

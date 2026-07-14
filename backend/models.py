@@ -88,6 +88,7 @@ class Gimnasio(Base):
     telefono = Column(String, nullable=True)
     direccion = Column(String, nullable=True)
     logo_url = Column(String, nullable=True)
+    logo_oscuro_url = Column(String, nullable=True)
 
     # --- Configuracion (antes en tabla Configuracion) ---
     moneda = Column(String, default="S/")

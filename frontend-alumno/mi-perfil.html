@@ -2,7 +2,7 @@
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal del Socio</title><link rel="stylesheet" href="css/styles.css"></head>
 <body>
 <div class="page perfil-page">
-  <div class="portal-topbar"><span></span><button id="theme-switch" class="theme-switch" type="button" aria-label="Cambiar tema" onclick="cambiarTema()"><span></span></button></div>
+  <div class="portal-topbar"><div id="logo-gimnasio" class="logo-gimnasio"></div><button id="theme-switch" class="theme-switch" type="button" aria-label="Cambiar tema" onclick="cambiarTema()"><span></span></button></div>
   <div id="contenido"><p class="estado-cargando">Cargando...</p></div>
 </div>
 <nav class="nav-bottom">
@@ -10,15 +10,19 @@
 </nav>
 <script src="js/api.js"></script><script>
 requireAuth(); let resumenActual=null;
-function cambiarTema(){alternarTemaPortal();actualizarSwitchTema()}
+function cambiarTema(){alternarTemaPortal();actualizarSwitchTema();actualizarLogoTema()}
 function actualizarSwitchTema(){document.getElementById("theme-switch").classList.toggle("activo",document.documentElement.dataset.tema==="oscuro")}
+function actualizarLogoTema(){if(!resumenActual?.gimnasio)return;const g=resumenActual.gimnasio;const ruta=document.documentElement.dataset.tema==="oscuro"?(g.logo_oscuro_url||g.logo_url):g.logo_url;document.getElementById('logo-gimnasio').innerHTML=ruta?`<img src="${urlFoto(ruta)}" alt="${g.nombre}">`:`<strong>${g.nombre}</strong>`}
 function dinero(v){return `S/ ${Number(v||0).toFixed(2)}`}
 async function cargar(){
  resumenActual=await apiFetch("/portal-alumno/resumen"); const p=resumenActual.perfil; const nombre=`${p.nombre} ${p.apellidos||""}`.trim();
  const avatar=p.foto_url?`<img src="${urlFoto(p.foto_url)}" alt="Foto de ${nombre}">`:`<div class="avatar-iniciales">${getIniciales(nombre)}</div>`; const plan=resumenActual.plan;
  const planHtml=plan?`<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo>0?'saldo-pendiente':''}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo>0?(resumenActual.pago_online_url?`<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>`:`<button class="btn-pagar" disabled>Pago en línea próximamente</button>`):""}`:`<div class="vacio-plan">No tienes un plan activo.</div>`;
- document.getElementById("contenido").innerHTML=`<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<label class="boton-camara" aria-label="Cambiar foto">📷<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label></div><div class="perfil-linea"><strong>${nombre}</strong><span>${p.telefono||"Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
+ actualizarLogoTema();
+ document.getElementById("contenido").innerHTML=`<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<button class="boton-camara" aria-label="Cambiar foto" onclick="alternarMenuFoto(event)">📷</button><div class="menu-foto" id="menu-foto"><label>Galería<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label><label>Tomar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="subirFoto(this)"></label></div></div><div class="perfil-linea"><strong>${nombre}</strong><span>${p.telefono||"Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
 }
+function alternarMenuFoto(event){event.stopPropagation();document.getElementById('menu-foto').classList.toggle('activo')}
+document.addEventListener('click',()=>document.getElementById('menu-foto')?.classList.remove('activo'));
 async function subirFoto(input){const archivo=input.files&&input.files[0];if(!archivo)return;try{await apiUploadFile("/portal-alumno/mi-foto",archivo);await cargar()}catch(e){alert(e.message)}finally{input.value=""}}
 actualizarSwitchTema();cargar();
 </script></body></html>

@@ -165,6 +165,7 @@ class Gimnasio(GimnasioBase):
     activo: bool
     fecha_registro: Optional[datetime] = None
     logo_url: Optional[str] = None
+    logo_oscuro_url: Optional[str] = None
 
 class GimnasioDetalle(Gimnasio):
     """Gimnasio con stats para el dashboard del superadmin."""
