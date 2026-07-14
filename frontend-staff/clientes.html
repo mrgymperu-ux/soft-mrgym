@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clientes - Soft-MrGym</title>
+    <title>Clientes - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -47,6 +47,40 @@
         .medidas-calc-card { background:var(--color-fondo); border-radius:10px; padding:10px 14px; }
         .medidas-calc-card .mc-label { font-size:0.68em; color:var(--color-texto-secundario); margin-bottom:3px; }
         .medidas-calc-card .mc-valor { font-size:0.92em; font-weight:700; }
+
+        /* Planes de nutricion: cabecera intensa y superficies compatibles
+           con las paletas clara/oscura del gimnasio. */
+        .nutri-plan-card { border:1px solid var(--color-borde); border-radius:12px; margin-bottom:14px; overflow:hidden; background:var(--color-blanco); box-shadow:var(--sombra); }
+        .nutri-plan-header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 18px; color:#fff; background:linear-gradient(125deg,var(--color-sidebar-hover),var(--color-primario) 72%,var(--color-primario-oscuro));font-size:var(--fuente-md);font-weight:600; }
+        .nutri-plan-header .badge { background:rgba(255,255,255,.17); color:#fff; border:1px solid rgba(255,255,255,.22); }
+        .nutri-plan-header .btn { background:rgba(255,255,255,.16); color:#fff; border:1px solid rgba(255,255,255,.3); }
+        .nutri-plan-header .btn:hover { background:rgba(255,255,255,.25); }
+        .nutri-plan-body { padding:16px 18px 18px; }
+        .nutri-kpis { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; font-size:.82em; }
+        .nutri-kpi { padding:4px 10px; border-radius:8px; background:color-mix(in srgb, var(--color-primario) 11%, var(--color-blanco)); border:1px solid color-mix(in srgb, var(--color-primario) 18%, var(--color-borde)); }
+        .nutri-comida-card { background:color-mix(in srgb, var(--meal-accent) 11%, var(--color-blanco)); border:1px solid color-mix(in srgb, var(--meal-accent) 18%, var(--color-borde)); border-radius:10px; padding:14px 16px; flex:1; min-width:220px; }
+        .nutri-comida-header { display:flex; justify-content:space-between; align-items:center; gap:10px; margin:-14px -16px 9px; padding:9px 12px; border-radius:9px 9px 0 0; color:#fff; background:color-mix(in srgb,var(--meal-accent) 80%,#111 20%);box-shadow:inset 0 -1px rgba(0,0,0,.12);font-weight:600;font-size:var(--fuente-sm); }
+        .nutri-comida-header .nutri-comida-kcal { color:rgba(255,255,255,.9); font-weight:500; white-space:nowrap; }
+        .nutri-alimento-row { display:flex; justify-content:space-between; gap:10px; padding:5px 0; border-bottom:1px solid color-mix(in srgb,var(--color-borde) 70%,transparent);font-size:var(--fuente-sm); }
+        .nutri-alimento-row:last-child { border-bottom:none; }
+        .nutri-porcion { color:color-mix(in srgb, var(--color-primario) 72%, var(--color-texto)); font-weight:600; }
+        html[data-modo="oscuro"] .nutri-plan-card { box-shadow:0 5px 18px rgba(0,0,0,.28); }
+        html[data-modo="oscuro"] .nutri-plan-header { background:linear-gradient(125deg, var(--color-sidebar), var(--color-primario-oscuro) 58%, var(--color-primario)); border-bottom:1px solid color-mix(in srgb, var(--color-primario) 55%, transparent); }
+        html[data-modo="oscuro"] .nutri-comida-card { background:color-mix(in srgb, var(--meal-accent) 13%, var(--color-blanco)); }
+        html[data-modo="oscuro"] .nutri-comida-header { background:color-mix(in srgb, var(--meal-accent) 70%, #090A0D 30%); box-shadow:inset 0 -1px rgba(255,255,255,.08); }
+        @media (max-width:640px) {
+            .nutri-plan-header { align-items:flex-start; padding:13px 14px; }
+            .nutri-plan-body { padding:14px; }
+            .nutri-comida-card { min-width:100%; }
+            .nutri-descripcion { display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2; }
+        }
+        .rutina-recomendada-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; margin-top:12px; }
+        .rutina-recomendada-card { border:1px solid var(--color-borde); background:var(--color-blanco); border-radius:10px; padding:13px; display:flex; flex-direction:column; gap:8px; }
+        .rutina-recomendada-card:first-child { border:2px solid var(--color-primario); background:var(--color-primario-tinte); }
+        .rutina-recomendada-card h4 { margin:0; font-size:.92em; }
+        .rutina-recomendada-meta { display:flex; gap:5px; flex-wrap:wrap; font-size:.72em; }
+        .rutina-recomendada-meta span { background:var(--color-fondo); border-radius:12px; padding:3px 7px; }
+        .rutina-recomendada-motivos { color:var(--color-texto-secundario); font-size:.76em; line-height:1.4; }
     </style>
 </head>
 <body>
@@ -82,7 +116,7 @@
             </div>
             <div class="table-container">
                 <table class="table">
-                    <thead><tr><th>#</th><th>Nombre</th><th>Vencimiento</th><th>Último plan</th><th style="text-align:right;">Costo</th><th style="text-align:right;">Pagado</th><th style="text-align:right;">Saldo</th><th style="text-align:right;">% Asist.</th><th></th></tr></thead>
+                    <thead><tr><th>#</th><th>Nombre</th><th>Vencimiento</th><th>Último plan</th><th style="text-align:right;" id="th-costo">Costo</th><th style="text-align:right;" id="th-pagado">Pagado</th><th style="text-align:right;" id="th-saldo">Saldo</th><th style="text-align:right;">% Asist.</th><th></th></tr></thead>
                     <tbody id="tabla-clientes"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
                 </table>
             </div>
@@ -92,19 +126,21 @@
             <button class="btn btn-secondary" onclick="cerrarFicha()" style="margin-bottom:16px;">← Volver</button>
             <div class="card">
                 <div style="padding:24px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--color-borde);">
-                    <div id="ficha-avatar-wrap" style="width:67px;height:67px;flex-shrink:0;"></div>
+                    <div id="ficha-avatar-wrap" style="width:80px;height:80px;flex-shrink:0;"></div>
                     <div>
                         <h2 id="ficha-nombre" style="margin:0;font-size:1.3em;"></h2>
-                        <p id="ficha-email" style="margin:4px 0 0;color:#636E72;font-size:0.88em;"></p>
+                        <p id="ficha-celular" style="margin:4px 0 0;font-size:0.88em;"></p>
+                        <p id="ficha-cumple" style="margin:2px 0 0;color:#636E72;font-size:0.82em;"></p>
                     </div>
                     <div style="margin-left:auto;display:flex;gap:8px;">
                         <button class="btn btn-secondary btn-sm" onclick="abrirModalEditar()">✏️ Editar</button>
                         <button class="btn btn-danger btn-sm" id="btn-eliminar-ficha" onclick="eliminarClienteActual()" style="display:none;">🗑️ Eliminar</button>
                     </div>
                 </div>
+                <div id="ficha-plan-info" style="padding:10px 24px;border-bottom:1px solid var(--color-borde);background:var(--color-fondo);"></div>
                 <div class="tabs">
                     <button class="tab active" onclick="showTab('datos',this)">Datos</button>
-                    <button class="tab" onclick="showTab('membresias',this)">Membresías</button>
+                    <button class="tab" onclick="showTab('membresias',this)">Pagos</button>
                     <button class="tab" onclick="showTab('medidas',this)">Medidas</button>
                     <button class="tab" onclick="showTab('rutinas',this)">Rutinas</button>
                     <button class="tab" onclick="showTab('progreso',this)">Progreso</button>
@@ -176,6 +212,31 @@
         </div>
     </div>
 </div>
+<!-- Recomendador de paquetes de rutinas -->
+<div id="modal-recomendar-rutina" class="modal">
+    <div class="modal-content" style="max-width:880px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Recomendar rutina desde paquetes</h3>
+            <button class="modal-close" onclick="cerrarRecomendadorRutina()">✕</button>
+        </div>
+        <div id="rr-perfil" style="background:var(--color-fondo);border:1px solid var(--color-borde);border-radius:10px;padding:12px 14px;margin-bottom:12px;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group"><label>Objetivo de la persona</label>
+                <select id="rr-objetivo" onchange="cargarRecomendacionesRutina(true)">
+                    <option value="inicio">Inicio</option><option value="bajar_peso">Bajar de peso</option><option value="ganar_masa">Ganar masa</option><option value="tonificacion">Tonificación</option><option value="definicion">Definición</option><option value="rendimiento">Rendimiento</option>
+                </select>
+            </div>
+            <div class="form-group"><label>Nivel actual</label>
+                <select id="rr-nivel" onchange="cargarRecomendacionesRutina(true)">
+                    <option value="basico">Básico / principiante</option><option value="intermedio">Intermedio</option><option value="avanzado">Avanzado</option><option value="competencia">Competencia</option>
+                </select>
+            </div>
+        </div>
+        <p style="font-size:.8em;color:var(--color-texto-secundario);margin:0;">Elige una opción y pulsa <strong>Usar</strong>. La rutina se cargará inmediatamente al cliente y podrás editarla desde su ficha.</p>
+        <div id="rr-resultados" class="rutina-recomendada-grid"></div>
+    </div>
+</div>
+
 <!-- Modal adaptar plan de nutricion del cliente -->
 <div id="modal-editar-nutricion" class="modal">
     <div class="modal-content" style="max-width:560px;">
@@ -218,6 +279,49 @@
     </div>
 </div>
 
+<!-- Modal pago rapido de saldo pendiente -->
+<div id="modal-pagar-saldo" class="modal">
+    <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 class="modal-title">💳 Pago de saldo</h3>
+            <button class="modal-close" onclick="cerrarModalPagarSaldo()">✕</button>
+        </div>
+        <div id="ps-detalle" style="background:var(--color-fondo);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:0.85em;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Precio</div>
+                <div id="ps-precio" style="font-weight:700;color:var(--color-primario);">—</div>
+            </div>
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Pagado</div>
+                <div id="ps-pagado" style="font-weight:700;color:var(--color-exito);">—</div>
+            </div>
+            <div style="background:var(--color-fondo);border-radius:8px;padding:10px;text-align:center;">
+                <div style="font-size:0.62em;color:var(--color-texto-secundario);">Saldo</div>
+                <div id="ps-saldo" style="font-weight:700;color:var(--color-error);">—</div>
+            </div>
+        </div>
+        <div class="form-row"><label>Monto a pagar</label><input type="number" id="ps-monto" step="0.01" min="0.01" oninput="_psCheckParcial()"></div>
+        <div id="ps-fecha-prox-row" class="form-row" style="display:none;">
+            <label>Fecha próximo pago</label>
+            <input type="date" id="ps-fecha-prox">
+            <div style="font-size:0.72em;color:var(--color-texto-secundario);margin-top:2px;">Queda saldo pendiente — indica cuándo se pagará el resto</div>
+        </div>
+        <div class="form-row">
+            <label>Método de pago</label>
+            <select id="ps-metodo">
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="qr">QR</option>
+            </select>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPagarSaldo()">Cancelar</button>
+            <button class="btn btn-primary" onclick="confirmarPagarSaldo()">✅ Registrar pago</button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal editar membresia asignada (solo administrador) -->
 <div id="modal-cm" class="modal">
     <div class="modal-content" style="max-width:460px;">
@@ -245,6 +349,12 @@
 <script src="js/medidas-catalogo.js"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
+
+    // Formatea un numero sin simbolo de moneda (la moneda va solo en la cabecera)
+    function fmtNum(v) {
+        if (v === null || v === undefined) return '—';
+        return parseFloat(v).toLocaleString('es-PE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
 
     function debouncarBusqueda(v) {
         clearTimeout(debounceTimer);
@@ -284,6 +394,11 @@
         const tbody = document.getElementById("tabla-clientes");
         const puedeBorrar = puedeEliminar();
 
+        // Moneda solo en cabeceras
+        document.getElementById('th-costo').textContent = `Costo (${cfg.moneda})`;
+        document.getElementById('th-pagado').textContent = `Pagado (${cfg.moneda})`;
+        document.getElementById('th-saldo').textContent = `Saldo (${cfg.moneda})`;
+
         tbody.innerHTML = !clientes.length
             ? '<tr class="empty-row"><td colspan="9">No se encontraron clientes</td></tr>'
             : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" onclick="verCliente(${c.id})">
@@ -291,9 +406,9 @@
                 <td><strong>${c.nombre_completo}</strong>${!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : ""}</td>
                 <td>${c.fecha_vencimiento ? `${formatFecha(c.fecha_vencimiento)} · ${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
                 <td>${c.ultimo_plan || "—"}</td>
-                <td style="text-align:right;">${c.costo !== null ? formatCurrency(c.costo, cfg.moneda) : "—"}</td>
-                <td style="text-align:right;">${c.pagado !== null ? formatCurrency(c.pagado, cfg.moneda) : "—"}</td>
-                <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${c.saldo !== null ? formatCurrency(c.saldo, cfg.moneda) : "—"}</td>
+                <td style="text-align:right;">${fmtNum(c.costo)}</td>
+                <td style="text-align:right;">${fmtNum(c.pagado)}</td>
+                <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${fmtNum(c.saldo)}</td>
                 <td style="text-align:right;">${c.porcentaje_asistencia !== null ? c.porcentaje_asistencia + "%" : "—"}</td>
                 <td onclick="event.stopPropagation();">
                     ${puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : ""}
@@ -307,9 +422,32 @@
         document.querySelector(".card").style.display = "none";
         document.getElementById("ficha-detalle").style.display = "block";
         const nombre = `${clienteActual.nombre} ${clienteActual.apellidos || ""}`.trim();
-        document.getElementById("ficha-avatar-wrap").innerHTML = avatarHtml(nombre, clienteActual.foto_url, "width:67px;height:67px;font-size:1.4em;");
+        document.getElementById("ficha-avatar-wrap").innerHTML = avatarHtml(nombre, clienteActual.foto_url, "width:80px;height:80px;font-size:1.6em;");
         document.getElementById("ficha-nombre").textContent = nombre;
-        document.getElementById("ficha-email").textContent = clienteActual.email || "Sin email";
+
+        // Celular con link a WhatsApp
+        const cel = clienteActual.telefono || "";
+        if (cel) {
+            const telLimpio = cel.replace(/[^0-9]/g, "");
+            const numWa = telLimpio.length <= 9 ? "51" + telLimpio : telLimpio;
+            const msgWa = encodeURIComponent(`Hola ${clienteActual.nombre}`);
+            document.getElementById("ficha-celular").innerHTML = `📱 <a href="https://wa.me/${numWa}?text=${msgWa}" target="_blank" style="color:var(--color-primario);text-decoration:none;font-weight:500;">${cel}</a> <span style="font-size:0.75em;color:#25D366;">WhatsApp</span>`;
+        } else {
+            document.getElementById("ficha-celular").innerHTML = '<span style="color:var(--color-texto-secundario);">Sin celular</span>';
+        }
+
+        // Cumpleaños
+        if (clienteActual.fecha_nacimiento) {
+            const fn = new Date(clienteActual.fecha_nacimiento + "T00:00:00");
+            const meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+            document.getElementById("ficha-cumple").textContent = `🎂 ${fn.getDate()} de ${meses[fn.getMonth()]}`;
+        } else {
+            document.getElementById("ficha-cumple").textContent = "";
+        }
+
+        // Info de plan actual debajo del header
+        _renderInfoPlan();
+
         document.getElementById("d-dni").textContent = clienteActual.dni || "—";
         document.getElementById("d-genero").textContent = clienteActual.genero || "—";
         document.getElementById("d-telefono").textContent = clienteActual.telefono || "—";
@@ -324,6 +462,28 @@
         document.getElementById("d-codigo").textContent = clienteActual.codigo_acceso || "Sin codigo";
         document.getElementById("btn-eliminar-ficha").style.display = puedeEliminar() ? "inline-block" : "none";
         showTab("datos", document.querySelector(".tab"));
+    }
+
+    async function _renderInfoPlan() {
+        const wrap = document.getElementById("ficha-plan-info");
+        if (!wrap) return;
+        try {
+            const [historial, catalogo] = await Promise.all([
+                apiFetch(`/clientes/${clienteActual.id}/membresias`),
+                _getCatalogoMembresias(),
+            ]);
+            const cfg = await getConfiguracion();
+            const activa = historial.find(cm => cm.activo);
+            if (!activa) { wrap.innerHTML = '<span style="font-size:0.82em;color:var(--color-texto-secundario);">Sin plan activo</span>'; return; }
+            const plan = catalogo.find(m => m.id === activa.membresia_id);
+            const precio = plan ? plan.precio : 0;
+            wrap.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;">
+                <span>📋 <strong>${plan ? plan.nombre : 'Plan #' + activa.membresia_id}</strong></span>
+                <span>Inicio: <strong>${formatFecha(activa.fecha_inicio)}</strong></span>
+                <span>Fin: <strong>${activa.fecha_fin ? formatFecha(activa.fecha_fin) : '—'}</strong></span>
+                <span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>
+            </div>`;
+        } catch (e) { wrap.innerHTML = ''; }
     }
 
     function cerrarFicha() {
@@ -361,11 +521,11 @@
         try {
             const rutinas = await apiFetch(`/rutinas/cliente/${clienteActual.id}`);
             const botonSugerir = `<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-                <button class="btn btn-sm btn-primary" onclick="sugerirRutinaAutomatica()">🤖 Sugerir rutina automática</button>
+                <button class="btn btn-sm btn-primary" onclick="sugerirRutinaAutomatica()">🤖 Recomendar desde paquetes</button>
                 <button class="btn btn-sm btn-secondary" onclick="crearRutinaEnBlanco()">➕ Crear rutina en blanco</button>
             </div>`;
             if (!rutinas.length) {
-                cont.innerHTML = botonSugerir + '<p style="color:var(--color-texto-secundario);">Sin rutinas. Sugiere una automática basada en el perfil del cliente, o crea una en blanco.</p>';
+                cont.innerHTML = botonSugerir + '<p style="color:var(--color-texto-secundario);">Sin rutinas. Recomienda un paquete según objetivo, IMC, género, peso y nivel, o crea una en blanco.</p>';
                 return;
             }
             const grupoIconos = {"Pecho":"💪","Espalda":"🦴","Piernas":"🦵","Hombros":"🏋️","Biceps":"💪","Triceps":"💪","Core":"🧍","Gluteos":"🏃","Cuerpo completo":"⚡"};
@@ -392,60 +552,89 @@
         } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
     }
 
+    const ETIQ_RUTINA_RECOMENDADA = {
+        inicio:"Inicio", bajar_peso:"Bajar de peso", ganar_masa:"Ganar masa",
+        tonificacion:"Tonificación", definicion:"Definición", rendimiento:"Rendimiento",
+        basico:"Básico", intermedio:"Intermedio", avanzado:"Avanzado", competencia:"Competencia",
+        todos:"Mixto", femenino:"Femenino", masculino:"Masculino"
+    };
+
+    function _escRutina(valor) {
+        return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+    }
+
     async function sugerirRutinaAutomatica() {
         if (!clienteActual) return;
-        const genero = clienteActual.genero || "Masculino";
-        const edad = clienteActual.fecha_nacimiento ? Math.floor((Date.now() - new Date(clienteActual.fecha_nacimiento)) / (365.25*24*60*60*1000)) : 25;
-        // Determinar nivel segun edad
-        let nivel = "principiante";
-        if (edad >= 18 && edad <= 45) nivel = "intermedio";
-        // Determinar objetivo segun IMC si hay medidas
-        let objetivo = genero === "Femenino" ? "tonificar" : "ganar_masa";
+        document.getElementById("modal-recomendar-rutina").classList.add("active");
+        document.getElementById("rr-resultados").innerHTML = '<p style="color:var(--color-texto-secundario);">Analizando perfil y paquetes...</p>';
+        await cargarRecomendacionesRutina(false);
+    }
+
+    function cerrarRecomendadorRutina() {
+        document.getElementById("modal-recomendar-rutina").classList.remove("active");
+    }
+
+    async function cargarRecomendacionesRutina(usarSelectores) {
+        if (!clienteActual) return;
+        const params = new URLSearchParams();
+        if (usarSelectores) {
+            params.set("objetivo", document.getElementById("rr-objetivo").value);
+            params.set("nivel", document.getElementById("rr-nivel").value);
+        }
         try {
-            const medidas = await apiFetch(`/clientes/${clienteActual.id}/medidas`);
-            if (medidas.length && medidas[0].peso_kg && medidas[0].estatura_cm) {
-                const imc = medidas[0].peso_kg / ((medidas[0].estatura_cm/100)**2);
-                if (imc > 27) objetivo = "bajar_peso";
-                else if (imc < 20) objetivo = "ganar_masa";
+            const consulta = params.toString();
+            const respuesta = await apiFetch(`/rutinas/recomendar/${clienteActual.id}${consulta ? "?" + consulta : ""}`);
+            const perfil = respuesta.perfil;
+            if (!usarSelectores) {
+                document.getElementById("rr-objetivo").value = perfil.objetivo_sugerido;
+                document.getElementById("rr-nivel").value = perfil.nivel_sugerido;
             }
-        } catch(e) {}
-        // Obtener ejercicios del catalogo filtrados
-        const todos = await apiFetch("/tipos-ejercicio/?filtro=activos");
-        const filtrar = (cat, cant) => {
-            let pool = todos.filter(e =>
-                e.categoria === cat &&
-                (e.genero_recomendado === "todos" || e.genero_recomendado === genero.toLowerCase()) &&
-                (e.nivel === nivel || e.nivel === "principiante")
-            );
-            if (objetivo) pool = pool.filter(e => !e.objetivo || e.objetivo === objetivo || e.objetivo === "tonificar");
-            pool.sort(() => Math.random() - 0.5);
-            return pool.slice(0, cant);
-        };
-        const calentamiento = filtrar("calentamiento", 3);
-        const fuerza = filtrar("fuerza", 6);
-        const cardio = filtrar("cardio", 2);
-        const estiramiento = filtrar("estiramiento", 2);
-        const funcional = filtrar("funcional", 2);
-        const dias = [
-            {nombre: "Dia 1 - Tren superior", ejercicios: [...calentamiento.slice(0,2), ...fuerza.filter(e => ["Pecho","Espalda","Hombros","Biceps","Triceps"].includes(e.grupo_muscular)).slice(0,4), ...estiramiento.slice(0,1)]},
-            {nombre: "Dia 2 - Tren inferior + Core", ejercicios: [...calentamiento.slice(0,2), ...fuerza.filter(e => ["Piernas","Gluteos","Core"].includes(e.grupo_muscular)).slice(0,4), ...cardio.slice(0,1), ...estiramiento.slice(0,1)]},
-            {nombre: "Dia 3 - Funcional + Cardio", ejercicios: [...calentamiento.slice(0,2), ...funcional.slice(0,3), ...cardio.slice(0,2), ...estiramiento.slice(0,1)]},
-        ];
-        const nombreRutina = `Rutina ${objetivo.replace('_',' ')} - ${genero} ${nivel}`;
+            const datosPerfil = [
+                `Perfil: <strong>${_escRutina(ETIQ_RUTINA_RECOMENDADA[perfil.genero] || perfil.genero)}</strong>`,
+                perfil.edad != null ? `Edad: <strong>${perfil.edad}</strong>` : null,
+                perfil.peso_kg != null ? `Peso: <strong>${perfil.peso_kg} kg</strong>` : null,
+                perfil.imc != null ? `IMC: <strong>${perfil.imc}</strong>` : null,
+                perfil.peso_objetivo_kg != null ? `Meta: <strong>${perfil.peso_objetivo_kg} kg</strong>` : null,
+            ].filter(Boolean).join(" · ");
+            document.getElementById("rr-perfil").innerHTML = `<div style="font-size:.86em;">${datosPerfil}</div><div style="font-size:.76em;color:var(--color-texto-secundario);margin-top:5px;">${perfil.razones.map(_escRutina).join(" · ")}</div>`;
+
+            const cont = document.getElementById("rr-resultados");
+            if (!respuesta.opciones.length) {
+                cont.innerHTML = '<p style="color:var(--color-texto-secundario);">No hay paquetes compatibles. Crea primero paquetes para este objetivo y nivel.</p>';
+                return;
+            }
+            cont.innerHTML = respuesta.opciones.map((opcion, indice) => {
+                const p = opcion.paquete;
+                return `<article class="rutina-recomendada-card">
+                    <h4>${indice === 0 ? "⭐ " : ""}${_escRutina(p.nombre)}</h4>
+                    <div class="rutina-recomendada-meta"><span>${_escRutina(ETIQ_RUTINA_RECOMENDADA[p.objetivo] || p.objetivo)}</span><span>${_escRutina(ETIQ_RUTINA_RECOMENDADA[p.nivel] || p.nivel)}</span><span>${_escRutina(ETIQ_RUTINA_RECOMENDADA[p.genero_recomendado] || p.genero_recomendado)}</span><span>${p.dias.length} días</span></div>
+                    <div class="rutina-recomendada-motivos">${opcion.motivos.map(_escRutina).join(" · ")}</div>
+                    <button class="btn btn-primary btn-sm" onclick="usarPaqueteRecomendado(${p.id}, this)">Usar</button>
+                </article>`;
+            }).join("");
+        } catch (e) {
+            document.getElementById("rr-resultados").innerHTML = `<p style="color:var(--color-error);">${_escRutina(e.message)}</p>`;
+        }
+    }
+
+    async function usarPaqueteRecomendado(paqueteId, boton) {
+        if (!clienteActual || boton.disabled) return;
+        const textoOriginal = boton.textContent;
+        boton.disabled = true;
+        boton.textContent = "Cargando...";
         try {
-            const rutina = await apiFetch("/rutinas/", {method:"POST", body: JSON.stringify({
-                cliente_id: clienteActual.id, nombre: nombreRutina, dias: dias.map((d,i) => ({
-                    nombre: d.nombre, orden: i,
-                    ejercicios: d.ejercicios.map((ej,j) => ({
-                        tipo_ejercicio_id: ej.id, nombre: ej.nombre,
-                        series: ej.categoria === "estiramiento" ? 1 : (ej.categoria === "calentamiento" ? 2 : 3),
-                        repeticiones: ej.categoria === "estiramiento" ? "30s" : (ej.categoria === "calentamiento" ? "15" : "12"),
-                    }))
-                }))
-            })});
-            showSuccess("Rutina sugerida creada: " + nombreRutina);
-            cargarRutinasDelCliente();
-        } catch (e) { showError(e.message); }
+            await apiFetch(`/paquetes-rutina/${paqueteId}/asignar`, {
+                method:"POST",
+                body:JSON.stringify({cliente_id:clienteActual.id}),
+            });
+            cerrarRecomendadorRutina();
+            showSuccess("Rutina cargada al cliente");
+            await cargarRutinasDelCliente();
+        } catch (e) {
+            showError(e.message);
+            boton.disabled = false;
+            boton.textContent = textoOriginal;
+        }
     }
 
     async function crearRutinaEnBlanco() {
@@ -492,7 +681,7 @@
                 return;
             }
             const tiposLabel = { desayuno:"🍳 Desayuno", comida:"🍛 Almuerzo", aperitivo:"🍎 Aperitivo", cena:"🌙 Cena" };
-            const tiposBg = { desayuno:"#FFF8F0", comida:"#F0FFF4", aperitivo:"#FFFDE8", cena:"#F0F4FF" };
+            const tiposColor = { desayuno:"#E67E22", comida:"#22A06B", aperitivo:"#C99A12", cena:"#5577D8" };
             cont.innerHTML = botonAuto + planes.filter(p => p.activo).map(plan => {
                 const kcalObj = plan.calorias_objetivo || 0;
                 const kcalTotal = (plan.comidas || []).reduce((s,c) => s + (c.calorias || 0), 0);
@@ -502,31 +691,33 @@
                     const items = (plan.comidas || []).filter(c => c.tipo === t);
                     if (!items.length) return "";
                     const kcalComida = items.reduce((s,i) => s + (i.calorias || 0), 0);
-                    return `<div style="background:${tiposBg[t]};border-radius:10px;padding:14px 16px;flex:1;min-width:220px;">
-                        <div style="font-weight:600;font-size:0.88em;margin-bottom:8px;display:flex;justify-content:space-between;">
-                            <span>${tiposLabel[t]}</span><span style="color:var(--color-texto-secundario);font-weight:500;">${kcalComida} kcal</span>
+                    return `<div class="nutri-comida-card" style="--meal-accent:${tiposColor[t]};">
+                        <div class="nutri-comida-header">
+                            <span>${tiposLabel[t]}</span><span class="nutri-comida-kcal">${kcalComida} kcal</span>
                         </div>
-                        ${items.map(i => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.05);font-size:0.84em;">
-                            <span>${i.nombre_alimento}</span>
-                            <span style="color:var(--color-texto-secundario);">${i.calorias || 0} kcal</span>
+                        ${items.map(i => `<div class="nutri-alimento-row">
+                            <span>${i.nombre_alimento}<br><strong class="nutri-porcion">${i.porcion_cliente || "1 porcion mediana"}</strong></span>
+                            <span style="color:var(--color-texto-secundario);white-space:nowrap;font-size:0.9em;">Energía: ${i.calorias || 0} kcal</span>
                         </div>`).join("")}
                     </div>`;
                 }).join("");
-                return `<div style="border:1px solid var(--color-borde);border-radius:12px;padding:18px;margin-bottom:14px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                return `<div class="nutri-plan-card">
+                    <div class="nutri-plan-header">
                         <div>
                             <span style="font-weight:700;">🥗 ${plan.titulo}</span>
                             ${plan.origen === "automatico" ? '<span class="badge badge-info" style="font-size:0.65em;margin-left:6px;">🤖 Auto</span>' : ""}
                         </div>
                         <button class="btn btn-sm btn-secondary" onclick="abrirEditorNutricionCliente(${plan.id})">✏️ Adaptar</button>
                     </div>
-                    <div style="display:flex;gap:6px;margin-bottom:12px;font-size:0.82em;">
-                        <span style="background:var(--color-fondo);padding:4px 10px;border-radius:8px;">Objetivo: <strong>${kcalObj || '?'} kcal</strong></span>
-                        <span style="background:var(--color-fondo);padding:4px 10px;border-radius:8px;">Total: <strong>${kcalTotal} kcal</strong></span>
-                        ${kcalObj ? `<span style="padding:4px 10px;border-radius:8px;background:var(--color-fondo);color:${pctColor};font-weight:600;">${pctDiff > 0 ? '+' : ''}${pctDiff}%</span>` : ''}
+                    <div class="nutri-plan-body">
+                        <div class="nutri-kpis">
+                            <span class="nutri-kpi">Objetivo: <strong>${kcalObj || '?'} kcal</strong></span>
+                            <span class="nutri-kpi">Total: <strong>${kcalTotal} kcal</strong></span>
+                            ${kcalObj ? `<span class="nutri-kpi" style="color:${pctColor};font-weight:600;">${pctDiff > 0 ? '+' : ''}${pctDiff}%</span>` : ''}
+                        </div>
+                        ${plan.descripcion ? `<p class="nutri-descripcion" style="font-size:var(--fuente-sm);color:var(--color-texto-secundario);margin:0 0 10px;">${plan.descripcion}</p>` : ""}
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">${porTipo}</div>
                     </div>
-                    ${plan.descripcion ? `<p style="font-size:0.78em;color:var(--color-texto-secundario);margin:0 0 10px;">${plan.descripcion}</p>` : ""}
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">${porTipo}</div>
                 </div>`;
             }).join("") || '<p style="color:var(--color-texto-secundario);">No hay planes activos.</p>';
         } catch (e) { cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`; }
@@ -682,42 +873,73 @@
                 apiFetch(`/clientes/${clienteActual.id}/membresias`),
                 _getCatalogoMembresias(),
             ]);
-            await getConfiguracion();
-            if (!historial.length) { cont.innerHTML = '<p style="color:#636E72;">Este cliente no tiene membresías asignadas</p>'; return; }
+            const cfg = await getConfiguracion();
+            if (!historial.length) { cont.innerHTML = '<p style="color:#636E72;">Este cliente no tiene pagos registrados</p>'; return; }
 
             const esAdmin = esAdministrador();
-            cont.innerHTML = `<table class="table"><thead><tr>
-                <th>Plan</th><th>Inicio</th><th>Fin</th><th>Pagado</th><th>Saldo</th><th>Pago saldo</th><th>Estado</th><th>Acciones</th>
-            </tr></thead><tbody>
-            ${historial.map(cm => {
+            let html = '';
+
+            historial.forEach(cm => {
                 const plan = catalogo.find(m => m.id === cm.membresia_id);
                 const precio = plan ? plan.precio : 0;
-                const saldo = Math.max(precio - (cm.monto_pagado || 0), 0);
-                return `<tr>
-                    <td><strong>${plan ? plan.nombre : "Plan #" + cm.membresia_id}</strong></td>
-                    <td>${formatFecha(cm.fecha_inicio)}</td>
-                    <td>${cm.fecha_fin ? formatFecha(cm.fecha_fin) : "—"}</td>
-                    <td>${formatCurrency(cm.monto_pagado)}</td>
-                    <td>${saldo > 0 ? `<span style=\"color:var(--color-error);font-weight:600;\">${formatCurrency(saldo)}</span>` : formatCurrency(0)}</td>
-                    <td>${cm.fecha_pago_saldo ? formatFecha(cm.fecha_pago_saldo) : "—"}</td>
-                    <td><span class="badge ${cm.activo ? "badge-success" : "badge-error"}">${cm.activo ? "Activa" : "Inactiva"}</span></td>
-                    <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-secondary" onclick="apiAbrirPdfEnNuevaPestana('/clientes/${clienteActual.id}/membresias/${cm.id}/recibo.pdf').catch(e=>showError(e.message))">🧾</button>
-                        ${esAdmin ? `
-                        <button class="btn btn-sm btn-secondary" onclick="abrirModalCM(${cm.id})">✏️</button>
-                        <button class="btn btn-sm btn-danger" onclick="eliminarCM(${cm.id})">🗑️</button>` : ""}
-                    </td>
-                </tr>`;
-            }).join("")}
-            </tbody></table>
-            ${esAdmin ? "" : '<p style="font-size:0.78em;color:#636E72;margin:10px 0 0;">Solo un administrador puede editar o eliminar membresías asignadas.</p>'}`;
+                const totalPagado = cm.monto_pagado || 0;
+                const saldoActual = Math.max(precio - totalPagado, 0);
+                const pagos = cm.pagos || [];
 
+                html += `<div style="border:1px solid var(--color-borde);border-radius:12px;margin-bottom:16px;overflow:hidden;">`;
+                html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:var(--color-fondo);flex-wrap:wrap;gap:8px;">`;
+                html += `<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:0.88em;">`;
+                html += `<span><strong>${plan ? plan.nombre : 'Plan #' + cm.membresia_id}</strong></span>`;
+                html += `<span>Inicio: <strong>${formatFecha(cm.fecha_inicio)}</strong></span>`;
+                html += `<span>Fin: <strong>${cm.fecha_fin ? formatFecha(cm.fecha_fin) : '\u2014'}</strong></span>`;
+                html += `<span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>`;
+                html += `<span class="badge ${cm.activo ? 'badge-success' : 'badge-error'}" style="font-size:0.72em;">${cm.activo ? 'Activa' : 'Inactiva'}</span>`;
+                html += `</div>`;
+                html += `<div style="display:flex;gap:4px;">`;
+                html += `<button class="btn btn-sm btn-secondary" onclick="apiAbrirPdfEnNuevaPestana('/clientes/${clienteActual.id}/membresias/${cm.id}/recibo.pdf').catch(e=>showError(e.message))">\ud83e\uddfe</button>`;
+                if (esAdmin) html += `<button class="btn btn-sm btn-secondary" onclick="abrirModalCM(${cm.id})">\u270f\ufe0f</button><button class="btn btn-sm btn-danger" onclick="eliminarCM(${cm.id})">\ud83d\uddd1\ufe0f</button>`;
+                html += `</div></div>`;
+
+                html += `<div style="padding:0 18px 14px;"><table class="table" style="margin:0;"><thead><tr>`;
+                html += `<th>Fecha</th><th style="text-align:right;">Pagado (${cfg.moneda})</th><th style="text-align:right;">Saldo (${cfg.moneda})</th><th>F. Prox Pago</th><th>M\u00e9todo</th><th>Notas</th>`;
+                html += `</tr></thead><tbody>`;
+
+                if (pagos.length) {
+                    let saldoProgresivo = precio;
+                    pagos.forEach(p => {
+                        saldoProgresivo = Math.max(saldoProgresivo - (p.monto || 0), 0);
+                        html += `<tr>`;
+                        html += `<td>${formatFechaHora ? formatFechaHora(p.fecha_pago) : formatFecha(p.fecha_pago)}</td>`;
+                        html += `<td style="text-align:right;font-weight:600;color:var(--color-exito);">${fmtNum(p.monto)}</td>`;
+                        html += `<td style="text-align:right;${saldoProgresivo > 0 ? 'color:var(--color-error);font-weight:600;' : ''}">${fmtNum(saldoProgresivo)}</td>`;
+                        html += `<td>${p.fecha_proximo_pago ? formatFecha(p.fecha_proximo_pago) : '\u2014'}</td>`;
+                        html += `<td>${p.metodo_pago || '\u2014'}</td>`;
+                        html += `<td style="font-size:0.82em;color:var(--color-texto-secundario);">${p.notas || ''}</td>`;
+                        html += `</tr>`;
+                    });
+                } else if (totalPagado > 0) {
+                    html += `<tr><td>${formatFecha(cm.fecha_inicio)}</td>`;
+                    html += `<td style="text-align:right;font-weight:600;color:var(--color-exito);">${fmtNum(totalPagado)}</td>`;
+                    html += `<td style="text-align:right;${saldoActual > 0 ? 'color:var(--color-error);font-weight:600;' : ''}">${fmtNum(saldoActual)}</td>`;
+                    html += `<td>${cm.fecha_pago_saldo ? formatFecha(cm.fecha_pago_saldo) : '\u2014'}</td>`;
+                    html += `<td>\u2014</td><td style="font-size:0.82em;color:var(--color-texto-secundario);">Pago inicial</td></tr>`;
+                } else {
+                    html += `<tr class="empty-row"><td colspan="6">Sin pagos registrados</td></tr>`;
+                }
+
+                html += `</tbody></table>`;
+                if (saldoActual > 0) {
+                    html += `<div style="margin-top:10px;text-align:right;"><button class="btn btn-sm btn-warning" onclick="abrirModalPagarSaldo(${cm.id}, '${(plan ? plan.nombre : 'Plan').replace(/'/g, "\\'") }', ${precio}, ${totalPagado})">\ud83d\udcb3 Pagar saldo (${cfg.moneda} ${fmtNum(saldoActual)})</button></div>`;
+                }
+                html += `</div></div>`;
+            });
+
+            cont.innerHTML = html + (esAdmin ? '' : '<p style="font-size:0.78em;color:#636E72;margin:10px 0 0;">Solo un administrador puede editar o eliminar membres\u00edas asignadas.</p>');
             cont.dataset.historial = JSON.stringify(historial);
         } catch (e) {
             cont.innerHTML = `<p style="color:var(--color-error);">${e.message}</p>`;
         }
     }
-
     async function abrirModalCM(cmId) {
         const historial = JSON.parse(document.getElementById("contenido-membresias").dataset.historial || "[]");
         cmEditando = historial.find(cm => cm.id === cmId);
@@ -767,6 +989,70 @@
             await apiFetch(`/cliente-membresias/${cmId}`, { method: "DELETE" });
             showSuccess("Membresía eliminada");
             cargarMembresiasCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    // ==============================================================
+    // Pago rapido de saldo pendiente (modal en pestaña Membresias)
+    // ==============================================================
+    let _psCtx = null; // { cmId, precio, pagado, saldo }
+
+    async function abrirModalPagarSaldo(cmId, planNombre, precio, pagado) {
+        const cfg = await getConfiguracion();
+        const saldo = Math.max(precio - pagado, 0);
+        _psCtx = { cmId, precio, pagado, saldo, moneda: cfg.moneda };
+
+        const nombre = `${clienteActual.nombre} ${clienteActual.apellidos || ''}`.trim();
+        document.getElementById('ps-detalle').innerHTML =
+            `<strong>${nombre}</strong><br>` +
+            `<span style="font-size:0.88em;color:var(--color-texto-secundario);">${planNombre}</span>`;
+        document.getElementById('ps-precio').textContent = formatCurrency(precio, cfg.moneda);
+        document.getElementById('ps-pagado').textContent = formatCurrency(pagado, cfg.moneda);
+        document.getElementById('ps-saldo').textContent  = formatCurrency(saldo, cfg.moneda);
+        document.getElementById('ps-monto').value = saldo.toFixed(2);
+        document.getElementById('ps-monto').max   = saldo;
+        document.getElementById('ps-metodo').value = 'efectivo';
+        document.getElementById('ps-fecha-prox').value = '';
+        document.getElementById('ps-fecha-prox-row').style.display = 'none';
+        document.getElementById('modal-pagar-saldo').classList.add('active');
+    }
+
+    // Muestra/oculta el campo de fecha próximo pago según si es pago parcial
+    function _psCheckParcial() {
+        if (!_psCtx) return;
+        const monto = parseFloat(document.getElementById('ps-monto').value) || 0;
+        const esParcial = monto > 0 && monto < _psCtx.saldo - 0.01;
+        document.getElementById('ps-fecha-prox-row').style.display = esParcial ? 'flex' : 'none';
+    }
+
+    function cerrarModalPagarSaldo() {
+        document.getElementById('modal-pagar-saldo').classList.remove('active');
+        _psCtx = null;
+    }
+
+    async function confirmarPagarSaldo() {
+        if (!_psCtx) return;
+        const monto = parseFloat(document.getElementById('ps-monto').value);
+        if (!monto || monto <= 0) { showError('Ingresa un monto válido'); return; }
+        if (monto > _psCtx.saldo + 0.01) {
+            showError(`El monto supera el saldo pendiente (${formatCurrency(_psCtx.saldo)})`); return;
+        }
+        const esParcial = monto < _psCtx.saldo - 0.01;
+        const fechaProx = esParcial ? (document.getElementById('ps-fecha-prox').value || null) : null;
+        try {
+            await apiFetch(`/cliente-membresias/${_psCtx.cmId}/pagar-saldo`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    monto: monto,
+                    metodo_pago: document.getElementById('ps-metodo').value,
+                    fecha_proximo_pago: fechaProx,
+                }),
+            });
+            showSuccess(`Pago de ${formatCurrency(monto, _psCtx.moneda)} registrado ✅`);
+            cerrarModalPagarSaldo();
+            cargarMembresiasCliente();
+            verCliente(clienteActual.id);
+            showTab('membresias', document.querySelectorAll('.tab')[1]);
         } catch (e) { showError(e.message); }
     }
 
@@ -1139,7 +1425,12 @@
     cargarClientes();
 
     const clienteVerUrl = new URLSearchParams(window.location.search).get("ver");
-    if (clienteVerUrl) verCliente(parseInt(clienteVerUrl));
+    if (clienteVerUrl) verCliente(parseInt(clienteVerUrl)).then(() => {
+        if (new URLSearchParams(window.location.search).get("tab") === "rutinas") {
+            const botonRutinas = document.querySelector('.tab[onclick*="rutinas"]');
+            if (botonRutinas) showTab("rutinas", botonRutinas);
+        }
+    });
 </script>
 </body>
 </html>

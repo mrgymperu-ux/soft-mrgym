@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pagos - Soft-MrGym</title>
+    <title>Pagos - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -195,6 +195,7 @@
         <p style="font-size:0.85em;color:var(--color-texto-secundario);"><strong id="pp-nombre"></strong> · Pendiente: <strong id="pp-pendiente"></strong></p>
         <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="pp-monto" step="0.01" min="0"></div>
         <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">Puedes pagar menos del total para hacerlo en partes; no se puede superar el pendiente.</p>
+        <div class="form-group"><label>Pago desde</label><select id="pp-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select><small style="color:var(--color-texto-secundario);">Cuenta incluye banco, tarjeta, Yape, Plin o QR.</small></div>
         <div class="form-group"><label>Notas (opcional)</label><input type="text" id="pp-notas" placeholder="ej. pago en efectivo"></div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalPagoPlanilla()">Cancelar</button>
@@ -212,6 +213,7 @@
         </div>
         <p style="font-size:0.85em;color:var(--color-texto-secundario);" id="epp-detalle"></p>
         <div class="form-group"><label>Monto pagado</label><input type="number" id="epp-monto" step="0.01" min="0"></div>
+        <div class="form-group"><label>Pago desde</label><select id="epp-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select></div>
         <div class="form-group"><label>Notas</label><input type="text" id="epp-notas"></div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalEditarPagoPlanilla()">Cancelar</button>
@@ -293,12 +295,12 @@
         <p style="font-size:0.85em;color:var(--color-texto-secundario);"><strong id="ps-titulo"></strong> · Pendiente: <strong id="ps-pendiente"></strong></p>
         <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="ps-monto" step="0.01" min="0"></div>
         <div class="form-group">
-            <label>Metodo de pago</label>
+            <label>Pago desde</label>
             <select id="ps-metodo">
                 <option value="efectivo">Efectivo</option>
-                <option value="tarjeta">Tarjeta</option>
-                <option value="qr">QR</option>
+                <option value="cuenta">Cuenta</option>
             </select>
+            <small style="color:var(--color-texto-secundario);">Cuenta incluye banco, tarjeta, Yape, Plin o QR.</small>
         </div>
         <div class="form-group"><label>Notas (opcional)</label><input type="text" id="ps-notas"></div>
         <div class="form-actions">
@@ -515,6 +517,7 @@
         document.getElementById("pp-monto").value = resumen.pendiente > 0 ? resumen.pendiente : 0;
         document.getElementById("pp-monto").max = resumen.pendiente;
         document.getElementById("pp-notas").value = "";
+        document.getElementById("pp-metodo").value = "efectivo";
         document.getElementById("modal-pago-planilla").classList.add("active");
     }
     function cerrarModalPagoPlanilla() { document.getElementById("modal-pago-planilla").classList.remove("active"); }
@@ -526,6 +529,7 @@
         const resumen = esStaff ? resumenStaffActual : resumenProfActual;
         if (monto > resumen.pendiente + 0.01) { showError(`El monto no puede superar el pendiente (${formatCurrency(resumen.pendiente, moneda)})`); return; }
         const notas = document.getElementById("pp-notas").value.trim() || null;
+        const metodoPago = document.getElementById("pp-metodo").value;
         try {
             let body;
             let empleadoTel, empleadoNombre, empleadoId;
@@ -536,7 +540,7 @@
                 body = {
                     empleado_id: empleadoId, tipo: "staff", anio: resumen.anio, mes: resumen.mes,
                     monto_sueldo_fijo: resumen.sueldo_fijo_mensual, monto_comision_membresias: resumen.comision_membresias,
-                    monto_comision_productos: resumen.comision_productos, monto_total: monto, notas,
+                    monto_comision_productos: resumen.comision_productos, monto_total: monto, metodo_pago: metodoPago, notas,
                 };
             } else {
                 empleadoId = resumen.empleado_id;
@@ -545,7 +549,7 @@
                 body = {
                     empleado_id: empleadoId, tipo: "profesor", anio: resumen.anioMes.anio, mes: resumen.anioMes.mes,
                     desde: resumen.desde, hasta: resumen.hasta, cantidad_clases: resumen.cantidad_clases_dictadas,
-                    monto_clases: resumen.total_a_pagar, monto_total: monto, notas,
+                    monto_clases: resumen.total_a_pagar, monto_total: monto, metodo_pago: metodoPago, notas,
                 };
             }
             const pago = await apiFetch("/pagos-planilla/", { method: "POST", body: JSON.stringify(body) });
@@ -570,6 +574,7 @@
         const periodo = (p.desde && p.hasta) ? `${formatFecha(p.desde)} a ${formatFecha(p.hasta)}` : `${p.mes}/${p.anio}`;
         document.getElementById("epp-detalle").innerHTML = `Pago del periodo <strong>${periodo}</strong> · registrado el ${formatFechaHora(p.fecha_pago)}`;
         document.getElementById("epp-monto").value = p.monto_total;
+        document.getElementById("epp-metodo").value = ["cuenta", "tarjeta", "qr"].includes(p.metodo_pago) ? "cuenta" : "efectivo";
         document.getElementById("epp-notas").value = p.notas || "";
         document.getElementById("modal-editar-pago-planilla").classList.add("active");
     }
@@ -579,13 +584,15 @@
         if (!pagoPlanillaEditando) return;
         const monto = parseFloat(document.getElementById("epp-monto").value);
         if (!monto || monto <= 0) { showError("Ingresa un monto valido"); return; }
+        const tipoPago = pagoPlanillaEditando.tipo;
         try {
             await apiFetch(`/pagos-planilla/${pagoPlanillaEditando.id}`, { method: "PUT", body: JSON.stringify({
-                monto_total: monto, notas: document.getElementById("epp-notas").value.trim() || null,
+                monto_total: monto, metodo_pago: document.getElementById("epp-metodo").value,
+                notas: document.getElementById("epp-notas").value.trim() || null,
             })});
             showSuccess("Pago corregido");
             cerrarModalEditarPagoPlanilla();
-            if (pagoPlanillaEditando.tipo === "staff") { cargarHistorialStaff(); if (resumenStaffActual) verDetalleStaff(); }
+            if (tipoPago === "staff") { cargarHistorialStaff(); if (resumenStaffActual) verDetalleStaff(); }
             else { cargarHistorialProfesor(); if (resumenProfActual) verDetalleProfesor(); }
         } catch (e) { showError(e.message); }
     }

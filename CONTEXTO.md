@@ -12,23 +12,34 @@
 ║  6. Mantén las líneas de referencia (ej. "~línea 52") actuales.  ║
 ║                                                                  ║
 ║  Este archivo ES la memoria del proyecto. Sin él, cada sesión    ║
-║  nueva gasta miles de tokens re-explorando 258KB de main.py.     ║
+║  nueva gasta miles de tokens re-explorando 265KB de main.py.     ║
 ╚══════════════════════════════════════════════════════════════════╝
 -->
 
-# CONTEXTO — Soft-MrGym
-> Última actualización: 2026-07-08 (v3 - PWA + QR)
-> main.py: ~265KB, ~5550 líneas | models.py: ~800 líneas | schemas.py: ~610 líneas
+# CONTEXTO — Soft-Gym
+> Última actualización: 2026-07-13 (v6 - Suscripciones SaaS + navegación móvil)
+> main.py: ~296KB, ~6530 líneas | models.py: ~1225 líneas | schemas.py: ~1470 líneas | auth.py: ~490 líneas
 
 ## Qué es
 Sistema de gestión de gimnasio multi-tenant (SaaS). Un superadmin administra gimnasios; cada gimnasio tiene su staff, clientes, productos, etc. completamente aislados.
 
+## URLs en producción
+- **Panel Staff:** https://soft-mrgym.onrender.com/
+- **Portal Alumno:** https://soft-mrgym.onrender.com/alumno/login.html?gym={slug}
+- **Zona Profesores:** https://soft-mrgym.onrender.com/profesor/login.html?gym={slug}
+- **API Docs:** https://soft-mrgym.onrender.com/docs
+- **Repo GitHub:** https://github.com/mrgymperu-ux/soft-mrgym (privado)
+- **Marca comercial oficial:** `Soft-Gym`. La URL de Render, el repositorio y la carpeta local conservan `soft-mrgym`/`Soft-MrGym` como identificadores técnicos heredados para no romper el despliegue existente.
+
 ## Stack
-- **Backend:** FastAPI + SQLAlchemy + SQLite (dev) / PostgreSQL (prod)
+- **Backend:** FastAPI + SQLAlchemy + SQLite (dev) / PostgreSQL (prod, Supabase free permanente)
 - **Frontends:** HTML/CSS/JS vanilla (sin framework), 3 portales separados
 - **PDF:** reportlab (recibos, contratos, boletas)
-- **Auth:** JWT (python-jose) + bcrypt (passlib)
-- **Dev:** Windows, D:\Soft-MrGym, uvicorn --reload en :8000, frontends con http.server
+- **QR:** qrcode==7.4.2 (genera QR SVG para compartir portal alumno)
+- **Auth:** JWT (python-jose) + bcrypt==4.0.1 (passlib)
+- **Hosting:** Render.com free tier (Docker: Python+nginx en un contenedor)
+- **BD prod:** Supabase PostgreSQL (free permanente, 500MB, región São Paulo)
+- **Dev:** Windows, `D:\Soft-MrGym - CODEX test`, uvicorn --reload en :8000, frontends con http.server
 
 ## Reglas técnicas para trabajar
 - `bash_tool` NO accede a D:\ → usar siempre `filesystem:*` (MCP)
@@ -36,69 +47,76 @@ Sistema de gestión de gimnasio multi-tenant (SaaS). Un superadmin administra gi
 - main.py NO cabe en contexto → leer por bloques con head/tail
 - Tras editar .py, uvicorn recarga solo (~2-3s)
 - El navegador cachea → Ctrl+Shift+R
+- Para desplegar: `git add . && git commit -m "msg" && git push` → Render redesplega en ~3 min
 
 ---
 
 ## Mapa de archivos
 
 ```
-D:\Soft-MrGym\
+D:\Soft-MrGym - CODEX test\
 ├── backend\
 │   ├── __init__.py              (vacío, hace que sea un paquete)
 │   ├── database.py              (Engine, SessionLocal, get_db; lee DATABASE_URL del env)
-│   ├── models.py                (~800 lín) Tablas ORM — ver sección "Modelo de datos"
-│   ├── schemas.py               (~600 lín) Pydantic schemas (Base/Create/Update/Response)
-│   ├── auth.py                  (~200 lín) JWT, bcrypt, dependencies de permisos
-│   ├── main.py                  (~5400 lín) TODOS los endpoints — ver sección "Endpoints"
+│   ├── models.py                (~1225 lín) Tablas ORM — ver sección "Modelo de datos"
+│   ├── schemas.py               (~1470 lín) Pydantic schemas (Base/Create/Update/Response)
+│   ├── auth.py                  (~490 lín) JWT, bcrypt, permisos y bloqueo SaaS
+│   ├── main.py                  (~6500 lín) TODOS los endpoints — ver sección "Endpoints"
 │   ├── pdf_generator.py         (~300 lín) Genera PDFs con reportlab
-│   ├── requirements.txt         (fastapi, uvicorn, sqlalchemy, pydantic, jose, passlib, etc.)
+│   ├── requirements.txt         (fastapi, uvicorn, sqlalchemy, pydantic, jose, passlib, bcrypt==4.0.1, qrcode, etc.)
 │   ├── .env                     (SECRET_KEY local, NO commitear)
-│   └── uploads\                 (fotos de clientes, productos, ejercicios)
+│   └── uploads\                 (fotos de clientes, productos, ejercicios, logos)
 │
 ├── frontend-staff\              Panel principal del gimnasio
-│   ├── js\api.js                API_BASE_URL = "http://localhost:8000" (se reescribe en deploy)
-│   ├── js\sidebar.js            Menú lateral, enlace Super Admin (solo superadmins)
+│   ├── js\api.js                API_BASE_URL (localhost en dev, "" en prod via start.sh). Guarda gimnasio_slug en sessionStorage al login
+│   ├── js\sidebar.js            Menú lateral en PC; header + navegación horizontal en móvil
 │   ├── js\tema.js               Temas (lavanda, océano, etc.) y modo claro/oscuro
-│   ├── js\flujo-cliente.js      Búsqueda inteligente + venta rápida del panel principal
+│   ├── js\flujo-cliente.js      Búsqueda inteligente + venta rápida + asignación membresía + cobro
 │   ├── js\logo.js               Logo dinámico en sidebar
 │   ├── js\personal.js           Lógica de empleados y puestos
 │   ├── js\medidas-catalogo.js   Campos de medidas configurables
 │   ├── css\styles.css           Único archivo CSS (sidebar + flujo-cliente + todo)
 │   ├── styles.css               (¡OJO! hay otro en raíz de frontend-staff)
 │   ├── login.html, registro.html, principal.html
-│   ├── clientes.html, membresias.html, productos.html, ventas.html
+│   ├── clientes.html            Ficha completa con pestañas: Datos, Membresías, Medidas, Rutinas, Progreso, Nutrición, Retos
+│   ├── membresias.html, productos.html, ventas.html
 │   ├── venta-rapida.html, asistencias.html, vencimientos.html
-│   ├── entrenamientos.html (catálogo ejercicios), progreso.html
+│   ├── entrenamientos.html, progreso.html
 │   ├── nutricion.html, mi-nutricion.html, mi-rutina.html, mi-progreso.html
 │   ├── usuarios-staff.html, usuarios-profesores.html
 │   ├── planilla-staff.html, planilla-profesores.html, agenda.html
-│   ├── pagos.html (servicios/deudas), ingresos.html, egresos.html
-│   ├── movimientos.html, resumen.html (dashboard financiero)
-│   ├── metas.html (comisiones), reportes.html, configuracion.html
+│   ├── pagos.html, ingresos.html, egresos.html
+│   ├── movimientos.html, resumen.html
+│   ├── metas.html, reportes.html
+│   ├── configuracion.html       Datos gym, suscripción SaaS, logo, QR, moneda, comisiones, temas, cláusulas, medidas, contraseña
 │   ├── gestion-medidas.html, retos.html
-│   └── superadmin.html          Panel SaaS (planes, gimnasios, stats globales)
+│   └── superadmin.html          Panel SaaS: gimnasios, planes, períodos, pagos, suspensión y renovación
 │
 ├── frontend-alumno\             Portal del alumno (solo lectura)
-│   ├── js\api.js                API_BASE = "http://localhost:8000"
-│   ├── login.html, mi-perfil.html, mi-rutina.html
+│   ├── js\api.js                API_BASE, getSlug(), fetchInfoGym(), loginAlumno() envía slug
+│   ├── login.html               Personaliza nombre del gym + PWA (manifest, SW, ícono)
+│   ├── mi-perfil.html, mi-rutina.html
 │   ├── mi-nutricion.html, mi-progreso.html, retos.html
 │
-├── frontend-profesor\           Zona de profesores (agenda propia, reemplazos)
-│   ├── js\api.js                API_BASE = "http://localhost:8000"
-│   ├── login.html, agenda.html
+├── frontend-profesor\           Zona de profesores
+│   ├── js\api.js                API_BASE, getSlug(), fetchInfoGym(), loginProfesor() envía slug
+│   ├── login.html               Personaliza nombre del gym + PWA
+│   ├── agenda.html
 │
 ├── deploy\                      Archivos de despliegue en nube
-│   ├── nginx.conf               Proxy: / → staff, /alumno/ → alumno, /profesor/ → profesor, API → :8000
-│   ├── start.sh                 Arranca gunicorn + nginx, inyecta URL real en api.js
+│   ├── nginx.conf               Proxy: / → staff, /alumno/ → alumno, /profesor/ → profesor, API (gym|gym-actual|auth|...) → :8000
+│   ├── start.sh                 1 worker gunicorn + nginx, inyecta RENDER_EXTERNAL_URL en api.js
 │   └── .env.example
 │
 ├── Dockerfile                   Python 3.12-slim + nginx, todo en un contenedor
 ├── render.yaml                  Blueprint para Render.com (solo web service, BD en Supabase)
+├── tests\
+│   └── test_multitenant.py      Pruebas de aislamiento, configuración, permisos, cobros SaaS, ventas y corrección de pagos
 ├── .dockerignore, .gitignore
 ├── start.bat                    Desarrollo local (Windows)
 ├── DEPLOY.md                    Guía paso a paso para desplegar
 ├── CONTEXTO.md                  ← ESTE ARCHIVO
-└── sql_app.db                   Base SQLite local (~1662 clientes reales)
+└── sql_app.db                   Base SQLite local (~1665 clientes reales, NO se sube)
 ```
 
 ---
@@ -109,182 +127,152 @@ D:\Soft-MrGym\
 | Tabla | Descripción |
 |-------|-------------|
 | `planes_saas` | Catálogo de planes SaaS (Free, Pro). Campos: max_clientes, max_productos, max_rutinas, max_usuarios_staff, nutricion_habilitada, reportes_avanzados, dominio_propio |
-| `gimnasios` | Cada tenant. Tiene plan_id, slug, config (moneda, comisiones, tema, clausulas) |
-| `configuracion` | Tabla legacy (id=1), aún usada por _get_o_crear_configuracion() |
+| `gimnasios` | Cada tenant. Tiene plan_id, slug, logo_url, config (moneda, comisiones, tema, clausulas) |
+| `configuracion` | Tabla legacy conservada por compatibilidad; la API operativa usa la configuración de cada `gimnasio` |
+
+### Facturación SaaS de cada gimnasio
+| Tabla | Descripción |
+|-------|-------------|
+| `suscripciones_saas` | Una por gimnasio. Plan, estado, inicio/fin de período, fin de gracia, auto-renovación, suspensión y notas |
+| `pagos_saas` | Historial inmutable de cobros de la plataforma: monto, moneda, método, referencia, fecha y período cubierto |
 
 ### Tablas con gimnasio_id (25 tablas raíz)
 | Tabla | Clave | Relaciones |
 |-------|-------|-----------|
-| `usuarios` | username + password_hash | → gimnasio, → empleado (opcional). Campos: rol (STAFF/PROFESOR), es_administrador, es_superadmin, puede_eliminar, puede_exportar, zonas_permitidas |
-| `clientes` | nombre, apellidos, dni, etc. | → gimnasio. Campos: foto_url, genero, fecha_renovacion/vencimiento, membresia_texto (legacy), asistencias_legado |
+| `usuarios` | username + password_hash | → gimnasio, → empleado. Campos: rol (STAFF/PROFESOR), es_administrador, es_superadmin, puede_eliminar, puede_exportar, zonas_permitidas |
+| `clientes` | nombre, apellidos, dni, etc. | → gimnasio. Campos: foto_url, genero, fecha_renovacion/vencimiento, membresia_texto (legacy) |
 | `clientes_historicos` | importados de sistema anterior | num_carnet, migrado, cliente_nuevo_id |
 | `membresias` | catálogo de tarifas | precio, duracion_dias/meses, incluye_nutricion, horarios, congelamiento |
-| `cliente_membresias` | asignación cliente↔membresía | fecha_inicio/fin, monto_pagado, vendido_por_id, metodo_pago |
+| `cliente_membresias` | asignación cliente↔membresía | fecha_inicio/fin, monto_pagado, vendido_por_id, metodo_pago, fecha_pago_saldo |
+| `pagos_membresia` | historial de pagos individuales | cliente_membresia_id, monto, metodo_pago, fecha_pago, registrado_por_id, notas |
 | `productos` | inventario | precio_compra/venta, stock, stock_minimo, foto_url |
-| `ventas` | registro de ventas | → detalles. total, metodo_pago, es_venta_rapida, costo_comision_gym |
-| `detalles_venta` | items de una venta | producto_id, cantidad, precio_unitario |
-| `compras` | reposición de stock | producto_id, cantidad, costo_unitario (alimenta Egresos) |
+| `ventas` → `detalles_venta` | registro de ventas | total, metodo_pago, es_venta_rapida, costo_comision_gym |
+| `compras` | reposición de stock | producto_id, cantidad, costo_unitario |
 | `asistencias` | entrada/salida de clientes | cliente_id, fecha_hora_entrada/salida |
-| `asistencias_empleado` | entrada/salida de staff | empleado_id, fecha_hora_entrada/salida |
-| `progresos` | registro simple peso/medidas | cliente_id, fecha, peso_kg, grasa_pct, notas |
-| `medidas` | toma antropométrica completa | ~40 campos (perímetros, signos vitales, composición corporal) |
-| `tipos_ejercicio` | catálogo de ejercicios | categoria, equipamiento, nivel, genero_recomendado, objetivo (76 precargados) |
-| `rutinas` → `rutina_dias` → `rutina_ejercicios` | rutina por cliente | nombre, días, ejercicios con series/reps/peso |
-| `alimentos` | catálogo nutricional | 82+ alimentos peruanos, macro/micronutrientes por 100g |
-| `paquetes_nutricion` → `paquete_alimentos` | plantillas desayuno/almuerzo/cena | por propósito (bajar peso, ganar masa, etc.) × 3 tamaños |
-| `planes_nutricion` → `comidas_plan` | plan asignado a cliente | generado automáticamente según IMC/BMR/TDEE o manual |
-| `retos` | desafíos para alumnos | titulo, descripcion, fecha_inicio/fin |
-| `empleados` | personal del gym | nombre, tipo (STAFF_FIJO/PROFESOR_DE_SALA), sueldo, tarifas, DNI |
-| `puestos` | catálogo de cargos | nombre, tipo. Precargados: Counter, Entrenador, Baile, etc. |
-| `clases_dictadas` | agenda de clases | profesor_id, fecha, hora_inicio/fin, sala, serie_id (recurrentes) |
-| `pagos_planilla` | pagos a staff/profesores | tipo (staff/profesor), monto_total, mes/año, desde/hasta |
-| `servicios` | catálogo (agua, luz, alquiler) | nombre, notas |
-| `cargos_servicio` → `pagos_servicio` | deudas/cobros | monto_total, recurrente (semanal/mensual/anual), serie_id |
-| `gastos` | egresos generales | categoria, monto, descripcion |
-| `metas_mensuales` | meta de ventas por mes | meta_membresias, meta_productos |
-| `tramos_comision` | escalas de comisión | tipo (membresia/producto), porcentaje_meta_minimo, porcentaje_comision |
-
-### Enums
-- `RolUsuario`: STAFF, PROFESOR
-- `MetodoPago`: EFECTIVO, TARJETA, QR
-- `TipoComida`: DESAYUNO, COMIDA, CENA, APERITIVO
-- `TipoEmpleado`: STAFF_FIJO, PROFESOR_DE_SALA
-- `CategoriaAlimento`: PROTEINA, CARBOHIDRATO, GRASA, VEGETAL, FRUTA, LACTEO, LEGUMBRE, OTRO
-- `PropositoNutricion`: BAJAR_PESO, GANAR_MASA, MANTENIMIENTO, DEFINICION
-- `CategoriaGasto`: COMPRA_PRODUCTO, PAGO_STAFF, PAGO_PROFESOR, PAGO_SERVICIO, OTROS
+| `asistencias_empleado` | entrada/salida de staff | empleado_id |
+| `progresos` | registro simple peso/medidas | cliente_id, fecha, peso_kg, grasa_pct |
+| `medidas` | toma antropométrica completa | ~40 campos |
+| `tipos_ejercicio` | catálogo de ejercicios | 76 precargados con categoria, equipamiento, nivel, genero, objetivo |
+| `paquetes_rutina` → `paquete_rutina_dias` → `paquete_rutina_ejercicios` | plantillas reutilizables por perfil, nivel, objetivo y etapa |
+| `rutinas` → `rutina_dias` → `rutina_ejercicios` | copia de un paquete asignada a un cliente |
+| `alimentos` | catálogo nutricional | 82+ alimentos peruanos |
+| `paquetes_nutricion` → `paquete_alimentos` | plantillas por propósito × tamaño |
+| `planes_nutricion` → `comidas_plan` | plan asignado a cliente |
+| `retos` | desafíos para alumnos |
+| `empleados` | personal del gym | tipo (STAFF_FIJO/PROFESOR_DE_SALA), sueldo, tarifas |
+| `puestos` | catálogo de cargos |
+| `clases_dictadas` | agenda de clases | serie_id (recurrentes) |
+| `pagos_planilla` | pagos a staff/profesores |
+| `servicios` | catálogo (agua, luz, alquiler) |
+| `cargos_servicio` → `pagos_servicio` | deudas/cobros recurrentes |
+| `gastos` | egresos generales |
+| `metas_mensuales` | meta de ventas por mes |
+| `tramos_comision` | escalas de comisión |
 
 ---
 
-## Helpers críticos (main.py, primeras ~110 líneas)
+## Helpers críticos (main.py, primeras ~120 líneas)
 
-| Helper | Línea aprox | Qué hace |
-|--------|-------------|----------|
-| `get_gid(usuario)` | ~42 | Extrae gimnasio_id del usuario autenticado |
-| `q(db, Model, usuario)` | ~46 | Query filtrada por gimnasio_id (shorthand) |
-| `_validar_limite_plan(db, usuario, recurso)` | ~54 | Valida max_clientes/productos/rutinas/staff del plan. HTTP 403 si excede. 0=ilimitado |
-| `_validar_nutricion_habilitada(db, usuario)` | ~96 | HTTP 403 si plan no incluye nutrición |
-| `_detectar_delimitador(primera_linea)` | ~115 | Auto-detecta separador CSV (tab > ; > ,) |
-| `_migrar_columnas_nuevas()` | ~183 | ALTER TABLE idempotente, soporta SQLite + PostgreSQL |
-| `_sembrar_gimnasio_default()` | ~350 | Crea gym id=1 (template), planes Free/Pro, asigna data NULL |
-| `_get_o_crear_configuracion(db)` | ~3400 | Singleton de Configuración (id=1) |
+| Helper | Qué hace |
+|--------|----------|
+| `get_gid(usuario)` | Extrae gimnasio_id del usuario autenticado |
+| `q(db, Model, usuario)` | Query filtrada por gimnasio_id |
+| `_del_gym(db, Model, id, usuario)` | Busca una entidad raíz por id y gimnasio; responde 404 si pertenece a otro tenant |
+| `_cliente_membresia_del_gym(...)` y helpers análogos | Protegen entidades hijas mediante JOIN con su entidad raíz y gimnasio |
+| `_configuracion_del_gym(db, usuario)` | Devuelve el propio `Gimnasio` como configuración aislada del tenant |
+| `_validar_limite_plan(db, usuario, recurso)` | Valida max del plan. HTTP 403 si excede. 0=ilimitado |
+| `_validar_nutricion_habilitada(db, usuario)` | HTTP 403 si plan no incluye nutrición |
+| `_detectar_delimitador(primera_linea)` | Auto-detecta separador CSV |
+| `_migrar_columnas_nuevas()` | ALTER TABLE idempotente, SQLite + PostgreSQL |
+| `_sembrar_gimnasio_default()` | Crea gym default, planes Free/Pro. Busca por id=1 O slug="mi-gimnasio" (PostgreSQL compatible) |
 
 ---
 
 ## Endpoints por módulo (main.py)
 
-### Auth (~línea 1020)
-- `_resolver_gimnasio_id_por_slug(db, slug)` — Helper: convierte slug a gimnasio_id, 404 si no existe
-- `GET /gym/{slug}` — Info pública del gym (nombre, logo, tema). Sin auth. Para personalizar login/PWA
-- `GET /gym-actual/` — Info del gimnasio del usuario autenticado (slug, nombre, logo, tema). Resuelve el problema de obtener el slug sin tenerlo en sessionStorage
-- `POST /gym-actual/logo` — Sube/reemplaza el logo del gimnasio (solo admin). Guarda en uploads/logos/
-- `GET /gym/{slug}/manifest.json?portal=alumno|profesor|staff` — Web App Manifest dinámico por gym (nombre, colores, ícono)
-- `GET /gym/{slug}/icon.svg` — Ícono SVG generado con inicial del gym y color del tema (fallback si no hay logo_url)
-- `GET /gym/{slug}/sw.js` — Service Worker mínimo (hace la app instalable como PWA)
-- `GET /gym/{slug}/qr.svg?portal=alumno|profesor` — Código QR como SVG con la URL del portal (usa lib qrcode)
+### PWA + Info Gym (~línea 1030)
+- `GET /gym/{slug}` — Info pública del gym (nombre, logo, tema). Sin auth
+- `POST /gym-actual/logo` — Sube logo del gym (solo admin). Guarda en uploads/logos/
+- `GET /gym-actual/` — Info del gym del usuario autenticado (slug, nombre, logo, tema)
+- `GET /gym/{slug}/manifest.json?portal=alumno|profesor|staff` — Manifest dinámico
+- `GET /gym/{slug}/icon.svg` — Ícono SVG generado (inicial + color tema)
+- `GET /gym/{slug}/sw.js` — Service Worker mínimo
+- `GET /gym/{slug}/qr.svg?portal=alumno|profesor` — QR como SVG
+
+### Auth (~línea 1190)
 - `POST /auth/login` — Staff/profesor, devuelve JWT con gimnasio_id + gimnasio_slug
-- `POST /auth/login-alumno` — Cliente con DNI + código + slug (opcional). **Filtra por gimnasio_id si viene slug**
-- `POST /auth/login-profesor` — Profesor con DNI + código + slug (opcional). **Filtra por gimnasio_id si viene slug**
+- `POST /auth/login-alumno` — DNI + código + slug → filtra por gimnasio_id
+- `POST /auth/login-profesor` — DNI + código + slug → filtra por gimnasio_id
 - `POST /auth/registro-gimnasio` — Registro público, crea gym (Free) + admin + seeders
 
-### Usuarios (~línea 1025)
-- CRUD `/usuarios/` — Solo admin crea. `_validar_limite_plan("usuarios_staff")` en POST
-- `GET /usuarios/me` — Datos del usuario logueado
+### Usuarios (~línea 1230)
+- CRUD `/usuarios/` — Solo admin crea. `_validar_limite_plan("usuarios_staff")`
+- `GET /usuarios/me`
 
-### Dashboard + Finanzas (~línea 1130)
-- `GET /dashboard/stats` — Tarjetas del panel principal
-- `GET /ingresos/` — Membresías + ventas con comisiones
-- `GET /egresos/` — Compras + planilla + servicios + comisiones pasarela
-- CRUD `/gastos/` — Egresos manuales
+### Dashboard + Finanzas (~línea 1340)
+- `GET /dashboard/stats`, `GET /ingresos/`, `GET /egresos/`, CRUD `/gastos/`
 
-### Clientes (~línea 1560)
-- `GET /clientes/listado-completo` — Vista de tabla con deuda, vencimiento, %asistencia
-- `GET /clientes/` — Paginado con búsqueda server-side
-- `POST /clientes/` — `_validar_limite_plan("clientes")` en POST
-- `POST /clientes/importar` — CSV masivo, con validación de límite
-- `POST /clientes/{id}/foto` — Upload JPEG/PNG/WEBP ≤5MB
-- `GET /clientes/{id}/ficha` — Resumen rápido para búsqueda inteligente
+### Clientes (~línea 1750)
+- `GET /clientes/listado-completo` — Con deuda, vencimiento, %asistencia
+- CRUD `/clientes/`, importar CSV, subir foto, ficha rápida
 
-### Clientes Históricos (~línea 2300)
-- `GET /clientes-historicos/` — Búsqueda en base legacy
-- `POST /clientes-historicos/importar` — CSV del sistema anterior
-- `POST /clientes-historicos/{id}/reingresar` — Migra a cliente activo, con validación de límite
+### Clientes Históricos (~línea 2500)
+- Búsqueda, importar CSV, reingresar a activo
 
-### Reportes (~línea 1900)
-- `GET /reportes/clientes` + `/exportar` — JSON o CSV
-- `GET /reportes/ventas` + `/exportar`
-- `GET /reportes/productos` + `/exportar`
+### Reportes (~línea 2100)
+- Clientes, ventas, productos (JSON + CSV)
 
-### Membresías (~línea 2500)
+### Membresías (~línea 2700)
 - CRUD `/membresias/` — Catálogo de tarifas
-- `POST /clientes/{id}/membresias` — Asignar membresía (recalcula fechas del cliente)
-- `PUT/DELETE /cliente-membresias/{id}` — Corrección administrativa
-- `GET /membresias/por-vencer` — Alertas
-- PDFs: `GET /clientes/{id}/membresias/{cm_id}/recibo.pdf` y `/contrato.pdf`
-- Exportar/importar CSV de tarifas
+- `POST /clientes/{id}/membresias` — Asignar membresía
+- `PUT/DELETE /cliente-membresias/{id}` — Corrección administrativa (solo admin)
+- `PUT /cliente-membresias/{id}/pagar-saldo` — Pago rápido de saldo pendiente (cualquier staff). Recibe {monto, metodo_pago}, suma al monto_pagado, limpia fecha_pago_saldo si saldo llega a 0
+- `DELETE /pagos-membresia/{id}` — Corrección administrativa: elimina solo el pago individual y descuenta su monto de la membresía asignada
+- PDFs: recibo y contrato
+- Exportar/importar CSV
 
-### Productos (~línea 2950)
-- CRUD `/productos/` — `_validar_limite_plan("productos")` en POST
-- `GET /productos/mas-vendidos` — Para Venta Rápida
-- `POST /productos/{id}/foto` — Upload
-- CRUD `/compras/` — Reposición de stock (alimenta Egresos)
+### Productos (~línea 3150)
+- CRUD `/productos/`, fotos, compras (reposición stock)
 
-### Ventas (~línea 3200)
-- CRUD `/ventas/` — Descuenta stock, calcula comisión pasarela
-- `GET /ventas/{id}/boleta.pdf`
+### Ventas (~línea 3400)
+- CRUD `/ventas/`, boleta PDF
 
-### Asistencias (~línea 3400)
-- CRUD `/asistencias/` — Entrada/salida de clientes
-- CRUD `/asistencias-empleado/` — Entrada/salida de staff
+### Asistencias (~línea 3600)
+- Clientes y staff
 
-### Entrenamientos (~línea 3480)
-- CRUD `/tipos-ejercicio/` — Catálogo (76 precargados)
-- CRUD `/rutinas/` — `_validar_limite_plan("rutinas")` en POST
-- CRUD `/rutina-dias/{id}/ejercicios`
+### Entrenamientos (~línea 3700)
+- Constructor de paquetes de rutinas por perfil y asignación de copias independientes a clientes
 
-### Nutrición (~línea 3600)
-- CRUD `/alimentos/` — Catálogo (82+ items)
-- CRUD `/paquetes-nutricion/` — Plantillas por propósito × tamaño
-- CRUD `/nutricion/` — Planes de cliente. `_validar_nutricion_habilitada` en POST
-- `POST /nutricion/generar-automatico/{id}` — Calcula BMR/TDEE/IMC → elige paquetes
-- `POST /nutricion/generar-automatico-masivo` — Para todos los clientes elegibles
+### Nutrición (~línea 3900)
+- Alimentos, paquetes, planes, generación automática (BMR/TDEE/IMC)
 
-### Personal (~línea 4100)
-- CRUD `/empleados/`, `/puestos/`
-- Agenda: CRUD `/clases/` — Series recurrentes con serie_id
-- `PUT /clases/{id}/marcar-dictada` — Calcula pago por hora
-- Planilla: `GET /planilla/profesor/{id}`, `GET /planilla/staff/{id}`
-- CRUD `/pagos-planilla/` — Con validación de saldo pendiente
-- PDF: `GET /pagos-planilla/{id}/recibo.pdf`
+### Personal (~línea 4300)
+- Empleados, puestos, agenda, planilla staff/profesor, pagos
 
-### Servicios/Deudas (~línea 4500)
-- CRUD `/servicios/` — Catálogo
-- CRUD `/cargos-servicio/` — Cobros con recurrencia (semanal/mensual/anual)
-- CRUD `/pagos-servicio/` — Pagos parciales contra cargos
+### Servicios/Deudas (~línea 4700)
+- Servicios, cargos recurrentes, pagos parciales
 
-### Medidas (~línea 4750)
-- CRUD `/medidas/` — ~40 campos antropométricos
-- Tras registrar/editar: dispara `_intentar_generar_plan_automatico`
+### Medidas (~línea 4950)
+- CRUD, ~40 campos, dispara plan nutrición automático
 
-### Configuración (~línea 4830)
-- GET/PUT `/configuracion/` — Moneda, comisiones, tema, clausulas
+### Configuración (~línea 5030)
+- GET/PUT moneda, comisiones, tema, clausulas
 
-### Metas y Comisiones (~línea 4860)
-- CRUD `/metas/`, `/comisiones/tramos`
-- `GET /comisiones/resumen` — Calcula comisiones de todo el staff
+### Metas/Comisiones (~línea 5060)
+- Metas mensuales, tramos, resumen comisiones
 
-### SaaS / Super Admin (~línea 5050)
-- CRUD `/saas/planes`, `/saas/gimnasios`
-- `DELETE /saas/gimnasios/{id}` — Cascada total (protege gym template id=1)
-- `GET /saas/dashboard` — Stats globales
+### SaaS / Super Admin (~línea 6045)
+- CRUD planes y gimnasios, dashboard con estados e ingresos SaaS del mes, DELETE cascada
+- `GET /saas/gimnasios/{id}/suscripcion` — detalle e historial de pagos
+- `PUT /saas/gimnasios/{id}/suscripcion` — plan, estado, vencimiento, gracia y suspensión manual
+- `POST /saas/gimnasios/{id}/suscripcion/renovar` — registra pago y extiende el período de 1 a 24 meses
+- `GET /suscripcion/mi-plan` — el administrador del gimnasio consulta plan, vencimiento y últimos pagos
 
-### Portal Alumno (~línea 5250)
-- Solo lectura: mi-perfil, mi-rutina, mi-nutricion, mi-progreso, retos
-- `POST /portal-alumno/mi-foto` — Solo si no tiene deuda
+### Portal Alumno (~línea 5450)
+- Solo lectura: perfil, rutina, nutrición, progreso, retos, subir foto
 
-### Portal Profesor (~línea 2100 en main.py)
-- `GET /portal-profesor/mi-agenda` — Clases propias
-- `PUT /portal-profesor/clases/{id}/reemplazo` — Asignar reemplazo
-- `GET /portal-profesor/ocupado` — Calendario de ocupación
+### Portal Profesor (~línea 2300)
+- Mi agenda, reemplazo, calendario ocupación
 
 ---
 
@@ -292,49 +280,69 @@ D:\Soft-MrGym\
 
 | Dependency | Quién puede |
 |------------|------------|
-| `get_usuario_actual` | Cualquier usuario con JWT válido |
-| `requiere_staff` | Solo rol STAFF |
-| `requiere_staff_o_profesor` | STAFF o PROFESOR |
+| `get_usuario_actual` | Usuario con JWT válido, gimnasio activo y suscripción vigente (superadmin y rutas de consulta/renovación exentas) |
+| `requiere_staff` | Solo STAFF; además valida `zonas_permitidas` contra la ruta solicitada |
+| `requiere_staff_o_profesor` | STAFF o PROFESOR; para STAFF aplica `zonas_permitidas` en backend |
 | `requiere_administrador` | STAFF + es_administrador=True |
 | `requiere_superadmin` | STAFF + es_superadmin=True |
-| `requiere_permiso_eliminar` | STAFF + (es_administrador OR puede_eliminar) |
-| `requiere_permiso_exportar` | STAFF + (es_administrador OR puede_exportar) |
+| `requiere_permiso_eliminar` | STAFF + (admin OR puede_eliminar) |
+| `requiere_permiso_exportar` | STAFF + (admin OR puede_exportar) |
 | `get_cliente_actual` | Token tipo "alumno" |
-| `get_profesor_actual` | Token tipo "profesor" → devuelve Empleado |
+| `get_profesor_actual` | Token tipo "profesor" → Empleado |
 
-JWT incluye: sub (id), tipo (usuario/alumno/profesor), rol, gimnasio_id.
-Expira en 12 horas.
+JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
+`autenticar_alumno` y `autenticar_profesor` requieren un slug válido para resolver el gimnasio. Un gimnasio inactivo bloquea todas sus sesiones; una suscripción vencida devuelve HTTP 402 y permite al dueño entrar únicamente a Configuración para consultar su plan.
 
 ---
 
 ## Multi-tenant — cómo funciona
 
-1. **Toda query** usa `q(db, Model, usuario)` que filtra por `gimnasio_id`
-2. **Todo POST** asigna `gimnasio_id=get_gid(usuario)` al crear
-3. **JWT** incluye `gimnasio_id` → se propaga automáticamente
-4. **Seeders** al registrar un gym nuevo: copia ejercicios, alimentos, paquetes, puestos, servicios del gym template (id=1)
-5. **Límites** por plan: `_validar_limite_plan()` en POST de clientes, productos, rutinas, usuarios
-6. **Login por slug**: alumno/profesor envían `?gym=slug` en la URL → el frontend lo lee y lo envía como campo `slug` en el request de login → el backend filtra por `gimnasio_id` → no hay conflicto de DNIs entre gyms
-7. **`GET /gym/{slug}`**: endpoint público que devuelve nombre, logo, tema del gym para personalizar la pantalla de login
+1. Toda query raíz usa `q(db, Model, usuario)` o `_del_gym()` → filtra por gimnasio_id
+2. Todo POST asigna `gimnasio_id=get_gid(usuario)`
+3. JWT incluye gimnasio_id
+4. Seeders al registrar gym: copia ejercicios, alimentos, paquetes, puestos, servicios del template (gym default)
+5. Límites por plan: `_validar_limite_plan()` en POST de clientes, productos, rutinas, usuarios
+6. Login por slug: `?gym=slug` → frontend envía slug → backend filtra por gimnasio_id
+7. `GET /gym/{slug}`: info pública para personalizar login/PWA
+8. Entidades hijas (pagos, membresías asignadas, rutinas, agenda y servicios) se validan mediante JOIN hasta el gimnasio
+9. Configuración, moneda, comisiones y PDFs leen el registro `Gimnasio` del tenant, no el id global 1
 
 ---
 
 ## Flujo de URLs por gym (slug)
 
-- **Staff**: `https://dominio.com/` (login con username, el gimnasio_id ya va en el JWT)
-- **Alumno**: `https://dominio.com/alumno/login.html?gym=mi-gimnasio` → personaliza login con nombre del gym, envía slug
-- **Profesor**: `https://dominio.com/profesor/login.html?gym=mi-gimnasio` → idem
+- **Staff**: `https://soft-mrgym.onrender.com/` (login con username, gimnasio_id en JWT)
+- **Alumno**: `.../alumno/login.html?gym=mi-gimnasio` → personaliza login, envía slug
+- **Profesor**: `.../profesor/login.html?gym=mi-gimnasio` → idem
 - **Info pública**: `GET /gym/{slug}` → nombre, logo_url, tema, modo_tema
+
+---
+
+## PWA (Progressive Web App)
+
+- `GET /gym/{slug}/manifest.json` genera manifest dinámico con nombre, colores e ícono del gym
+- `GET /gym/{slug}/icon.svg` genera ícono SVG con inicial del gym + color del tema
+- `GET /gym/{slug}/sw.js` service worker mínimo (hace la app instalable)
+- login.html de alumno y profesor inyectan manifest + registran SW dinámicamente
+- Meta tags apple-mobile-web-app-capable para iOS
 
 ---
 
 ## Despliegue
 
 - **Local:** `start.bat` → uvicorn :8000, http.server :3000/:3001/:3002
-- **Nube:** Dockerfile (Python+nginx en un contenedor), `render.yaml` para Render.com (solo web service)
-- **BD prod:** PostgreSQL en Supabase (free permanente, 500MB, región São Paulo)
-- **Variables env:** DATABASE_URL, SECRET_KEY, CORS_ORIGINS
-- **nginx:** proxy reverso, / → staff, /alumno/ → alumno, /profesor/ → profesor, APIs → :8000
+- **Nube:** Dockerfile (Python 3.12-slim + nginx), 1 worker gunicorn
+- **BD prod:** PostgreSQL en Supabase (free permanente, São Paulo)
+- **Variables env:** DATABASE_URL (Supabase URI), SECRET_KEY, CORS_ORIGINS
+- **nginx:** / → staff, /alumno/ → alumno, /profesor/ → profesor, API → :8000
+- **Deploy flow:** `git push` → Render auto-redeploy ~3 min
+
+### Problemas resueltos en deploy
+- ENUMs de PostgreSQL: se pre-crean con CREATE TYPE antes de create_all (evita race condition entre workers)
+- bcrypt: fijado a ==4.0.1 (passlib incompatible con versiones nuevas)
+- _sembrar_gimnasio_default: busca por id=1 O slug="mi-gimnasio" (PostgreSQL no garantiza id=1)
+- Tabla configuracion: try/except si no existe en BD nueva
+- gunicorn: 1 worker (evita race condition de ENUMs)
 
 ---
 
@@ -345,25 +353,219 @@ Expira en 12 horas.
 - Multi-tenant (7 pasos completados)
 - Límites por plan (validación en 8 endpoints)
 - Nutrición automática (BMR/TDEE/IMC → paquetes)
-- Despliegue preparado (Dockerfile, nginx, render.yaml, Supabase)
+- Despliegue en producción (Render + Supabase) — FUNCIONANDO
 - Migración SQLite↔PostgreSQL compatible
-- Login multi-tenant por slug (fix: DNI ya no colisiona entre gyms)
-- Endpoint público `GET /gym/{slug}` para personalizar login
-- Frontends alumno/profesor personalizan login con nombre del gym
-- PWA dinámica: manifest.json, icon.svg y service worker generados por gym
-- QR en panel de configuración para compartir portal con socios
-- TokenResponse incluye gimnasio_slug; staff frontend lo guarda en sessionStorage
-- Dependencia qrcode==7.4.2 agregada a requirements.txt
+- Login multi-tenant por slug (DNI no colisiona entre gyms)
+- PWA dinámica: manifest.json, icon.svg, service worker por gym
+- QR en configuración para compartir portal con socios
+- Upload de logo del gimnasio
+- TokenResponse incluye gimnasio_slug
+- Registro público de gimnasios con seeders automáticos
 
-### 🔲 Pendiente
-- Subir a la nube (GitHub → Render + Supabase)
-- Pasarela de pagos para suscripciones SaaS (Stripe/MercadoPago)
+### ✅ Pago rápido de saldo pendiente (implementado)
+- Tabla `pagos_membresia` (modelo PagoMembresia): historial individual de cada pago contra una membresía asignada
+- Schema `PagoMembresiaOut` + `PagoSaldoRequest` (con fecha_proximo_pago)
+- `ClienteMembresia` response ahora incluye `pagos: List[PagoMembresiaOut]`
+- Endpoint `PUT /cliente-membresias/{cm_id}/pagar-saldo` (staff): crea registro PagoMembresia, suma al monto_pagado, limpia fecha_pago_saldo si saldo=0, acepta fecha_proximo_pago
+- Al asignar membresía (POST /clientes/{id}/membresias) también registra el pago inicial en pagos_membresia
+- `ClienteListadoRow` ahora incluye `fecha_pago_saldo` y `ultimo_cm_id`
+- clientes.html: pestaña Membresías muestra historial de pagos como sub-filas (└ Pago) debajo de cada membresía
+- clientes.html: botón "💳 Pagar saldo" en línea separada debajo de acciones
+- clientes.html: modal con campo dinámico "Fecha próximo pago" que aparece al hacer pago parcial
+- Moneda (S/) solo en cabeceras de tablas, celdas muestran solo números
+- principal.html: búsqueda inteligente muestra fecha de pago (rojo si vencida), monto pendiente, ícono 💳
+- principal.html: modal pago con campo dinámico fecha próximo pago + usa endpoint `/pagar-saldo`
+
+### ✅ Keep-alive inteligente + pantalla de carga (implementado)
+- Backend: background task `_keep_alive_loop()` se auto-pinga via URL externa solo si inactivo >13min Y en horario activo
+- Horario: Lun-Sab 6am-11pm | Dom 6am-1pm (hora Lima, UTC-5)
+- Middleware `track_last_request` actualiza `_ultimo_request_ts` en cada request
+- Endpoint `GET /ping` (sin auth) retorna `{status, hora_lima}` — agregado a nginx.conf
+- En dev local se desactiva automaticamente (sin RENDER_EXTERNAL_URL)
+- Frontend alumno: `apiFetch()` ahora muestra overlay blanco "Conectando..." si la API tarda >3s
+- Reintentos automaticos (hasta 3) con espera progresiva (2s, 4s) en errores de red (cold start)
+- Ahorro: ~7 horas/dia sin pings (11pm-6am) = ~210 horas/mes ahorradas del limite de 750h
+
+### ✅ Rediseño ficha del cliente - Pestaña Pagos (implementado)
+- Tab "Membresías" renombrada a "Pagos"
+- Foto del cliente 20% más grande (67px → 80px)
+- Header de ficha: Nombre, Celular con link WhatsApp ("Hola + nombre"), Cumpleaños
+- Barra de info del plan activo debajo del header: Plan | Inicio | Fin | Costo
+- Tabla de pagos rediseñada: cada plan como card con cabecera, tabla interna con columnas FECHA | PAGADO | SALDO | F.PROX PAGO | MÉTODO | NOTAS
+- Cada pago en línea separada con saldo progresivo calculado
+- Botón "Pagar saldo" visible si hay deuda pendiente
+- Backend: endpoint `/ingresos/` ahora usa PagoMembresia (pagos individuales) en vez de ClienteMembresia acumulado
+- Cada pago (inicial o a cuenta) aparece como línea separada en Movimientos/Ingresos con su fecha, monto y método reales
+
+### ✅ Endurecimiento multi-tenant, permisos y cobros (2026-07-13)
+- Se corrigieron consultas sin filtro de gimnasio en usuarios, gastos, clientes históricos, membresías asignadas, pagos, rutinas, nutrición, agenda, planilla, servicios, medidas y ventas
+- Se agregaron helpers para validar entidades raíz e hijas contra el gimnasio autenticado; un id válido de otro tenant devuelve 404
+- La configuración operativa ahora vive en cada registro `Gimnasio`: moneda, comisiones, tema, cláusulas, datos de contacto y PDFs quedan aislados por tenant
+- La tabla global `configuracion` permanece solo como compatibilidad legacy y ya no se consulta desde los endpoints operativos
+- Un gimnasio inactivo bloquea nuevas autenticaciones y también invalida las sesiones existentes de staff, alumnos y profesores
+- `zonas_permitidas` dejó de ser una restricción solo visual: el backend la aplica por prefijo de ruta para usuarios STAFF no administradores
+- Los portales de alumno y profesor exigen slug; no se permite buscar un DNI globalmente si falta el gimnasio
+- DNI de cliente pasa a ser único por `(gimnasio_id, dni)` en instalaciones nuevas y PostgreSQL; la SQLite local conserva su índice histórico hasta una migración controlada
+- Ventas validan cantidad positiva y toman siempre el precio actual del producto desde el servidor; el precio enviado por el navegador se ignora
+- Se añadieron validaciones de montos, cantidades, stock, precios y fechas; una corrección de `monto_pagado` crea un ajuste positivo o negativo en `pagos_membresia`
+- Pagos de planilla y planes nutricionales automáticos ahora guardan `gimnasio_id`; cálculos de comisiones y egresos filtran por tenant
+- CORS quedó restringido a los frontends locales por defecto y al dominio de producción en `render.yaml`
+- Pruebas automáticas en `tests/test_multitenant.py`: aislamiento entre gimnasios, configuración por tenant, permisos backend y precio autoritativo de venta
+- Verificación 2026-07-13: compilación correcta, 4/4 pruebas aprobadas y arranque local validado con `/ping`, `/gym/mi-gimnasio` y `/openapi.json`
+- `start.bat` usa su propia ubicación (`%~dp0`) para arrancar backend y frontends; las copias del proyecto ya no apuntan accidentalmente a `D:\Soft-MrGym`
+- La base local tiene un descuadre histórico de S/ 89 entre `ClienteMembresia.monto_pagado` y el detalle de `PagoMembresia`; no se corrigió automáticamente porque no existe una fecha fiable para reconstruir ese pago
+
+### ✅ Suscripción recurrente SaaS por gimnasio (2026-07-13)
+- Nuevos modelos `SuscripcionSaas` y `PagoSaas`; el pago que realiza el gimnasio por Soft-Gym queda separado de las membresías y pagos de sus alumnos
+- Estados derivados: `prueba`, `activa`, `gracia`, `vencida`, `suspendida`, `cancelada` y `sin_configurar`
+- Nuevos gimnasios reciben 14 días de prueba más 5 días de gracia; gimnasios legacy sin registro siguen accesibles hasta que el superadmin configure su primera renovación
+- Renovar registra monto, moneda, método, referencia y período cubierto; permite acumular de 1 a 24 meses sin perder días ya pagados
+- Al terminar la gracia, staff, alumnos y profesores quedan bloqueados. El dueño aún puede iniciar sesión y entrar a Configuración para consultar su suscripción
+- `superadmin.html` muestra estado y vencimiento, ingresos SaaS del mes, suscripciones vencidas y modal responsive para cobrar, renovar, suspender o reactivar
+- `configuracion.html` muestra al administrador del gimnasio su plan, período, gracia y últimos tres pagos
+- La migración automática creó `suscripciones_saas` y `pagos_saas` en la SQLite local sin modificar los datos de clientes
+
+### ✅ Navegación responsive móvil (2026-07-13)
+- En anchos de hasta 768px el sidebar pasa a ser un header fijo: logo/nombre del gimnasio arriba y accesos debajo con scroll horizontal táctil
+- Las secciones del menú se aplanan en móvil para que todas las acciones autorizadas estén disponibles sin ocupar una columna lateral
+- Se ocultan subtítulos y columnas marcadas como secundarias; tarjetas, formularios, pestañas, tablas y modales usan tamaños compactos
+- `superadmin.html` oculta clientes/usuarios/estado operativo secundarios en celular, manteniendo plan, suscripción, vencimiento y acciones
+- Se corrigió el login móvil: la tarjeta ocupa 362px en viewport de 390px, sin desbordamiento, y el enlace de registro permanece dentro de la tarjeta
+- El sidebar carga el logo y nombre reales del gimnasio; si no están disponibles conserva la marca de respaldo
+- Verificación 2026-07-13: backend compila, JavaScript modificado pasa validación sintáctica, servidor local responde y 6/6 pruebas automáticas pasan
+
+### ✅ Detalle financiero unificado y tablas tematizadas (2026-07-13)
+- `movimientos.html` (Principal → Movimientos) y `resumen.html` (Sistema → Resumen) usan el mismo diseño de detalle financiero
+- Fecha en dos líneas: fecha arriba y hora local debajo en formato de 24 horas `HH:mm`; cuando el origen no tiene hora se muestra `00:00`
+- Tipo y método de pago se muestran como texto, sin iconos; los montos del detalle usan un decimal y la moneda permanece en la cabecera
+- Ingresos usan verde medio oscuro `#187A5B` y egresos vino tinto `#7A2438`, ambos con peso de fuente normal
+- Se eliminó el botón y texto global “Borrar último”; cada fila muestra corrección únicamente a administradores
+- Corregido el borrado de ingresos de membresía: ahora `DELETE /pagos-membresia/{id}` elimina el pago individual y ajusta `monto_pagado`, sin borrar por error toda la membresía asignada
+- Los borrados de pagos de planilla y servicios ahora también requieren administrador, igual que ventas, compras y gastos
+- Se cerraron filtros multi-tenant faltantes en el cálculo de comisiones de ventas y membresías dentro de `/egresos/`
+- Todas las tablas del panel staff tienen cabecera fija, fondo con `--color-primario` del tema, texto blanco y peso normal; Nutrición y Superadmin recibieron sus ajustes específicos
+- `deploy/nginx.conf` enruta los nuevos prefijos `/pagos-membresia` y `/suscripcion` al backend
+- Verificación: compilación correcta, JavaScript de ambas vistas válido y 7/7 pruebas automáticas aprobadas
+
+### ✅ Origen de fondos en pagos del gimnasio (2026-07-13)
+- Todos los egresos operativos permiten indicar si el dinero salió de `Efectivo` o `Cuenta`: compras de productos, gastos generales, pagos de staff, pagos de profesores y pagos de servicios
+- `Cuenta` agrupa banco, tarjeta, Yape, Plin y QR; esta simplificación se aplica solo a pagos que realiza el gimnasio
+- Los cobros a clientes mantienen `Efectivo`, `Tarjeta` y `QR`, porque tarjeta y QR conservan sus comisiones configurables
+- Los modelos `Compra`, `PagoPlanilla`, `PagoServicio` y `Gasto` guardan `metodo_pago`; la migración automática añade las columnas faltantes en instalaciones existentes
+- El backend solo acepta `efectivo` o `cuenta` en nuevos egresos y en correcciones administrativas; los registros históricos `tarjeta`/`qr` se presentan como `Cuenta` cuando son egresos
+- Principal → Movimientos, Sistema → Resumen y la pantalla Egresos muestran el origen del pago; las comisiones de pasarela se identifican como salidas de `Cuenta`
+- Se corrigió además el registro de compras para guardar siempre `gimnasio_id`, y la edición de planilla combinada conserva el tipo antes de cerrar el modal
+- Verificación: backend compilado, OpenAPI local actualizado, JavaScript de 7 pantallas válido y 9/9 pruebas automáticas aprobadas
+
+### ✅ Seguimiento, Agenda semanal y paquetes de rutinas (2026-07-13)
+- Se quitó `Progreso` del menú Seguimiento y también de las zonas configurables para nuevos permisos de staff; sus datos y endpoints se conservan por compatibilidad y para los portales/fichas que aún los usan
+- Agenda muestra la semana completa de lunes a domingo; la grilla, el rango consultado y la repetición semanal aceptan domingo (`weekday=6`)
+- El acceso `Ejercicios` se renombró `Rutinas`; `entrenamientos.html` ya no muestra las pestañas “Rutinas de alumnos” ni “Catálogo de ejercicios”
+- Nueva pantalla responsive `Paquetes de rutinas`: búsqueda, filtros por nivel y objetivo, tarjetas resumidas, edición, desactivación y asignación
+- Cada paquete define nombre, descripción, nivel (`básico`, `intermedio`, `avanzado`, `competencia`), objetivo, etapa, perfil recomendado, rango de edad, duración, días y ejercicios
+- Rutinas tiene dos vistas coordinadas: `Paquetes de rutinas` y `Catálogo de ejercicios`; el catálogo es la fuente del selector del constructor y también admite ejercicios con texto libre
+- Nuevas tablas `paquetes_rutina`, `paquete_rutina_dias` y `paquete_rutina_ejercicios`, aisladas por `gimnasio_id`
+- Nuevos endpoints CRUD `/paquetes-rutina/` y `POST /paquetes-rutina/{id}/asignar`; asignar crea una copia independiente en las tablas de rutina del cliente
+- Las rutinas ya asignadas no cambian al editar o desactivar el paquete original y continúan visibles en la ficha/portal del alumno
+- Al renombrar un ejercicio del catálogo, el nombre se propaga a las rutinas de alumnos y paquetes que conservan `tipo_ejercicio_id`; los ejercicios de texto libre no cambian y la actualización queda limitada al gimnasio autenticado
+- Al iniciar el backend también se sincronizan referencias antiguas que hayan quedado con un nombre anterior; la base local ya fue corregida y la regresión queda cubierta por 14/14 pruebas automáticas
+- Catálogo inicial de 18 paquetes de rutinas por gimnasio: inicio, bajar de peso, ganar masa, tonificación, definición y rendimiento
+- Los paquetes cubren perfiles mixtos, femeninos y masculinos en niveles básico, intermedio y avanzado, con programas de 3 a 5 días y duración sugerida de 4 a 10 semanas
+- Cada paquete contiene ejercicios reales enlazados al catálogo, series, repeticiones, orden diario e indicaciones de técnica/carga; todos siguen siendo editables antes de asignarlos
+- La pantalla de paquetes incorpora filtro por perfil (`Mixto`, `Femenino`, `Masculino`) además de nivel, objetivo y búsqueda
+- La siembra es idempotente: completa paquetes faltantes sin duplicar los existentes; los gimnasios nuevos reciben también una copia independiente con referencias a su propio catálogo
+- Verificación: 18 paquetes en cada gimnasio local, todos con días/ejercicios, JavaScript válido y 15/15 pruebas automáticas aprobadas
+- En `Clientes → Rutinas`, el generador aleatorio fue reemplazado por un recomendador que ordena los paquetes existentes según objetivo, último peso, estatura/IMC, peso objetivo, género, edad, nivel e historial de rutinas del cliente
+- El recomendador propone hasta cinco paquetes y explica las coincidencias; el entrenador puede cambiar manualmente el objetivo y el nivel antes de elegir
+- El botón `Usar` asigna inmediatamente una copia independiente del paquete elegido al cliente, cierra el recomendador y actualiza la pestaña para mostrar la nueva rutina
+- La rutina cargada puede editarse desde la propia ficha del cliente; el paquete original permanece sin cambios
+- Se conserva el flujo opcional del editor de paquetes y `POST /paquetes-rutina/guardar-y-asignar` para crear una adaptación con nombre nuevo y asignarla en una sola transacción
+- Verificación del recomendador: backend compilado y 16/16 pruebas automáticas aprobadas, incluyendo perfil, ranking, edición, nombre obligatorio, guardado y asignación
+- `deploy/nginx.conf` enruta `/paquetes-rutina` al backend
+- Verificación inicial: backend compilado, JavaScript de navegación/Agenda/Rutinas válido, OpenAPI y tablas locales disponibles
+
+### ✅ Catálogo visible, otros ingresos y alquiler de salas (2026-07-13)
+- La sección Rutinas vuelve a mostrar el `Catálogo de ejercicios` junto a `Paquetes de rutinas`; permite crear, editar, desactivar y subir imagen demostrativa
+- El constructor de paquetes selecciona directamente ejercicios del catálogo, conservando la opción de texto libre
+- Principal incorpora una cuarta tarjeta `Otros ingresos`, con accesos a `Conceptos` y `+ Registrar`
+- Los conceptos reutilizables guardan nombre, descripción, monto sugerido, sala sugerida y la opción `Mostrar este concepto al agendar una sala alquilada`
+- El registro de otro ingreso solicita fecha, concepto, monto, método (`efectivo`, `tarjeta`, `qr`) y descripción opcional
+- Nuevas tablas multi-tenant `conceptos_otro_ingreso`, `otros_ingresos` y `reservas_sala`
+- Nuevos endpoints `/conceptos-ingreso/`, `/otros-ingresos/` y `/reservas-sala/`, protegidos por las zonas Pagos y Agenda
+- Otros ingresos se integran en `/ingresos/`, Principal → Movimientos, Sistema → Resumen, pantalla Ingresos y balances diarios de efectivo/cuenta
+- Agenda permite elegir `Clase del gimnasio` o `Sala alquilada`; el alquiler usa uno de los conceptos habilitados, no exige profesor y no afecta planilla
+- Las reservas aparecen también en el calendario de ocupación de profesores y el backend impide superponer clases/alquileres en la misma sala y horario (HTTP 409)
+- `deploy/nginx.conf` enruta los tres nuevos prefijos al backend
+- Verificación: compilación correcta, JavaScript de 6 pantallas válido, OpenAPI y tablas locales disponibles, y 11/11 pruebas automáticas aprobadas
+
+### ✅ Agenda compacta y creación desde la cuadrícula (2026-07-13)
+- La grilla semanal calcula su tamaño según la ocupación: un día sin clases ni reservas usa `0.5fr` frente al ancho `1fr` de un día ocupado
+- Cada hora sin eventos en toda la semana mide 26px, exactamente el 50% de las horas ocupadas (52px)
+- Los eventos conservan su posición y duración aunque atraviesen filas de distinta altura; el cálculo usa offsets acumulados por segmento horario
+- Cada cruce de día y hora incluye un botón circular `+`, visible también en móvil
+- Al tocar `+`, el modal `Agendar` recibe automáticamente la fecha, la hora de inicio y una hora de fin sugerida; dentro se elige `Clase del gimnasio` o `Sala alquilada`
+- El botón general de cabecera se simplificó a `+ Agendar`
+- Verificación: JavaScript válido y 11/11 pruebas automáticas aprobadas
+
+### ✅ Porciones de nutrición fáciles para el cliente (2026-07-13)
+- Los alimentos de paquetes y planes guardan ahora `porcion_cliente`, separada de `cantidad_gramos`; los gramos permanecen únicamente para calcular calorías y macronutrientes
+- Los paquetes siempre muestran y solicitan una medida doméstica fácil, editable por el staff: `4 huevos`, `1 lata`, `1/2 taza`, `3/4 taza` o `1/2 palta`
+- Huevos y alimentos expresados en unidades se redondean a números enteros; el atún usa latas de 150 g; arroz, choclo, arvejas y granos usan cuartos de taza; la palta usa medias unidades
+- Los paquetes iniciales, paquetes existentes y planes antiguos se normalizan automáticamente al arrancar, sin perder sus valores nutricionales internos
+- Al aplicar un paquete o generar un plan automático, el nombre visible ya no incorpora gramos; el alumno ve el alimento y debajo su porción sencilla
+- El constructor manual de planes y el editor de paquetes sugieren la porción al cambiar el alimento o el gramaje, pero permiten que el nutricionista la ajuste
+- El editor se reorganiza de forma responsive para que alimento, porción y cálculo interno sean operables desde celular
+- Se reforzó el aislamiento multi-tenant al validar que cada alimento agregado a un paquete pertenezca al gimnasio autenticado
+- La ficha del cliente muestra debajo de cada alimento su cantidad doméstica; las calorías se rotulan como `Energía` para evitar confundirlas con gramos
+- Los paquetes y planes automáticos limitan proteínas a porciones razonables: carnes y pescados hasta 200 g, atún hasta una lata de 150 g y huevos hasta 4 unidades
+- Los paquetes existentes y planes automáticos ya generados se corrigen y recalculan automáticamente al iniciar el backend
+- Las cabeceras de los planes usan un degradado más intenso basado en la paleta del gimnasio; se aplica tanto en Nutrición como en la ficha del cliente
+- En modo oscuro, tarjetas, indicadores y bloques de desayuno/almuerzo/cena mezclan sus acentos con las superficies oscuras del tema, manteniendo texto, bordes y porciones legibles
+- Las franjas `Desayuno`, `Almuerzo`, `Aperitivo` y `Cena` usan una versión intensa del mismo color de su tarjeta, con título y calorías en blanco; en modo oscuro el tono se profundiza sin perder su identidad
+- Verificación: backend compilado, JavaScript válido y 13/13 pruebas automáticas aprobadas, incluyendo porciones y límites de proteínas
+
+### ✅ Uniformidad visual, tablas responsive y marca ampliada (2026-07-13)
+- La interfaz compartida de staff define una escala tipográfica única: etiquetas de 12 px, texto auxiliar de 13 px, texto operativo/tablas/botones de 14 px, cabeceras de 16 px y títulos principales de 20 px
+- Las tablas usan peso normal, altura de línea y espaciado coherentes; sus cabeceras continúan fijas y toman el color primario del tema
+- `Movimientos` y `Resumen` comparten los mismos estilos de fecha/hora, tipo, método, monto y descripción; ingresos usan verde oscuro y egresos vino en claro, con variantes de mayor contraste en modo oscuro
+- En ventanas estrechas, la columna Descripción admite hasta dos líneas y mantiene el resto de columnas compactas y operativas
+- Las cabeceras de planes y comidas de nutrición comparten tamaños, intensidad, contraste y colores entre Nutrición, ficha del cliente y portal del alumno; las descripciones largas se limitan a dos líneas en celular
+- El logo del menú lateral aumenta de 30 px a 90 px (300%); el nombre editable de `Configuración` aparece debajo en letra pequeña y, si está vacío, el logo crece a 108 px para usar ese espacio
+- En menú colapsado y celular el logo usa medidas adaptadas para no romper la navegación horizontal ni ocultar acciones
+- La escala tipográfica base también queda declarada en los portales de alumno y profesor
+- Verificación: JavaScript válido en 7 archivos/pantallas, backend compilado y 16/16 pruebas automáticas aprobadas
+
+### ✅ Aforo actual y salida automática (2026-07-13)
+- Principal reemplaza la lista única de asistencias por dos vistas operativas con contadores: `Ingresos de hoy (XX)` conserva el historial diario y `En sala (XX)` muestra únicamente entradas sin salida
+- La vista inicial es `En sala`; al registrar la salida de un cliente desaparece inmediatamente de esa lista, pero permanece en `Ingresos de hoy` con su hora de salida
+- Toda asistencia abierta se cierra automáticamente al cumplir tres horas y guarda como salida la hora exacta `entrada + 3 horas`
+- El cierre automático se ejecuta al consultar Dashboard, historial o asistencias del día; Principal refresca la lista cada minuto, por lo que el aforo visible se corrige sin intervención del staff
+- La corrección está aislada por `gimnasio_id`: nunca cierra asistencias de otro gimnasio
+- Verificación: JavaScript válido, backend compilado y 17/17 pruebas automáticas aprobadas, incluida la salida exacta a las tres horas y el aislamiento multi-tenant
+
+### ✅ Marca oficial Soft-Gym (2026-07-13)
+- La marca comercial y visible del proyecto cambia de `Soft-MrGym` a `Soft-Gym` en panel staff, portal del alumno, zona de profesores, pantallas auxiliares, API, mensajes de suscripción, PWA y scripts locales
+- Producción continúa funcionando en `https://soft-mrgym.onrender.com` con PostgreSQL en Supabase; la URL de Render, el repositorio y las rutas locales no se renombran para evitar romper el despliegue
+- La futura integración Izipay usará el origen público HTTPS ya existente en Render; las rutas previstas son `/pagos/izipay/notificacion` para IPN y una pantalla propia de resultado para el retorno del comprador
+
+### ✅ Actualización preparada para producción (2026-07-13)
+- Se consolidan para GitHub y Render todos los cambios funcionales, responsive, multi-tenant y de marca documentados en esta sesión
+- El despliegue conserva el servicio técnico `soft-mrgym`, la URL `https://soft-mrgym.onrender.com` y la base PostgreSQL existente en Supabase
+- La carpeta local de asistencia `.continue/` queda excluida del repositorio y no forma parte de la aplicación
+- Validación previa: backend compilado e importado correctamente, JavaScript externo válido, revisión de diferencias sin errores y 17/17 pruebas automáticas aprobadas
+
+### 🔲 Pendiente (próxima sesión)
+- Reconciliar manualmente el descuadre histórico de S/ 89 de la base SQLite antes de usar el libro de pagos como fuente contable definitiva
+- Bloquear secciones del menú según plan (frontend)
+- Flujo para que el dueño del gym upgrade su plan
+- Integrar Izipay Online para suscripciones SaaS: primera etapa con Link de Pago/IPN y renovación confirmada por webhook; automatizar cobro con token solo después de que Izipay habilite y confirme recurrencia/MIT para la cuenta. El POS físico se mantiene como cobro presencial con renovación registrada por superadmin
 - Notificaciones (WhatsApp/email a clientes por vencimiento)
 - Dashboard analytics avanzado para superadmin
+- Fotos persistentes (actualmente se pierden al redesplegar; migrar a Supabase Storage o Cloudflare R2)
 
 ---
 
-## Base de datos real
-- Gimnasio principal (id=1, plan Pro): ~1662 clientes activos
-- Gimnasio de prueba (id=2, plan Free): 0 clientes (para testing)
+## Base de datos
+- **Producción (Supabase):** gym de prueba creado via registro.html
+- **Local (SQLite):** Gimnasio principal (~1665 clientes), gym de prueba (0 clientes)
 - 2 planes: Free (50 clientes, 20 productos, 10 rutinas, 1 staff) y Pro (ilimitado, $49/mes)

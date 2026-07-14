@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Planilla Staff - Soft-MrGym</title>
+    <title>Planilla Staff - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
 </head>
@@ -127,6 +127,7 @@
         <p style="font-size:0.85em;color:var(--color-texto-secundario);">Trabajador: <strong id="pago-nombre"></strong> · Pendiente: <strong id="pago-pendiente"></strong></p>
         <div class="form-group"><label>Monto a pagar ahora</label><input type="number" id="pago-monto" step="0.01" min="0"></div>
         <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">Puedes pagar menos del total para hacerlo en partes; el pendiente se actualiza solo.</p>
+        <div class="form-group"><label>Pago desde</label><select id="pago-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select><small style="color:var(--color-texto-secundario);">Cuenta incluye banco, tarjeta, Yape, Plin o QR.</small></div>
         <div class="form-group"><label>Notas (opcional)</label><input type="text" id="pago-notas" placeholder="ej. adelanto quincenal"></div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalPago()">Cancelar</button>
@@ -145,6 +146,7 @@
         <p style="font-size:0.85em;color:var(--color-texto-secundario);" id="ep-detalle"></p>
         <div class="form-group"><label>Monto pagado</label><input type="number" id="ep-monto" step="0.01" min="0"></div>
         <p style="font-size:0.78em;color:var(--color-texto-secundario);margin-top:-8px;">El servidor valida que el nuevo monto no supere el saldo del periodo.</p>
+        <div class="form-group"><label>Pago desde</label><select id="ep-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select></div>
         <div class="form-group"><label>Notas</label><input type="text" id="ep-notas"></div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalEditarPago()">Cancelar</button>
@@ -220,6 +222,7 @@
         document.getElementById("pago-monto").value = ultimoResumen.pendiente > 0 ? ultimoResumen.pendiente : 0;
         document.getElementById("pago-monto").max = ultimoResumen.pendiente;
         document.getElementById("pago-notas").value = "";
+        document.getElementById("pago-metodo").value = "efectivo";
         document.getElementById("modal-pago").classList.add("active");
     }
     function cerrarModalPago() { document.getElementById("modal-pago").classList.remove("active"); }
@@ -238,6 +241,7 @@
                 monto_comision_membresias: ultimoResumen.comision_membresias,
                 monto_comision_productos: ultimoResumen.comision_productos,
                 monto_total: monto,
+                metodo_pago: document.getElementById("pago-metodo").value,
                 notas: document.getElementById("pago-notas").value.trim() || null,
             })});
             cerrarModalPago();
@@ -298,6 +302,7 @@
         const nombre = pagoEditando.empleado ? pagoEditando.empleado.nombre_completo : "#" + pagoEditando.empleado_id;
         document.getElementById("ep-detalle").innerHTML = `Pago de <strong>${nombre}</strong> · ${NOMBRES_MES[pagoEditando.mes]} ${pagoEditando.anio} · registrado el ${formatFechaHora(pagoEditando.fecha_pago)}`;
         document.getElementById("ep-monto").value = pagoEditando.monto_total;
+        document.getElementById("ep-metodo").value = ["cuenta", "tarjeta", "qr"].includes(pagoEditando.metodo_pago) ? "cuenta" : "efectivo";
         document.getElementById("ep-notas").value = pagoEditando.notas || "";
         document.getElementById("modal-editar-pago").classList.add("active");
     }
@@ -314,6 +319,7 @@
         try {
             await apiFetch(`/pagos-planilla/${pagoEditando.id}`, { method: "PUT", body: JSON.stringify({
                 monto_total: monto,
+                metodo_pago: document.getElementById("ep-metodo").value,
                 notas: document.getElementById("ep-notas").value.trim() || null,
             })});
             showSuccess("Pago corregido");

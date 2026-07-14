@@ -1,4 +1,4 @@
-# 🚀 Guía de Despliegue - Soft-MrGym
+# 🚀 Guía de Despliegue - Soft-Gym
 > Costo total: **$0/mes** (Supabase BD gratis permanente + Render web gratis)
 
 ## Paso 1: Crear la base de datos en Supabase (gratis, permanente)
@@ -28,7 +28,7 @@ Esa es tu `DATABASE_URL`. Guárdala.
 cd D:\Soft-MrGym
 git init
 git add .
-git commit -m "Soft-MrGym ready for deployment"
+git commit -m "Soft-Gym ready for deployment"
 ```
 
 Crear repositorio en github.com (puede ser privado), luego:

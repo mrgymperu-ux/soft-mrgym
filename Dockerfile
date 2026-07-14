@@ -1,4 +1,4 @@
-# Dockerfile para Soft-MrGym (backend + frontends en un solo contenedor)
+# Dockerfile para Soft-Gym (backend + frontends en un solo contenedor)
 # Usa Python slim + nginx para servir todo desde un solo servicio gratis.
 
 FROM python:3.12-slim

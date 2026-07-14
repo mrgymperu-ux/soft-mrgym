@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Resumen - Soft-MrGym</title>
+    <title>Resumen - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -64,9 +64,12 @@
         .evol-barra { width:14px; border-radius:4px 4px 0 0; min-height:2px; }
         .evol-label { font-size:0.68em; color:var(--color-texto-secundario); margin-top:6px; }
 
-        .tabla-detalle-wrap { max-height:280px; overflow-y:auto; }
-        .fila-signo-ingreso { color:#33C6A9; font-weight:600; }
-        .fila-signo-egreso { color:color-mix(in srgb, var(--color-error) 80%, white 20%); font-weight:600; }
+        .tabla-detalle-wrap { max-height:420px; overflow:auto; }
+        .fila-signo-ingreso { color:var(--color-ingreso); font-weight:400; }
+        .fila-signo-egreso { color:var(--color-egreso); font-weight:400; }
+        .mov-fecha { white-space:nowrap; line-height:1.2; }
+        .mov-hora { display:block; margin-top:3px; color:var(--color-texto-secundario); font-size:var(--fuente-xs); font-weight:400; }
+        .mov-monto { text-align:right; font-weight:400; white-space:nowrap; }
     </style>
 </head>
 <body>
@@ -168,8 +171,8 @@
             <div class="chart-body" style="padding-top:4px;">
                 <div class="tabla-detalle-wrap">
                     <table class="table">
-                        <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Método</th><th style="text-align:right;">Monto</th></tr></thead>
-                        <tbody id="tabla-movimientos"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
+                        <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Método</th><th style="text-align:right;" id="th-mov-monto">Monto</th><th></th></tr></thead>
+                        <tbody id="tabla-movimientos"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -182,6 +185,29 @@
 <script>
     let catActiva = "todos";
     let moneda = "S/";
+
+    function fmtNum(v) {
+        if (v === null || v === undefined) return "—";
+        return parseFloat(v).toLocaleString("es-PE", { minimumFractionDigits:1, maximumFractionDigits:1 });
+    }
+
+    function fechaHoraMovimiento(isoStr) {
+        if (!isoStr) return '<span class="mov-fecha">—<span class="mov-hora">—</span></span>';
+        const partes = String(isoStr).split("T");
+        const hora = partes[1] ? partes[1].slice(0, 5) : "00:00";
+        return `<span class="mov-fecha">${formatFecha(partes[0])}<span class="mov-hora">${hora}</span></span>`;
+    }
+
+    const _MOVIMIENTO_ENDPOINTS = {
+        membresias: id => `/pagos-membresia/${id}`,
+        productos: id => `/ventas/${id}`,
+        compra_producto: id => `/compras/${id}`,
+        pago_staff: id => `/pagos-planilla/${id}`,
+        pago_profesor: id => `/pagos-planilla/${id}`,
+        pago_servicio: id => `/pagos-servicio/${id}`,
+        otros: id => `/gastos/${id}`,
+        otros_ingresos: id => `/otros-ingresos/${id}`,
+    };
 
     function isoFecha(d) { return d.toISOString().split("T")[0]; }
 
@@ -290,7 +316,7 @@
         let filas = [];
 
         const incluirCat = (cat) => catActiva === "todos" || catActiva === cat ||
-            (catActiva === "otros" && ["otros","pago_staff","pago_profesor","comision"].includes(cat));
+            (catActiva === "otros" && ["otros","otros_ingresos","pago_staff","pago_profesor","comision"].includes(cat));
 
         ing.detalle.forEach(d => { if (incluirCat(d.categoria) || (catActiva==="todos")) filas.push({ ...d, tipo:"ingreso" }); });
         egr.detalle.forEach(d => {
@@ -302,7 +328,7 @@
             filas = filas.filter(f => {
                 if (catActiva === "membresias") return f.categoria === "membresias";
                 if (catActiva === "productos") return f.categoria === "productos" || f.categoria === "compra_producto";
-                if (catActiva === "otros") return ["otros","pago_staff","pago_profesor","comision"].includes(f.categoria);
+                if (catActiva === "otros") return ["otros","otros_ingresos","pago_staff","pago_profesor","comision"].includes(f.categoria);
                 return true;
             });
         }
@@ -310,21 +336,45 @@
         filas.sort((a,b) => new Date(b.fecha) - new Date(a.fecha));
 
         if (!filas.length) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin movimientos en el rango/categoría seleccionada</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="7">Sin movimientos en el rango/categoría seleccionada</td></tr>';
             return;
         }
 
-        const ETIQ = { membresias:"Membresías", productos:"Venta producto", compra_producto:"Compra producto", pago_staff:"Pago Staff", pago_profesor:"Pago Profesor", pago_servicio:"Pago Servicio", comision:"Comisión pasarela", otros:"Otros" };
-        const ETIQ_METODO = { efectivo:"💵 Efectivo", tarjeta:"💳 Tarjeta", qr:"📱 QR" };
+        const ETIQ = { membresias:"Membresías", productos:"Venta producto", compra_producto:"Compra producto", otros_ingresos:"Otro ingreso", pago_staff:"Pago Staff", pago_profesor:"Pago Profesor", pago_servicio:"Pago Servicio", comision:"Comisión pasarela", otros:"Otro gasto" };
+        const esAdmin = esAdministrador();
 
         tbody.innerHTML = filas.slice(0, 300).map(f => `<tr>
-            <td style="white-space:nowrap;font-size:1.03em;">${formatFechaHora(f.fecha)}</td>
-            <td class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo === 'ingreso' ? '⬆️ Ingreso' : '⬇️ Egreso'}</td>
+            <td>${fechaHoraMovimiento(f.fecha)}</td>
+            <td class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo === 'ingreso' ? 'Ingreso' : 'Egreso'}</td>
             <td>${ETIQ[f.categoria] || f.categoria}</td>
-            <td style="font-size:0.85em;">${f.descripcion}</td>
-            <td style="font-size:0.82em;">${f.metodo_pago ? (ETIQ_METODO[f.metodo_pago] || f.metodo_pago) : "—"}</td>
-            <td style="text-align:right;font-weight:600;" class="${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo==='ingreso' ? '+' : '−'} ${formatCurrency(f.monto, moneda)}</td>
+            <td class="table-description"><span>${f.descripcion || "—"}</span></td>
+            <td>${etiquetaMetodoMovimiento(f)}</td>
+            <td class="mov-monto ${f.tipo === 'ingreso' ? 'fila-signo-ingreso' : 'fila-signo-egreso'}">${f.tipo==='ingreso' ? '+' : '−'} ${fmtNum(f.monto)}</td>
+            <td style="white-space:nowrap;">${botonAccionMovimiento(f, esAdmin)}</td>
         </tr>`).join("");
+    }
+
+    function etiquetaMetodoMovimiento(f) {
+        if (!f.metodo_pago) return "—";
+        if (f.tipo === "egreso" && ["cuenta", "tarjeta", "qr"].includes(f.metodo_pago)) return "Cuenta";
+        return ({ efectivo:"Efectivo", cuenta:"Cuenta", tarjeta:"Tarjeta", qr:"QR" })[f.metodo_pago] || f.metodo_pago;
+    }
+
+    function botonAccionMovimiento(f, esAdmin) {
+        if (!esAdmin) return "";
+        if (f.categoria === "comision") return '<span style="color:var(--color-texto-secundario);">—</span>';
+        return `<button class="btn btn-sm btn-danger" onclick="eliminarMovimiento('${f.categoria}', ${f.id})" title="Solo administrador">🗑️</button>`;
+    }
+
+    async function eliminarMovimiento(categoria, id) {
+        const ruta = _MOVIMIENTO_ENDPOINTS[categoria];
+        if (!ruta) { showError("Este movimiento no se puede eliminar directamente"); return; }
+        if (!(await confirmDialog("¿Eliminar este movimiento? Esta acción no se puede deshacer."))) return;
+        try {
+            await apiFetch(ruta(id), { method:"DELETE" });
+            showSuccess("Movimiento eliminado");
+            cargar();
+        } catch (e) { showError(e.message); }
     }
 
     function calcularEfectivoCuenta(ing, config) {
@@ -375,6 +425,7 @@
 
     async function cargar() {
         const cfg = await getConfiguracion(); moneda = cfg.moneda;
+        document.getElementById("th-mov-monto").textContent = `Monto (${moneda})`;
         const chkHoy = document.getElementById("chk-hoy").checked;
         const desde = document.getElementById("f-desde").value;
         const hasta = document.getElementById("f-hasta").value;

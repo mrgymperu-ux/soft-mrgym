@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nutricion - Soft-MrGym</title>
+    <title>Nutricion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -11,18 +11,22 @@
         .subtab { padding:8px 16px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.88em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); }
         .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
 
-        .plan-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:hidden;margin-bottom:16px; }
-        .plan-card-header { background:linear-gradient(135deg, var(--color-primario), var(--color-primario-oscuro));color:#fff;padding:20px; }
-        .plan-card-header h3 { margin:0;font-size:1.1em; }
-        .plan-card-header p { margin:6px 0 0;opacity:0.85;font-size:0.85em; }
-        .kcal-badge { background:rgba(255,255,255,0.2);border-radius:20px;padding:4px 12px;font-size:0.85em;display:inline-block;margin-top:8px; }
+        .plan-card { background:var(--color-blanco);border:1px solid var(--color-borde);border-radius:var(--radio);box-shadow:var(--sombra);overflow:hidden;margin-bottom:16px; }
+        .plan-card-header { background:linear-gradient(125deg,var(--color-sidebar-hover),var(--color-primario) 72%,var(--color-primario-oscuro));color:#fff;padding:16px 18px; }
+        .plan-card-header h3 { margin:0;font-size:var(--fuente-md);font-weight:600; }
+        .plan-card-header p { margin:5px 0 0;opacity:.88;font-size:var(--fuente-sm);line-height:1.35; }
+        .kcal-badge { background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.22);border-radius:20px;padding:4px 10px;font-size:var(--fuente-xs);display:inline-block;margin-top:8px; }
         .comidas-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0;border-top:1px solid var(--color-borde); }
-        .comida-col { padding:16px;border-right:1px solid var(--color-borde); }
+        .comida-col { --meal-accent:var(--color-primario); padding:16px;border-right:1px solid var(--color-borde);background:color-mix(in srgb,var(--meal-accent) 8%,var(--color-blanco)); }
         .comida-col:last-child { border-right:none; }
-        .comida-titulo { font-size:0.75em;text-transform:uppercase;color:var(--color-texto-secundario);font-weight:600;margin-bottom:10px; }
-        .alimento-item { font-size:0.85em;padding:4px 0;border-bottom:1px solid var(--color-borde);display:flex;justify-content:space-between; }
+        .comida-desayuno { --meal-accent:#C76B18; }
+        .comida-comida { --meal-accent:#187A5B; }
+        .comida-aperitivo { --meal-accent:#A47C0A; }
+        .comida-cena { --meal-accent:#405DB0; }
+        .comida-titulo { margin:-16px -16px 10px;padding:9px 12px;font-size:var(--fuente-sm);color:#fff;font-weight:600;background:color-mix(in srgb,var(--meal-accent) 80%,#111 20%);box-shadow:inset 0 -1px rgba(0,0,0,.12); }
+        .alimento-item { font-size:var(--fuente-sm);padding:5px 0;border-bottom:1px solid var(--color-borde);display:flex;justify-content:space-between;gap:10px; }
         .alimento-item:last-child { border-bottom:none; }
-        .alimento-kcal { color:var(--color-texto-secundario);font-size:0.8em; }
+        .alimento-kcal { color:var(--color-texto-secundario);font-size:var(--fuente-xs);white-space:nowrap; }
 
         /* Tabla de Alimentos: colores por categoria, mezclados con el fondo del tema
            (no bloques solidos e intensos) para que se vean bien en claro y oscuro,
@@ -47,13 +51,28 @@
         .paq-item { font-size:0.8em;display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--color-borde); }
         .paq-item:last-child { border-bottom:none; }
         .paq-total { margin-top:8px;padding-top:8px;border-top:2px solid var(--color-borde);font-size:0.85em;font-weight:700;display:flex;justify-content:space-between; }
+        .porcion-cliente { color:var(--color-primario-oscuro); font-weight:600; }
+        .item-nutricion-editor { display:grid;grid-template-columns:minmax(150px,1fr) minmax(125px,.75fr) 72px auto;gap:6px;margin-bottom:8px;align-items:center; }
+        .item-nutricion-editor input, .item-nutricion-editor select { min-width:0; }
+
+        @media (max-width: 640px) {
+            .item-nutricion-editor { grid-template-columns:1fr 1fr auto; }
+            .item-nutricion-editor .selector-alimento { grid-column:1 / -1; }
+            .comidas-grid { grid-template-columns:1fr; }
+            .comida-col { border-right:none;border-bottom:1px solid var(--color-borde); }
+            .plan-card-header p { display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2; }
+        }
 
         .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
         .filtros-bar select, .filtros-bar input { padding:7px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.85em; background:var(--color-fondo); color:var(--color-texto); }
 
         /* Tabla de alimentos: header y filtros pegajosos */
         #vista-alimentos .table-container { max-height:calc(100vh - 260px); overflow-y:auto; }
-        #vista-alimentos .table thead th { position:sticky; top:0; background:var(--color-blanco); z-index:2; box-shadow:0 1px 0 var(--color-borde); }
+        #vista-alimentos .table thead th { position:sticky; top:0; background:var(--color-primario); color:#fff; font-weight:400; z-index:3; box-shadow:0 1px 0 var(--color-primario-oscuro); }
+        html[data-modo="oscuro"] .plan-card { box-shadow:0 5px 18px rgba(0,0,0,.28); }
+        html[data-modo="oscuro"] .plan-card-header { background:linear-gradient(125deg, var(--color-sidebar), var(--color-primario-oscuro) 58%, var(--color-primario)); border-bottom:1px solid color-mix(in srgb, var(--color-primario) 55%, transparent); }
+        html[data-modo="oscuro"] .comida-col { background:color-mix(in srgb, var(--color-primario) 4%, var(--color-blanco)); }
+        html[data-modo="oscuro"] .porcion-cliente { color:color-mix(in srgb, var(--color-primario) 62%, var(--color-texto)); }
     </style>
 </head>
 <body>
@@ -302,6 +321,42 @@
         return `${gramos} g`;
     }
 
+    function _fraccionCuartos(valor) {
+        const cuartos = Math.max(1, Math.round(valor * 4));
+        const entero = Math.floor(cuartos / 4);
+        const resto = cuartos % 4;
+        const fraccion = ["", "1/4", "1/2", "3/4"][resto];
+        return entero && fraccion ? `${entero} ${fraccion}` : (entero ? `${entero}` : fraccion);
+    }
+
+    function sugerirPorcionCliente(opt, gramos) {
+        if (!opt) return "1 porcion mediana";
+        const nombre = (opt.dataset.nombre || opt.textContent || "").toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        gramos = Math.max(parseFloat(gramos) || 100, 1);
+        if (nombre.includes("huevo")) {
+            const n = Math.max(1, Math.round(gramos / 50));
+            return `${n} ${n === 1 ? "huevo" : "huevos"}`;
+        }
+        if (nombre.includes("atun")) {
+            const n = Math.max(1, Math.round(gramos / 150));
+            return `${n} ${n === 1 ? "lata" : "latas"}`;
+        }
+        if (nombre.includes("palta") || nombre.includes("aguacate")) {
+            const n = Math.max(.5, Math.round((gramos / 200) * 2) / 2);
+            return `${_fraccionCuartos(n)} ${n <= 1 ? "palta" : "paltas"}`;
+        }
+        const granos = ["arroz","choclo","arveja","lenteja","frejol","frijol","garbanzo","pallar","quinua","mote","trigo","cebada","kiwicha"];
+        if (granos.some(g => nombre.includes(g))) {
+            const gramosTaza = (nombre.includes("choclo") || nombre.includes("arveja")) ? 165 : 195;
+            const n = gramos / gramosTaza;
+            return `${_fraccionCuartos(n)} ${n <= 1 ? "taza" : "tazas"}`;
+        }
+        const casera = opt.dataset.casera || "";
+        if (casera) return casera;
+        return "1 porcion mediana";
+    }
+
     // ================================================================
     // Sub-tabs
     // ================================================================
@@ -365,11 +420,11 @@
                 const items = (plan.comidas || []).filter(c => c.tipo === tipo);
                 if (!items.length) return "";
                 return `
-                    <div class="comida-col">
+                    <div class="comida-col comida-${tipo}">
                         <div class="comida-titulo">${tiposLabel[tipo]}</div>
                         ${items.map(a => `
                             <div class="alimento-item">
-                                <span>${a.nombre_alimento}</span>
+                                <span>${a.nombre_alimento}<br><span class="porcion-cliente">${a.porcion_cliente || "1 porcion mediana"}</span></span>
                                 <span class="alimento-kcal">${a.calorias ? a.calorias + " kcal" : ""}</span>
                             </div>
                         `).join("")}
@@ -394,21 +449,21 @@
     function agregarAlimento(tipo) {
         const contenedor = document.getElementById(`items-${tipo}`);
         const div = document.createElement("div");
-        div.style.cssText = "display:flex;gap:4px;margin-bottom:4px;align-items:center;";
+        div.className = "item-nutricion-editor";
         div.innerHTML = `
-            <select class="plan-item-alimento" style="flex:1;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarKcalItemPlan(this)">
-                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" data-categoria="${a.categoria}">${a.nombre}</option>`).join("")}
+            <select class="plan-item-alimento selector-alimento" style="padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarKcalItemPlan(this, true)">
+                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" data-categoria="${a.categoria}" data-nombre="${a.nombre}" data-casera="${a.porcion_casera || ""}">${a.nombre}</option>`).join("")}
             </select>
-            <input type="number" class="plan-item-gramos" value="100" min="1" style="width:64px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarKcalItemPlan(this)">
-            <span style="font-size:0.72em;color:var(--color-texto-secundario);">g</span>
-            <span class="plan-item-kcal-texto" style="font-size:0.72em;color:var(--color-texto-secundario);min-width:56px;"></span>
+            <input type="text" class="plan-item-porcion" placeholder="Ej. 1/2 taza" aria-label="Porcion para el cliente" style="padding:6px;border:1px solid var(--color-primario);border-radius:6px;font-size:0.82em;">
+            <input type="number" class="plan-item-gramos" value="100" min="1" title="Gramos para calculo interno" aria-label="Gramos para calculo interno" style="padding:6px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarKcalItemPlan(this, true)">
             <button type="button" onclick="this.parentElement.remove()" style="border:none;background:none;cursor:pointer;color:var(--color-error);">✕</button>
         `;
         contenedor.appendChild(div);
-        _actualizarKcalItemPlan(div.querySelector(".plan-item-gramos"));
+        div.insertAdjacentHTML("beforeend", '<span class="plan-item-kcal-texto" style="grid-column:1 / -1;font-size:0.72em;color:var(--color-texto-secundario);"></span>');
+        _actualizarKcalItemPlan(div.querySelector(".plan-item-gramos"), true);
     }
 
-    function _actualizarKcalItemPlan(elDisparador) {
+    function _actualizarKcalItemPlan(elDisparador, renovarPorcion = false) {
         const fila = elDisparador.closest("div");
         const sel = fila.querySelector(".plan-item-alimento");
         const gramosInput = fila.querySelector(".plan-item-gramos");
@@ -418,6 +473,8 @@
         const cal = parseFloat(opt.dataset.cal) || 0;
         const porcion = parseFloat(opt.dataset.porcion) || 100;
         const kcalTotal = Math.round(cal * gramos / porcion);
+        const inputPorcion = fila.querySelector(".plan-item-porcion");
+        if (renovarPorcion || !inputPorcion.value) inputPorcion.value = sugerirPorcionCliente(opt, gramos);
         fila.querySelector(".plan-item-kcal-texto").textContent = `${formatearCantidad(gramos, opt.dataset.categoria)} · ${kcalTotal} kcal`;
     }
 
@@ -449,9 +506,10 @@
                 comidas.push({
                     tipo,
                     alimento_id: parseInt(sel.value),
-                    nombre_alimento: `${opt.textContent} (${formatearCantidad(gramos, opt.dataset.categoria)})`,
+                    nombre_alimento: opt.textContent,
                     calorias: kcalTotal,
                     cantidad_gramos: gramos,
+                    porcion_cliente: item.querySelector(".plan-item-porcion").value.trim() || sugerirPorcionCliente(opt, gramos),
                 });
             });
         });
@@ -641,7 +699,7 @@
                 </div>
                 ${p.items.map(i => `
                     <div class="paq-item">
-                        <span>${i.alimento ? i.alimento.nombre : "?"} — ${i.alimento ? formatearCantidad(i.cantidad_gramos, i.alimento.categoria) : i.cantidad_gramos + 'g'}</span>
+                        <span>${i.alimento ? i.alimento.nombre : "?"} <span class="porcion-cliente">— ${i.porcion_cliente || "1 porcion mediana"}</span></span>
                         <span>${i.alimento ? Math.round(i.alimento.calorias * i.cantidad_gramos / (i.alimento.porcion_gramos||100)) : 0} kcal</span>
                     </div>
                 `).join("")}
@@ -670,7 +728,7 @@
         document.getElementById("pq-items").innerHTML = "";
 
         if (base && base.items.length) {
-            base.items.forEach(item => agregarItemPaquete(item.alimento_id, item.cantidad_gramos));
+            base.items.forEach(item => agregarItemPaquete(item.alimento_id, item.cantidad_gramos, item.porcion_cliente));
         } else {
             agregarItemPaquete();
         }
@@ -679,29 +737,31 @@
 
     function cerrarModalPaquete() { document.getElementById("modal-paquete").classList.remove("active"); paqueteEditandoId = null; }
 
-    function agregarItemPaquete(alimentoIdPreset, gramosPreset) {
+    function agregarItemPaquete(alimentoIdPreset, gramosPreset, porcionPreset) {
         const cont = document.getElementById("pq-items");
         const div = document.createElement("div");
-        div.style.cssText = "display:flex;gap:6px;margin-bottom:6px;align-items:center;";
+        div.className = "item-nutricion-editor";
         div.innerHTML = `
-            <select class="pq-item-alimento" style="flex:1;padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarTotalPaquete()">
-                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" ${alimentoIdPreset === a.id ? "selected" : ""}>${a.nombre}</option>`).join("")}
+            <select class="pq-item-alimento selector-alimento" style="padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;background:var(--color-fondo);color:var(--color-texto);" onchange="_actualizarTotalPaquete(true)">
+                ${alimentosCache.map(a => `<option value="${a.id}" data-cal="${a.calorias}" data-porcion="${a.porcion_gramos}" data-nombre="${a.nombre}" data-casera="${a.porcion_casera || ""}" ${alimentoIdPreset === a.id ? "selected" : ""}>${a.nombre}</option>`).join("")}
             </select>
-            <input type="number" class="pq-item-gramos" value="${gramosPreset || 100}" min="1" style="width:70px;padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarTotalPaquete()">
-            <span style="font-size:0.75em;color:var(--color-texto-secundario);">g</span>
+            <input type="text" class="pq-item-porcion" value="${porcionPreset || ""}" placeholder="Ej. 3 huevos / 1 lata / 1/2 taza" aria-label="Porcion para el cliente" style="padding:7px;border:1px solid var(--color-primario);border-radius:6px;font-size:0.82em;">
+            <input type="number" class="pq-item-gramos" value="${gramosPreset || 100}" min="1" title="Gramos para calculo interno" aria-label="Gramos para calculo interno" style="padding:7px;border:1px solid var(--color-borde);border-radius:6px;font-size:0.82em;" oninput="_actualizarTotalPaquete(true)">
             <button type="button" onclick="this.parentElement.remove();_actualizarTotalPaquete();" style="border:none;background:none;cursor:pointer;color:var(--color-error);">✕</button>
         `;
         cont.appendChild(div);
         _actualizarTotalPaquete();
     }
 
-    function _actualizarTotalPaquete() {
+    function _actualizarTotalPaquete(renovarPorciones = false) {
         let total = 0;
         document.querySelectorAll("#pq-items > div").forEach(row => {
             const sel = row.querySelector(".pq-item-alimento");
             const gramos = parseFloat(row.querySelector(".pq-item-gramos").value) || 0;
             const cal = parseFloat(sel.selectedOptions[0]?.dataset.cal) || 0;
             const porcion = parseFloat(sel.selectedOptions[0]?.dataset.porcion) || 100;
+            const inputPorcion = row.querySelector(".pq-item-porcion");
+            if (renovarPorciones || !inputPorcion.value) inputPorcion.value = sugerirPorcionCliente(sel.selectedOptions[0], gramos);
             total += cal * gramos / porcion;
         });
         document.getElementById("pq-total-cal").textContent = `🔥 Total estimado: ${Math.round(total)} kcal`;
@@ -713,8 +773,10 @@
         const items = [...document.querySelectorAll("#pq-items > div")].map(row => ({
             alimento_id: parseInt(row.querySelector(".pq-item-alimento").value),
             cantidad_gramos: parseFloat(row.querySelector(".pq-item-gramos").value) || 100,
+            porcion_cliente: row.querySelector(".pq-item-porcion").value.trim(),
         }));
         if (!items.length) { showError("Agrega al menos un alimento"); return; }
+        if (items.some(item => !item.porcion_cliente)) { showError("Indica una porcion facil para cada alimento"); return; }
         const datos = {
             nombre,
             tipo_comida: document.getElementById("pq-tipo").value,

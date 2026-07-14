@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Super Admin — Soft-MrGym</title>
+    <title>Super Admin — Soft-Gym</title>
     <link rel="stylesheet" href="styles.css">
     <style>
         body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:#f5f3ff; }
@@ -25,13 +25,16 @@
         .btn-sm { padding:.35rem .75rem; font-size:.8rem; }
 
         table { width:100%; border-collapse:collapse; font-size:.9rem; }
-        th { text-align:left; padding:.6rem .5rem; border-bottom:2px solid #e5e7eb; color:#666; font-size:.8rem; text-transform:uppercase; }
+        th { text-align:left; padding:.6rem .5rem; border-bottom:1px solid #6d28d9; color:#fff; background:#7c3aed; font-weight:400; font-size:.8rem; text-transform:uppercase; position:sticky; top:0; z-index:3; }
         td { padding:.6rem .5rem; border-bottom:1px solid #f3f4f6; }
         tr:hover td { background:#faf5ff; }
         .badge { display:inline-block; padding:.15rem .5rem; border-radius:99px; font-size:.75rem; font-weight:600; }
         .badge-green { background:#dcfce7; color:#166534; }
         .badge-red { background:#fee2e2; color:#991b1b; }
         .badge-blue { background:#dbeafe; color:#1e40af; }
+        .badge-yellow { background:#fef3c7; color:#92400e; }
+        .badge-gray { background:#f3f4f6; color:#4b5563; }
+        .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 
         .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100; justify-content:center; align-items:center; }
         .modal-overlay.active { display:flex; }
@@ -41,6 +44,24 @@
         .modal .form-group label { display:block; font-size:.85rem; font-weight:600; margin-bottom:.25rem; }
         .modal .form-group input, .modal .form-group select { width:100%; padding:.5rem .6rem; border:1px solid #d1d5db; border-radius:8px; font-size:.9rem; box-sizing:border-box; }
         .modal-actions { display:flex; gap:.5rem; justify-content:flex-end; margin-top:1rem; }
+        .subscription-summary { background:#f5f3ff; border-radius:10px; padding:1rem; margin-bottom:1rem; font-size:.88rem; line-height:1.6; }
+        @media (max-width:700px) {
+            .topbar { padding:.75rem 1rem; gap:.65rem; flex-wrap:wrap; position:sticky; top:0; z-index:20; }
+            .topbar h1 { font-size:1rem; width:100%; }
+            .topbar > div { display:flex; gap:.4rem; overflow-x:auto; width:100%; }
+            .topbar button { white-space:nowrap; }
+            .container { margin:1rem auto; padding:0 .75rem; }
+            .stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem; margin-bottom:1rem; }
+            .stat-card { padding:.8rem .45rem; }
+            .stat-card .valor { font-size:1.35rem; }
+            .stat-card .label { font-size:.7rem; }
+            .section { padding:1rem; }
+            .section h2 { font-size:1rem; gap:.5rem; }
+            th, td { white-space:nowrap; }
+            .mobile-hide { display:none; }
+            .modal-overlay { align-items:flex-end; }
+            .modal { border-radius:16px 16px 0 0; padding:1.25rem; max-height:92vh; }
+        }
     </style>
 </head>
 <body>
@@ -57,18 +78,39 @@
 
         <div class="section">
             <h2>Gimnasios <button class="btn btn-primary btn-sm" onclick="abrirModalGimnasio()">+ Nuevo gimnasio</button></h2>
-            <table>
-                <thead><tr><th>ID</th><th>Nombre</th><th>Slug</th><th>Plan</th><th>Clientes</th><th>Usuarios</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Gimnasio</th><th>Plan</th><th>Suscripcion</th><th>Vence</th><th class="mobile-hide">Clientes</th><th class="mobile-hide">Usuarios</th><th class="mobile-hide">Operativo</th><th>Acciones</th></tr></thead>
                 <tbody id="tabla-gimnasios"></tbody>
-            </table>
+            </table></div>
         </div>
 
         <div class="section">
             <h2>Planes SaaS <button class="btn btn-primary btn-sm" onclick="abrirModalPlan()">+ Nuevo plan</button></h2>
-            <table>
+            <div class="table-wrap"><table>
                 <thead><tr><th>ID</th><th>Nombre</th><th>Precio/mes</th><th>Máx clientes</th><th>Máx productos</th><th>Máx staff</th><th>Nutrición</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody id="tabla-planes"></tbody>
-            </table>
+            </table></div>
+        </div>
+    </div>
+
+    <!-- Modal Suscripcion SaaS -->
+    <div class="modal-overlay" id="modal-suscripcion">
+        <div class="modal">
+            <h3 id="suscripcion-titulo">Suscripcion SaaS</h3>
+            <input type="hidden" id="sus-gym-id">
+            <div class="subscription-summary" id="suscripcion-resumen">Cargando...</div>
+            <div class="form-group"><label>Plan</label><select id="sus-plan"></select></div>
+            <div class="form-group"><label>Meses a renovar</label><input type="number" id="sus-meses" min="1" max="24" value="1"></div>
+            <div class="form-group"><label>Monto recibido</label><input type="number" id="sus-monto" min="0" step="0.01"></div>
+            <div class="form-group"><label>Metodo de pago</label><select id="sus-metodo"><option value="transferencia">Transferencia</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="tarjeta">Tarjeta</option><option value="efectivo">Efectivo</option><option value="manual">Otro/manual</option></select></div>
+            <div class="form-group"><label>Referencia (opcional)</label><input id="sus-referencia" placeholder="Operacion, voucher o nota"></div>
+            <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap;">
+                <button class="btn btn-danger" id="btn-suspender" onclick="cambiarEstadoSuscripcion('suspendida')">Suspender</button>
+                <div style="display:flex;gap:.5rem;">
+                    <button class="btn" onclick="cerrarModal('modal-suscripcion')">Cerrar</button>
+                    <button class="btn btn-primary" onclick="renovarSuscripcion()">Registrar pago y renovar</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -129,6 +171,7 @@
         };
 
         let planesCache = [];
+        let gimnasiosCache = [];
 
         async function cargarTodo() {
             const [dashboard, gimnasios, planes] = await Promise.all([
@@ -138,6 +181,7 @@
             ]);
             if (!dashboard) return;
             planesCache = planes || [];
+            gimnasiosCache = gimnasios || [];
             renderStats(dashboard);
             renderGimnasios(gimnasios || []);
             renderPlanes(planes || []);
@@ -149,25 +193,99 @@
                 <div class="stat-card"><div class="valor">${d.gimnasios_activos}</div><div class="label">Gimnasios activos</div></div>
                 <div class="stat-card"><div class="valor">${d.total_clientes_plataforma}</div><div class="label">Clientes en plataforma</div></div>
                 <div class="stat-card"><div class="valor">${d.total_usuarios_plataforma}</div><div class="label">Usuarios staff total</div></div>
+                <div class="stat-card"><div class="valor">${d.suscripciones_por_estado?.vencida || 0}</div><div class="label">Suscripciones vencidas</div></div>
+                <div class="stat-card"><div class="valor">S/ ${Number(d.ingresos_saas_mes || 0).toFixed(0)}</div><div class="label">Cobrado este mes</div></div>
             `;
         }
 
+        const estadoSuscripcion = estado => ({
+            prueba:["Prueba","badge-blue"], activa:["Activa","badge-green"],
+            gracia:["En gracia","badge-yellow"], vencida:["Vencida","badge-red"],
+            suspendida:["Suspendida","badge-red"], cancelada:["Cancelada","badge-gray"],
+            sin_configurar:["Sin configurar","badge-gray"],
+        }[estado] || [estado,"badge-gray"]);
+
+        const fechaCorta = valor => valor ? new Date(valor + "T12:00:00").toLocaleDateString("es-PE") : "—";
+
         function renderGimnasios(lista) {
             document.getElementById("tabla-gimnasios").innerHTML = lista.map(g => `
+                ${(() => { const est = estadoSuscripcion(g.estado_suscripcion); return `
                 <tr>
-                    <td>${g.id}</td>
-                    <td><strong>${g.nombre}</strong></td>
-                    <td><code>${g.slug}</code></td>
+                    <td><strong>${g.nombre}</strong><br><code style="font-size:.75rem;color:#777">${g.slug}</code></td>
                     <td><span class="badge badge-blue">${g.nombre_plan || "Sin plan"}</span></td>
-                    <td>${g.total_clientes}</td>
-                    <td>${g.total_usuarios}</td>
-                    <td><span class="badge ${g.activo ? 'badge-green' : 'badge-red'}">${g.activo ? 'Activo' : 'Inactivo'}</span></td>
+                    <td><span class="badge ${est[1]}">${est[0]}</span></td>
+                    <td>${fechaCorta(g.fecha_fin_periodo)}</td>
+                    <td class="mobile-hide">${g.total_clientes}</td>
+                    <td class="mobile-hide">${g.total_usuarios}</td>
+                    <td class="mobile-hide"><span class="badge ${g.activo ? 'badge-green' : 'badge-red'}">${g.activo ? 'Activo' : 'Inactivo'}</span></td>
                     <td>
+                        <button class="btn btn-primary btn-sm" onclick="abrirSuscripcion(${g.id})" title="Suscripcion">💳</button>
                         <button class="btn btn-sm" onclick="editarGimnasio(${g.id})">✏️</button>
                         ${g.id !== 1 ? `<button class="btn btn-danger btn-sm" onclick="eliminarGimnasio(${g.id},'${g.nombre.replace(/'/g,"\\'")}')">🗑️</button>` : ''}
                     </td>
                 </tr>
+                `; })()}
             `).join("");
+        }
+
+        async function abrirSuscripcion(gimnasioId) {
+            const gimnasio = gimnasiosCache.find(g => g.id === gimnasioId);
+            const suscripcion = await api(`/saas/gimnasios/${gimnasioId}/suscripcion`);
+            if (!suscripcion) return;
+            document.getElementById("sus-gym-id").value = gimnasioId;
+            document.getElementById("suscripcion-titulo").textContent = `Suscripcion — ${gimnasio?.nombre || "Gimnasio"}`;
+            document.getElementById("sus-plan").innerHTML = planesCache.filter(p => p.activo).map(p =>
+                `<option value="${p.id}" ${p.id === suscripcion.plan_id ? "selected" : ""}>${p.nombre} — S/ ${p.precio_mensual.toFixed(2)}</option>`
+            ).join("");
+            const plan = planesCache.find(p => p.id === suscripcion.plan_id) || planesCache[0];
+            document.getElementById("sus-monto").value = plan ? plan.precio_mensual : 0;
+            const est = estadoSuscripcion(suscripcion.estado);
+            const ultimoPago = suscripcion.pagos?.[0];
+            document.getElementById("suscripcion-resumen").innerHTML = `
+                <strong>Estado:</strong> <span class="badge ${est[1]}">${est[0]}</span><br>
+                <strong>Periodo:</strong> ${fechaCorta(suscripcion.fecha_inicio)} — ${fechaCorta(suscripcion.fecha_fin_periodo)}<br>
+                <strong>Gracia hasta:</strong> ${fechaCorta(suscripcion.fecha_fin_gracia)}<br>
+                <strong>Ultimo pago:</strong> ${ultimoPago ? `${ultimoPago.moneda} ${ultimoPago.monto.toFixed(2)} · ${fechaCorta(ultimoPago.fecha_pago.slice(0,10))}` : "Sin pagos registrados"}
+            `;
+            const btn = document.getElementById("btn-suspender");
+            const suspendida = ["suspendida", "cancelada"].includes(suscripcion.estado);
+            btn.textContent = suspendida ? "Reactivar" : "Suspender";
+            btn.className = suspendida ? "btn btn-primary" : "btn btn-danger";
+            btn.onclick = () => cambiarEstadoSuscripcion(suspendida ? "activa" : "suspendida");
+            document.getElementById("modal-suscripcion").classList.add("active");
+        }
+
+        document.getElementById("sus-plan").addEventListener("change", e => {
+            const plan = planesCache.find(p => p.id === Number(e.target.value));
+            if (plan) document.getElementById("sus-monto").value = plan.precio_mensual;
+        });
+
+        async function renovarSuscripcion() {
+            const gimnasioId = Number(document.getElementById("sus-gym-id").value);
+            const resultado = await api(`/saas/gimnasios/${gimnasioId}/suscripcion/renovar`, {
+                method: "POST",
+                body: JSON.stringify({
+                    plan_id: Number(document.getElementById("sus-plan").value),
+                    meses: Number(document.getElementById("sus-meses").value),
+                    monto: Number(document.getElementById("sus-monto").value),
+                    metodo_pago: document.getElementById("sus-metodo").value,
+                    referencia: document.getElementById("sus-referencia").value || null,
+                }),
+            });
+            if (!resultado) return;
+            cerrarModal("modal-suscripcion");
+            await cargarTodo();
+        }
+
+        async function cambiarEstadoSuscripcion(estado) {
+            const gimnasioId = Number(document.getElementById("sus-gym-id").value);
+            if (estado === "suspendida" && !confirm("¿Suspender el acceso de este gimnasio a Soft-Gym?")) return;
+            const resultado = await api(`/saas/gimnasios/${gimnasioId}/suscripcion`, {
+                method: "PUT", body: JSON.stringify({ estado }),
+            });
+            if (!resultado) return;
+            cerrarModal("modal-suscripcion");
+            await cargarTodo();
         }
 
         function renderPlanes(lista) {

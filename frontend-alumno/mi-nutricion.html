@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Nutricion - Soft-MrGym</title>
+    <title>Mi Nutricion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -35,15 +35,15 @@
                 const comidasHtml = tipos.map(tipo => {
                     const items = (plan.comidas||[]).filter(c => c.tipo === tipo);
                     if (!items.length) return "";
-                    return `<div style="margin-bottom:14px;">
-                        <p style="font-size:0.75em;font-weight:600;color:#636E72;text-transform:uppercase;margin-bottom:6px;">${tiposLabel[tipo]}</p>
-                        ${items.map(a => `<div class="alimento-row"><span>${a.nombre_alimento}</span><span class="kcal">${a.calorias ? a.calorias+" kcal" : ""}</span></div>`).join("")}
+                    return `<div class="nutri-comida ${tipo}">
+                        <div class="nutri-comida-titulo">${tiposLabel[tipo]}</div>
+                        <div class="nutri-comida-body">${items.map(a => `<div class="alimento-row"><span>${a.nombre_alimento}<br><strong style="color:var(--primario-oscuro);font-weight:600;">${a.porcion_cliente || "1 porcion mediana"}</strong></span><span class="kcal">${a.calorias ? a.calorias+" kcal" : ""}</span></div>`).join("")}</div>
                     </div>`;
                 }).filter(Boolean).join("");
                 return `<div class="card">
-                    <div class="card-header" style="background:linear-gradient(135deg,#00B894,#00D2A0);color:#fff;">
+                    <div class="nutri-plan-header">
                         🥗 ${plan.titulo}
-                        ${plan.calorias_objetivo ? `<span style="float:right;font-size:0.85em;opacity:0.9;">🔥 ${plan.calorias_objetivo} kcal</span>` : ""}
+                        ${plan.calorias_objetivo ? `<span class="nutri-kcal-total">🔥 ${plan.calorias_objetivo} kcal</span>` : ""}
                     </div>
                     <div class="card-body">${comidasHtml || "<p style='color:#636E72;'>Sin alimentos registrados</p>"}</div>
                 </div>`;

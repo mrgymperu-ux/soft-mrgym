@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('Soft-MrGym cargado exitosamente');
+    console.log('Soft-Gym cargado exitosamente');
 
     // Definimos la URL absoluta de tu servidor FastAPI
     const API_URL = 'http://localhost:8000/socios/';

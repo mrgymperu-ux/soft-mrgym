@@ -31,7 +31,7 @@ const ETIQUETAS = {
 const ZONAS_DISPONIBLES = [
     ["clientes","Clientes"], ["membresias","Membresías"], ["productos","Productos"],
     ["ventas","Ventas"], ["venta_rapida","Venta Rápida"], ["asistencias","Asistencias"],
-    ["progreso","Progreso"], ["agenda","Agenda"], ["entrenamientos","Entrenamientos"],
+    ["agenda","Agenda"], ["entrenamientos","Rutinas"],
     ["nutricion","Nutrición"], ["retos","Retos"], ["planilla","Planilla"], ["pagos","Pagos"],
     ["configuracion","Configuración"],
 ];

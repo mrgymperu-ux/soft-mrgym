@@ -13,7 +13,7 @@ Convencion usada en todo el archivo:
 from datetime import datetime, date
 from typing import Optional, List
 
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
 from .models import (
     RolUsuario,
@@ -23,6 +23,17 @@ from .models import (
     CategoriaAlimento,
     PropositoNutricion,
 )
+
+
+# ==================================================================
+# PAGO RAPIDO DE SALDO
+# ==================================================================
+
+class PagoSaldoRequest(BaseModel):
+    """Request para pagar (parcial o totalmente) el saldo pendiente de una membresia asignada."""
+    monto: float = Field(gt=0)
+    metodo_pago: MetodoPago = MetodoPago.EFECTIVO
+    fecha_proximo_pago: Optional[date] = None  # si queda saldo, fecha del proximo pago
 
 
 # ==================================================================
@@ -159,6 +170,62 @@ class GimnasioDetalle(Gimnasio):
     total_clientes: int = 0
     total_usuarios: int = 0
     nombre_plan: Optional[str] = None
+    estado_suscripcion: str = "sin_configurar"
+    fecha_fin_periodo: Optional[date] = None
+    fecha_fin_gracia: Optional[date] = None
+    dias_restantes: Optional[int] = None
+
+
+class PagoSaasOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    gimnasio_id: int
+    suscripcion_id: int
+    plan_id: Optional[int] = None
+    monto: float
+    moneda: str
+    metodo_pago: str
+    referencia: Optional[str] = None
+    fecha_pago: datetime
+    periodo_inicio: date
+    periodo_fin: date
+    notas: Optional[str] = None
+
+
+class SuscripcionSaasOut(BaseModel):
+    id: Optional[int] = None
+    gimnasio_id: int
+    plan_id: Optional[int] = None
+    nombre_plan: Optional[str] = None
+    estado: str
+    fecha_inicio: Optional[date] = None
+    fecha_fin_periodo: Optional[date] = None
+    fecha_fin_gracia: Optional[date] = None
+    dias_gracia: int = 0
+    dias_restantes: Optional[int] = None
+    auto_renovacion: bool = False
+    notas: Optional[str] = None
+    pagos: List[PagoSaasOut] = Field(default_factory=list)
+
+
+class RenovacionSaasRequest(BaseModel):
+    plan_id: Optional[int] = None
+    meses: int = Field(default=1, ge=1, le=24)
+    monto: float = Field(ge=0)
+    moneda: str = Field(default="S/", min_length=1, max_length=10)
+    metodo_pago: str = Field(default="manual", min_length=1, max_length=40)
+    referencia: Optional[str] = Field(default=None, max_length=120)
+    fecha_pago: Optional[datetime] = None
+    notas: Optional[str] = Field(default=None, max_length=500)
+
+
+class SuscripcionSaasUpdate(BaseModel):
+    plan_id: Optional[int] = None
+    estado: Optional[str] = Field(default=None, pattern="^(prueba|activa|gracia|vencida|suspendida|cancelada)$")
+    fecha_fin_periodo: Optional[date] = None
+    dias_gracia: Optional[int] = Field(default=None, ge=0, le=60)
+    auto_renovacion: Optional[bool] = None
+    notas: Optional[str] = Field(default=None, max_length=500)
 
 
 class RegistroGimnasioRequest(BaseModel):
@@ -280,8 +347,8 @@ class ImportarClientesResultado(BaseModel):
 class MembresiaBase(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
-    precio: float
-    duracion_dias: int
+    precio: float = Field(ge=0)
+    duracion_dias: int = Field(gt=0)
 
     duracion_meses: Optional[int] = None
     duracion_dias_extra: Optional[int] = None
@@ -363,6 +430,18 @@ class ClienteMembresiaUpdate(BaseModel):
     activo: Optional[bool] = None
 
 
+class PagoMembresiaOut(BaseModel):
+    """Registro individual de un pago contra una membresia asignada."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_membresia_id: int
+    monto: float
+    metodo_pago: str = "efectivo"
+    fecha_pago: datetime
+    registrado_por_id: Optional[int] = None
+    notas: Optional[str] = None
+
+
 class ClienteMembresia(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -376,6 +455,7 @@ class ClienteMembresia(BaseModel):
     vendido_por_id: Optional[int] = None
     activo: bool
     membresia: Optional[Membresia] = None
+    pagos: List[PagoMembresiaOut] = []
 
 
 class MembresiaPorVencer(BaseModel):
@@ -397,9 +477,9 @@ class ProductoBase(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
     categoria: Optional[str] = None
-    precio_venta: float
-    stock: int = 0
-    stock_minimo: int = 5
+    precio_venta: float = Field(ge=0)
+    stock: int = Field(default=0, ge=0)
+    stock_minimo: int = Field(default=5, ge=0)
     icono: Optional[str] = None
     foto_url: Optional[str] = None
 
@@ -440,8 +520,8 @@ class ProductoVendido(BaseModel):
 
 class DetalleVentaCreate(BaseModel):
     producto_id: int
-    cantidad: int
-    precio_unitario: float
+    cantidad: int = Field(gt=0)
+    precio_unitario: float = Field(ge=0)  # compatibilidad; el backend usa el precio del producto
 
 
 class DetalleVenta(BaseModel):
@@ -478,9 +558,10 @@ class Venta(BaseModel):
 
 class CompraCreate(BaseModel):
     producto_id: int
-    cantidad: int
-    costo_unitario: float
+    cantidad: int = Field(gt=0)
+    costo_unitario: float = Field(ge=0)
     notas: Optional[str] = None
+    metodo_pago: str = Field(default="efectivo", pattern="^(efectivo|cuenta)$")
 
 
 class Compra(BaseModel):
@@ -493,6 +574,7 @@ class Compra(BaseModel):
     fecha: datetime
     usuario_id: Optional[int] = None
     notas: Optional[str] = None
+    metodo_pago: Optional[str] = None
     producto: Optional[Producto] = None
 
 
@@ -593,6 +675,85 @@ class Rutina(BaseModel):
     dias: List[RutinaDia] = []
 
 
+class PaqueteRutinaEjercicioCreate(RutinaEjercicioBase):
+    pass
+
+
+class PaqueteRutinaEjercicio(RutinaEjercicioBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class PaqueteRutinaDiaCreate(RutinaDiaBase):
+    ejercicios: List[PaqueteRutinaEjercicioCreate] = []
+
+
+class PaqueteRutinaDia(RutinaDiaBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ejercicios: List[PaqueteRutinaEjercicio] = []
+
+
+class PaqueteRutinaCreate(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    nivel: str = "basico"
+    objetivo: str = "inicio"
+    etapa: str = "inicio"
+    genero_recomendado: str = "todos"
+    edad_min: Optional[int] = Field(default=None, ge=0, le=120)
+    edad_max: Optional[int] = Field(default=None, ge=0, le=120)
+    duracion_semanas: int = Field(default=4, ge=1, le=52)
+    dias: List[PaqueteRutinaDiaCreate] = []
+
+
+class PaqueteRutina(PaqueteRutinaCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_creacion: datetime
+    dias: List[PaqueteRutinaDia] = []
+
+
+class AsignarPaqueteRutina(BaseModel):
+    cliente_id: int
+    nombre: Optional[str] = None
+
+
+class PerfilRecomendacionRutina(BaseModel):
+    genero: str
+    edad: Optional[int] = None
+    peso_kg: Optional[float] = None
+    estatura_cm: Optional[float] = None
+    imc: Optional[float] = None
+    peso_objetivo_kg: Optional[float] = None
+    objetivo_sugerido: str
+    nivel_sugerido: str
+    razones: List[str] = Field(default_factory=list)
+
+
+class PaqueteRutinaSugerido(BaseModel):
+    paquete: PaqueteRutina
+    puntuacion: int
+    motivos: List[str] = Field(default_factory=list)
+
+
+class RecomendacionRutina(BaseModel):
+    perfil: PerfilRecomendacionRutina
+    opciones: List[PaqueteRutinaSugerido] = Field(default_factory=list)
+
+
+class GuardarRecomendacionRutinaRequest(BaseModel):
+    cliente_id: int
+    paquete_origen_id: int
+    paquete: PaqueteRutinaCreate
+
+
+class GuardarRecomendacionRutinaResponse(BaseModel):
+    paquete: PaqueteRutina
+    rutina: Rutina
+
+
 # ---- Catalogo de Ejercicios (imagen/video demostrativo) ----
 
 class TipoEjercicioCreate(BaseModel):
@@ -649,6 +810,7 @@ class ComidaPlanBase(BaseModel):
     calorias: Optional[int] = None
     alimento_id: Optional[int] = None
     cantidad_gramos: Optional[float] = None
+    porcion_cliente: Optional[str] = None
 
 
 class ComidaPlanCreate(ComidaPlanBase):
@@ -702,6 +864,7 @@ class Alimento(AlimentoBase):
 class PaqueteAlimentoCreate(BaseModel):
     alimento_id: int
     cantidad_gramos: float = 100.0
+    porcion_cliente: Optional[str] = None
 
 
 class PaqueteAlimentoItem(BaseModel):
@@ -709,6 +872,7 @@ class PaqueteAlimentoItem(BaseModel):
     id: int
     alimento_id: int
     cantidad_gramos: float
+    porcion_cliente: Optional[str] = None
     alimento: Optional[Alimento] = None
 
 
@@ -894,7 +1058,7 @@ class ClaseDictadaCreate(BaseModel):
     notas: Optional[str] = None
     # Repeticion (opcional): si dias_semana no esta vacio y semanas > 1,
     # se crean varias clases (una serie) en vez de una sola.
-    # dias_semana usa convencion Python weekday: Lunes=0 ... Sabado=5.
+    # dias_semana usa convencion Python weekday: Lunes=0 ... Domingo=6.
     dias_semana: List[int] = []
     semanas: int = 1
 
@@ -938,6 +1102,22 @@ class ClaseDictada(BaseModel):
     notas: Optional[str] = None
     profesor: Optional[Empleado] = None
     profesor_reemplazo: Optional[Empleado] = None
+
+
+class ReservaSalaCreate(BaseModel):
+    concepto_ingreso_id: int
+    nombre_reserva: str
+    responsable: Optional[str] = None
+    sala: Optional[str] = None
+    fecha: date
+    hora_inicio: datetime
+    hora_fin: Optional[datetime] = None
+    notas: Optional[str] = None
+
+
+class ReservaSala(ReservaSalaCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
 
 
 class ClaseOcupada(BaseModel):
@@ -1000,22 +1180,67 @@ class PagoPlanillaCreate(BaseModel):
     monto_comision_productos: float = 0.0
     cantidad_clases: Optional[int] = None
     monto_clases: float = 0.0
-    monto_total: float
+    monto_total: float = Field(gt=0)
     notas: Optional[str] = None
     # Solo para tipo="profesor": rango exacto usado en el calculo,
     # para poder comparar el pendiente contra pagos previos del
     # MISMO rango (ver ResumenPlanilla/PagoPlanilla.desde/hasta).
     desde: Optional[date] = None
     hasta: Optional[date] = None
+    metodo_pago: str = Field(default="efectivo", pattern="^(efectivo|cuenta)$")
+
+
+class ConceptoOtroIngresoCreate(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+    monto_sugerido: float = Field(default=0.0, ge=0)
+    mostrar_agenda: bool = False
+    sala_sugerida: Optional[str] = None
+
+
+class ConceptoOtroIngresoUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    monto_sugerido: Optional[float] = Field(default=None, ge=0)
+    mostrar_agenda: Optional[bool] = None
+    sala_sugerida: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+class ConceptoOtroIngreso(ConceptoOtroIngresoCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    activo: bool
+    fecha_creacion: datetime
+
+
+class OtroIngresoCreate(BaseModel):
+    concepto_id: int
+    fecha: Optional[datetime] = None
+    monto: float = Field(gt=0)
+    metodo_pago: str = Field(default="efectivo", pattern="^(efectivo|tarjeta|qr)$")
+    descripcion: Optional[str] = None
+
+
+class OtroIngreso(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    concepto_id: int
+    fecha: datetime
+    monto: float
+    metodo_pago: str
+    descripcion: Optional[str] = None
+    concepto: Optional[ConceptoOtroIngreso] = None
 
 
 class GastoCreate(BaseModel):
     fecha: Optional[datetime] = None
     categoria: str  # ver CategoriaGasto en models.py (validado por SQLAlchemy al guardar)
-    monto: float
+    monto: float = Field(gt=0)
     descripcion: Optional[str] = None
     referencia_id: Optional[int] = None
     notas: Optional[str] = None
+    metodo_pago: str = Field(default="efectivo", pattern="^(efectivo|cuenta)$")
 
 
 class GastoOut(BaseModel):
@@ -1027,6 +1252,7 @@ class GastoOut(BaseModel):
     descripcion: Optional[str] = None
     referencia_id: Optional[int] = None
     notas: Optional[str] = None
+    metodo_pago: Optional[str] = None
 
 
 class ResumenIngresos(BaseModel):
@@ -1050,6 +1276,7 @@ class PagoPlanillaUpdate(BaseModel):
     """Correccion administrativa de un pago ya registrado (solo admin). El monto se revalida contra el saldo pendiente en el servidor."""
     monto_total: Optional[float] = None
     notas: Optional[str] = None
+    metodo_pago: Optional[str] = Field(default=None, pattern="^(efectivo|cuenta)$")
 
 
 class PagoPlanilla(BaseModel):
@@ -1071,6 +1298,7 @@ class PagoPlanilla(BaseModel):
     desde: Optional[date] = None
     hasta: Optional[date] = None
     empleado: Optional[Empleado] = None
+    metodo_pago: Optional[str] = None
 
 
 # ==================================================================
@@ -1098,16 +1326,16 @@ class Servicio(BaseModel):
 
 class PagoServicioCreate(BaseModel):
     cargo_id: int
-    monto: float
+    monto: float = Field(gt=0)
     notas: Optional[str] = None
-    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+    metodo_pago: str = Field(default="efectivo", pattern="^(efectivo|cuenta)$")
 
 
 class PagoServicioUpdate(BaseModel):
     """Correccion administrativa de un pago ya registrado (solo admin). Se revalida contra el saldo pendiente del cargo."""
     monto: Optional[float] = None
     notas: Optional[str] = None
-    metodo_pago: Optional[MetodoPago] = None
+    metodo_pago: Optional[str] = Field(default=None, pattern="^(efectivo|cuenta)$")
 
 
 class PagoServicio(BaseModel):
@@ -1118,7 +1346,7 @@ class PagoServicio(BaseModel):
     fecha_pago: datetime
     notas: Optional[str] = None
     usuario_registro_id: Optional[int] = None
-    metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+    metodo_pago: Optional[str] = "efectivo"
 
 
 class CargoServicioCreate(BaseModel):
@@ -1236,6 +1464,8 @@ class ClienteListadoRow(BaseModel):
     saldo: Optional[float] = None
     porcentaje_asistencia: Optional[float] = None
     tiene_membresia_catalogo: bool = False
+    fecha_pago_saldo: Optional[date] = None
+    ultimo_cm_id: Optional[int] = None
 
 
 # ==================================================================

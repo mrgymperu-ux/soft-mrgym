@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Productos - Soft-MrGym</title>
+    <title>Productos - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
 </head>
@@ -73,6 +73,14 @@
         </div>
         <div class="form-group"><label>Costo unitario</label><input type="number" id="f-compra-costo" min="0" step="0.01" oninput="onCostoUnitarioInput()"></div>
         <div class="form-group"><label>Costo total</label><input type="number" id="f-compra-costo-total" min="0" step="0.01" oninput="onCostoTotalInput()"></div>
+        <div class="form-group">
+            <label>Pago desde</label>
+            <select id="f-compra-metodo">
+                <option value="efectivo">Efectivo</option>
+                <option value="cuenta">Cuenta</option>
+            </select>
+            <small style="color:var(--color-texto-secundario);">Cuenta incluye banco, tarjeta, Yape, Plin o QR.</small>
+        </div>
         <div class="form-group"><label>Notas</label><input type="text" id="f-compra-notas" placeholder="Opcional (proveedor, factura, etc.)"></div>
         <p style="font-size:0.8em;color:var(--color-texto-secundario);">Esto suma al stock actual (no lo reemplaza) y queda registrado como egreso en Resumen/Egresos.</p>
         <div class="form-actions">
@@ -212,6 +220,7 @@
         document.getElementById("f-compra-costo-total").value = "";
         document.getElementById("f-compra-notas").value = "";
         document.getElementById("f-compra-modo").value = "unitario";
+        document.getElementById("f-compra-metodo").value = "efectivo";
         sincronizarCostos();
         document.getElementById("modal-stock").classList.add("active");
     }
@@ -256,6 +265,7 @@
                 producto_id: productoAjustando,
                 cantidad,
                 costo_unitario: costoUnitario,
+                metodo_pago: document.getElementById("f-compra-metodo").value,
                 notas: document.getElementById("f-compra-notas").value.trim() || null,
             })});
             showSuccess("Compra registrada: stock actualizado y quedo en Egresos");

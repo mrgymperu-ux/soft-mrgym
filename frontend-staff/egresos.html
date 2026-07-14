@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Egresos - Soft-MrGym</title>
+    <title>Egresos - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -80,8 +80,8 @@
         <div class="card">
             <div class="table-container">
                 <table class="table">
-                    <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
-                    <tbody id="tabla-egresos"><tr class="empty-row"><td colspan="5">Cargando...</td></tr></tbody>
+                    <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Pago desde</th><th style="text-align:right;">Monto</th><th></th></tr></thead>
+                    <tbody id="tabla-egresos"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div id="pie-tabla" style="padding:12px 18px;font-size:0.78em;color:#636E72;border-top:1px solid var(--color-borde);"></div>
@@ -103,6 +103,11 @@
         </p>
         <div class="form-group"><label>Descripción *</label><input type="text" id="g-desc" placeholder="ej. Pago de luz julio"></div>
         <div class="form-group"><label>Monto *</label><input type="number" id="g-monto" min="0.01" step="0.01" placeholder="0.00"></div>
+        <div class="form-group">
+            <label>Pago desde</label>
+            <select id="g-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select>
+            <small style="color:var(--color-texto-secundario);">Cuenta incluye banco, tarjeta, Yape, Plin o QR.</small>
+        </div>
         <div class="form-group"><label>Fecha</label><input type="date" id="g-fecha"></div>
         <div class="form-group"><label>Notas</label><input type="text" id="g-notas" placeholder="Opcional"></div>
         <div class="form-actions">
@@ -183,7 +188,7 @@
 
         const tbody = document.getElementById("tabla-egresos");
         if (!data.detalle.length) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Sin egresos en el rango seleccionado</td></tr>';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sin egresos en el rango seleccionado</td></tr>';
             document.getElementById("pie-tabla").textContent = "";
             return;
         }
@@ -193,6 +198,7 @@
             <td style="white-space:nowrap;font-size:1.03em;">${formatFechaHora(d.fecha)}</td>
             <td><span class="badge-cat cat-${d.categoria}">${ETIQ[d.categoria] || d.categoria}</span></td>
             <td style="font-size:0.85em;">${d.descripcion}</td>
+            <td>${etiquetaOrigenEgreso(d.metodo_pago)}</td>
             <td style="text-align:right;font-weight:600;color:var(--color-error);">${formatCurrency(d.monto, moneda)}</td>
             <td>${d.categoria === "otros" && esAdmin
                 ? `<button class="btn btn-sm btn-danger" onclick="eliminarGasto(${d.id})">🗑️</button>`
@@ -202,11 +208,18 @@
         document.getElementById("pie-tabla").textContent = `${data.detalle.length} registro${data.detalle.length !== 1 ? "s" : ""}`;
     }
 
+    function etiquetaOrigenEgreso(metodo) {
+        if (metodo === "efectivo") return "Efectivo";
+        if (["cuenta", "tarjeta", "qr"].includes(metodo)) return "Cuenta";
+        return "—";
+    }
+
     // --- Modal gasto libre ---
     function abrirModalGasto() {
         document.getElementById("g-desc").value = "";
         document.getElementById("g-monto").value = "";
         document.getElementById("g-notas").value = "";
+        document.getElementById("g-metodo").value = "efectivo";
         document.getElementById("g-fecha").value = isoFecha(new Date());
         document.getElementById("modal-gasto").classList.add("active");
     }
@@ -227,6 +240,7 @@
         try {
             await apiFetch("/gastos/", { method: "POST", body: JSON.stringify({
                 categoria: "otros", descripcion: desc, monto,
+                metodo_pago: document.getElementById("g-metodo").value,
                 fecha: fecha ? fecha + "T00:00:00" : null,
                 notas: notas || null,
             })});

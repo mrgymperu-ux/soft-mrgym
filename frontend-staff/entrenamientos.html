@@ -3,42 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ejercicios - Soft-MrGym</title>
+    <title>Paquetes de rutinas - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
-        .subtabs { display:flex; gap:6px; margin-bottom:18px; }
-        .subtab { padding:8px 16px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.88em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); }
-        .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+        .filtros-rutina { display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px; }
+        .filtros-rutina input { min-width:220px;flex:1; }
+        .filtros-rutina select { min-width:150px; }
+        .paquetes-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:15px; }
+        .paquete-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);padding:17px;display:flex;flex-direction:column;gap:12px; }
+        .paquete-top { display:flex;justify-content:space-between;gap:10px;align-items:flex-start; }
+        .paquete-top h3 { margin:0;font-size:1.03em; }
+        .etiquetas { display:flex;gap:6px;flex-wrap:wrap; }
+        .etiqueta { padding:4px 8px;border-radius:14px;background:color-mix(in srgb,var(--color-primario) 12%,transparent);color:var(--color-primario);font-size:.73em; }
+        .paquete-desc { margin:0;color:var(--color-texto-secundario);font-size:.84em;min-height:34px; }
+        .paquete-resumen { display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center; }
+        .paquete-resumen div { background:var(--color-fondo);border-radius:8px;padding:8px 4px;font-size:.75em; }
+        .paquete-resumen strong { display:block;font-size:1.15em;color:var(--color-texto); }
+        .dias-preview { border-top:1px solid var(--color-borde);padding-top:9px;font-size:.8em;color:var(--color-texto-secundario); }
+        .paquete-actions { display:flex;gap:7px;flex-wrap:wrap;margin-top:auto; }
 
-        .editor-layout { display:grid;grid-template-columns:280px 1fr;gap:20px; }
-        .panel-rutinas { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);padding:16px; }
-        .rutina-item { padding:10px 12px;border-radius:8px;cursor:pointer;margin-bottom:4px;font-size:0.9em; }
-        .rutina-item:hover { background:var(--color-fondo); }
-        .rutina-item.activa { background:var(--color-primario);color:#fff; }
-        .dia-tabs { display:flex;gap:6px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--color-borde); }
-        .dia-tab { background:var(--color-fondo);border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:0.85em; }
-        .dia-tab.activo { background:var(--color-primario);color:#fff; }
-        .ejercicio-row { display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--color-borde);font-size:0.9em; }
-        .ejercicio-nombre { flex:1;font-weight:600; }
-        .ejercicio-meta { color:var(--color-texto-secundario);font-size:0.85em; }
-
-        /* Catalogo de ejercicios */
-        .cat-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px; }
-        .cat-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:hidden; }
-        .cat-card-media { height:140px;background:var(--color-fondo);display:flex;align-items:center;justify-content:center;font-size:2.2em;position:relative;overflow:hidden; }
-        .cat-card-media img { width:100%;height:100%;object-fit:cover; }
-        .cat-card-video-badge { position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.65);color:#fff;font-size:0.68em;padding:2px 8px;border-radius:10px; }
-        .cat-card-body { padding:12px 14px; }
-        .cat-card-nombre { font-weight:600;font-size:0.92em;margin-bottom:2px; }
-        .cat-card-grupo { font-size:0.72em;color:var(--color-texto-secundario);margin-bottom:8px; }
-        .cat-card-desc { font-size:0.78em;color:var(--color-texto-secundario);margin-bottom:10px;max-height:54px;overflow:hidden; }
-        .cat-card-acciones { display:flex;gap:6px;align-items:center; }
-        .toggle-activo { width:36px;height:20px;border-radius:10px;border:none;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0; }
-        .toggle-activo.on { background:#5FA88C; }
-        .toggle-activo.off { background:#ccc; }
-        .toggle-activo::after { content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.2); }
-        .toggle-activo.on::after { transform:translateX(16px); }
+        .perfil-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:10px; }
+        .edad-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px; }
+        .dias-editor { display:flex;flex-direction:column;gap:12px;margin-top:10px; }
+        .dia-editor { border:1px solid var(--color-borde);border-radius:10px;padding:12px;background:var(--color-fondo); }
+        .dia-cabecera { display:flex;gap:8px;align-items:center;margin-bottom:9px; }
+        .dia-cabecera input { flex:1; }
+        .ejercicios-editor { display:flex;flex-direction:column;gap:8px; }
+        .ejercicio-editor { display:grid;grid-template-columns:1.4fr 1.2fr 70px 110px 1fr auto;gap:7px;align-items:end;background:var(--color-blanco);border-radius:8px;padding:9px; }
+        .campo-mini label { display:block;font-size:.7em;color:var(--color-texto-secundario);margin-bottom:3px; }
+        .campo-mini input,.campo-mini select { width:100%; }
+        .seccion-titulo { display:flex;justify-content:space-between;align-items:center;margin-top:16px; }
+        .seccion-titulo h4 { margin:0; }
+        .vacio { background:var(--color-blanco);border-radius:var(--radio);padding:36px;text-align:center;color:var(--color-texto-secundario); }
+        .subtabs { display:flex;gap:8px;margin-bottom:16px;overflow-x:auto; }
+        .subtab { border:1px solid var(--color-borde);background:var(--color-blanco);color:var(--color-texto);padding:9px 14px;border-radius:9px;cursor:pointer;white-space:nowrap; }
+        .subtab.activo { background:var(--color-primario);color:#fff;border-color:var(--color-primario); }
+        .catalogo-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px; }
+        .ejercicio-card { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);padding:14px;display:flex;gap:12px; }
+        .ejercicio-img { width:74px;height:74px;border-radius:10px;object-fit:cover;background:var(--color-fondo);display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+        .ejercicio-info { min-width:0;flex:1; }.ejercicio-info h3{font-size:.92em;margin:0 0 5px;}.ejercicio-info p{font-size:.76em;color:var(--color-texto-secundario);margin:0 0 8px;}
+        #modal-paquete .modal-content { max-width:980px; }
+        @media (max-width:768px) {
+            .paquetes-grid { grid-template-columns:1fr; }
+            .perfil-grid,.edad-grid { grid-template-columns:1fr 1fr; }
+            .ejercicio-editor { grid-template-columns:1fr 1fr; }
+            .ejercicio-editor .campo-mini:first-child,.ejercicio-editor .campo-mini:nth-child(2) { grid-column:span 2; }
+            .paquete-actions .btn { flex:1; }
+            #modal-paquete .modal-content { width:calc(100% - 18px);max-height:94vh;overflow:auto; }
+        }
     </style>
 </head>
 <body>
@@ -47,459 +60,326 @@
     <main class="main-content">
         <div class="header">
             <div>
-                <h1 class="header-title">💪 Ejercicios</h1>
-                <p class="header-subtitle">Catálogo de ejercicios y rutinas de alumnos</p>
+                <h1 class="header-title">Paquetes de rutinas</h1>
+                <p class="header-subtitle">Crea planes reutilizables por perfil, objetivo y etapa; luego asígnalos a tus clientes.</p>
             </div>
-            <button class="btn btn-primary" id="btn-accion-principal" onclick="abrirModalNuevaRutina()">+ Nueva Rutina</button>
+            <button class="btn btn-primary" id="accion-rutinas" onclick="abrirPaquete()">+ Nuevo paquete</button>
         </div>
 
-        <div class="subtabs">
-            <span class="subtab activo" data-vista="rutinas" onclick="onSubtab(this)">📋 Rutinas de alumnos</span>
-            <span class="subtab" data-vista="catalogo" onclick="onSubtab(this)">🗂️ Catálogo de ejercicios</span>
-        </div>
-
-        <!-- ============ VISTA: RUTINAS ============ -->
-        <div id="vista-rutinas">
-            <div class="editor-layout">
-                <div class="panel-rutinas">
-                    <div class="form-group" style="margin-bottom:12px;">
-                        <select id="sel-cliente" onchange="cargarRutinasCliente()">
-                            <option value="">-- Seleccionar alumno --</option>
-                        </select>
-                    </div>
-                    <div id="lista-rutinas">
-                        <p style="color:var(--color-texto-secundario);font-size:0.85em;text-align:center;padding:20px;">Selecciona un alumno</p>
-                    </div>
-                </div>
-
-                <div class="card" id="panel-detalle" style="display:none;">
-                    <div class="card-header">
-                        <h3 class="card-title" id="rutina-titulo">Rutina</h3>
-                    </div>
-                    <div class="dia-tabs" id="dia-tabs"></div>
-                    <div id="ejercicios-lista"></div>
-                    <div style="padding:14px 20px;border-top:1px solid var(--color-borde);">
-                        <button class="btn btn-secondary btn-sm" onclick="abrirModalAgregarEjercicio()">+ Agregar ejercicio a este día</button>
-                    </div>
-                </div>
-
-                <div id="panel-vacio" style="display:flex;align-items:center;justify-content:center;">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">💪</div>
-                        <div class="empty-state-title">Selecciona una rutina</div>
-                        <div class="empty-state-text">Elige un alumno y una rutina para ver el detalle</div>
-                    </div>
-                </div>
+        <div class="subtabs"><button class="subtab activo" onclick="cambiarVistaRutinas('paquetes',this)">Paquetes de rutinas</button><button class="subtab" onclick="cambiarVistaRutinas('catalogo',this)">Catálogo de ejercicios</button></div>
+        <div id="vista-paquetes">
+            <div class="filtros-rutina">
+                <input id="buscar" type="search" placeholder="Buscar paquete..." oninput="renderPaquetes()">
+                <select id="fil-nivel" onchange="renderPaquetes()"><option value="">Todos los niveles</option><option value="basico">Básico</option><option value="intermedio">Intermedio</option><option value="avanzado">Avanzado</option><option value="competencia">Competencia</option></select>
+                <select id="fil-objetivo" onchange="renderPaquetes()"><option value="">Todos los objetivos</option><option value="inicio">Inicio</option><option value="bajar_peso">Bajar de peso</option><option value="ganar_masa">Ganar masa</option><option value="tonificacion">Tonificación</option><option value="definicion">Definición</option><option value="rendimiento">Rendimiento</option></select>
+                <select id="fil-genero" onchange="renderPaquetes()"><option value="">Todos los perfiles</option><option value="todos">Mixto</option><option value="femenino">Femenino</option><option value="masculino">Masculino</option></select>
             </div>
+            <div id="paquetes" class="paquetes-grid"><div class="vacio">Cargando paquetes...</div></div>
         </div>
-
-        <!-- ============ VISTA: CATALOGO DE EJERCICIOS ============ -->
         <div id="vista-catalogo" style="display:none;">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-                <label style="font-size:0.82em;display:flex;align-items:center;gap:5px;color:var(--color-texto-secundario);cursor:pointer;">
-                    <input type="checkbox" id="cat-mostrar-inactivos" onchange="cargarCatalogo()" style="width:auto;"> Mostrar desactivados
-                </label>
-                <span id="cat-contador" style="font-size:0.78em;color:var(--color-texto-secundario);"></span>
-            </div>
-            <div class="cat-grid" id="cat-grid">
-                <p style="color:var(--color-texto-secundario);">Cargando...</p>
-            </div>
+            <div class="filtros-rutina"><input id="buscar-ejercicio" type="search" placeholder="Buscar ejercicio o grupo muscular..." oninput="renderCatalogo()"></div>
+            <div id="catalogo-grid" class="catalogo-grid"></div>
         </div>
     </main>
 </div>
 
-<!-- Modal nueva rutina -->
-<div id="modal-rutina" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title">Nueva Rutina</h3>
-            <button class="modal-close" onclick="cerrarModal()">✕</button>
+<div id="modal-ejercicio" class="modal">
+    <div class="modal-content" style="max-width:620px;">
+        <div class="modal-header"><h3 class="modal-title" id="ej-titulo">Nuevo ejercicio</h3><button class="modal-close" onclick="cerrarModal('modal-ejercicio')">✕</button></div>
+        <div class="form-group"><label>Nombre *</label><input id="ce-nombre"></div>
+        <div class="perfil-grid">
+            <div class="form-group"><label>Grupo muscular</label><input id="ce-grupo" placeholder="Piernas, pecho..."></div>
+            <div class="form-group"><label>Categoría</label><select id="ce-categoria"><option value="">Sin categoría</option><option value="calentamiento">Calentamiento</option><option value="fuerza">Fuerza</option><option value="cardio">Cardio</option><option value="funcional">Funcional</option><option value="estiramiento">Estiramiento</option></select></div>
+            <div class="form-group"><label>Nivel</label><select id="ce-nivel"><option value="">Todos</option><option value="principiante">Principiante</option><option value="intermedio">Intermedio</option><option value="avanzado">Avanzado</option></select></div>
         </div>
-        <div class="form-group"><label>Cliente *</label><select id="r-cliente"><option value="">Seleccionar...</option></select></div>
-        <div class="form-group"><label>Nombre de la rutina *</label><input type="text" id="r-nombre" placeholder="Rutina Fuerza 3 dias"></div>
-        <div class="form-group">
-            <label>Dias (separados por coma)</label>
-            <input type="text" id="r-dias" placeholder="Dia 1, Dia 2, Dia 3">
-            <small style="color:var(--color-texto-secundario);">Podras agregar ejercicios desde el detalle despues de crear la rutina.</small>
-        </div>
-        <div class="form-actions">
-            <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarRutina()">Crear Rutina</button>
-        </div>
+        <div class="form-group"><label>Descripción / técnica</label><textarea id="ce-descripcion" rows="3"></textarea></div>
+        <div class="form-group"><label>Video URL</label><input id="ce-video" type="url" placeholder="https://..."></div>
+        <div class="form-group"><label>Imagen demostrativa</label><input id="ce-imagen" type="file" accept="image/*"></div>
+        <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModal('modal-ejercicio')">Cancelar</button><button class="btn btn-primary" onclick="guardarEjercicioCatalogo()">Guardar ejercicio</button></div>
     </div>
 </div>
 
-<!-- Modal agregar ejercicio a un dia (desde catalogo o texto libre) -->
-<div id="modal-agregar-ejercicio" class="modal">
+<div id="modal-paquete" class="modal">
     <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title">Agregar ejercicio</h3>
-            <button class="modal-close" onclick="cerrarModalAgregarEjercicio()">✕</button>
+        <div class="modal-header"><h3 class="modal-title" id="paquete-titulo">Nuevo paquete</h3><button class="modal-close" onclick="cerrarModal('modal-paquete')">✕</button></div>
+        <div class="form-group"><label>Nombre del paquete *</label><input id="p-nombre" placeholder="Ej. Básico · Bajar de peso"></div>
+        <div class="perfil-grid">
+            <div class="form-group"><label>Nivel</label><select id="p-nivel"><option value="basico">Básico</option><option value="intermedio">Intermedio</option><option value="avanzado">Avanzado</option><option value="competencia">Competencia</option></select></div>
+            <div class="form-group"><label>Objetivo</label><select id="p-objetivo"><option value="inicio">Inicio</option><option value="bajar_peso">Bajar de peso</option><option value="ganar_masa">Ganar masa</option><option value="tonificacion">Tonificación</option><option value="definicion">Definición</option><option value="rendimiento">Rendimiento</option></select></div>
+            <div class="form-group"><label>Etapa</label><select id="p-etapa"><option value="inicio">Inicio</option><option value="adaptacion">Adaptación</option><option value="desarrollo">Desarrollo</option><option value="definicion">Definición</option><option value="competencia">Competencia</option></select></div>
         </div>
-        <div class="form-group">
-            <label>Del catálogo (opcional)</label>
-            <select id="ae-catalogo" onchange="onSeleccionCatalogoEjercicio()">
-                <option value="">-- Ejercicio libre (sin catálogo) --</option>
-            </select>
+        <div class="edad-grid">
+            <div class="form-group"><label>Perfil</label><select id="p-genero"><option value="todos">Todos</option><option value="masculino">Masculino</option><option value="femenino">Femenino</option></select></div>
+            <div class="form-group"><label>Edad mínima</label><input id="p-edad-min" type="number" min="0" max="120" placeholder="Opcional"></div>
+            <div class="form-group"><label>Edad máxima</label><input id="p-edad-max" type="number" min="0" max="120" placeholder="Opcional"></div>
+            <div class="form-group"><label>Duración (semanas)</label><input id="p-duracion" type="number" min="1" max="52" value="4"></div>
         </div>
-        <div id="ae-preview" style="display:none;margin-bottom:14px;">
-            <img id="ae-preview-img" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;">
-            <a id="ae-preview-video" href="#" target="_blank" style="display:none;font-size:0.82em;">🎥 Ver video demostrativo</a>
-        </div>
-        <div class="form-group"><label>Nombre *</label><input type="text" id="ae-nombre" placeholder="Sentadilla con barra"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
-            <div class="form-group"><label>Series</label><input type="number" id="ae-series" min="1"></div>
-            <div class="form-group"><label>Repeticiones</label><input type="text" id="ae-reps" placeholder="12, 10, 8"></div>
-            <div class="form-group"><label>Peso</label><input type="text" id="ae-peso" placeholder="20kg"></div>
-        </div>
-        <div class="form-group"><label>Notas</label><input type="text" id="ae-notas" placeholder="Opcional"></div>
-        <div class="form-actions">
-            <button class="btn btn-secondary" onclick="cerrarModalAgregarEjercicio()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarEjercicioEnDia()">Agregar</button>
-        </div>
+        <div class="form-group"><label>Descripción / indicaciones del perfil</label><textarea id="p-descripcion" rows="2" placeholder="Para quién es, frecuencia sugerida y consideraciones..."></textarea></div>
+
+        <div class="seccion-titulo"><h4>Días y ejercicios</h4><button class="btn btn-secondary btn-sm" onclick="agregarDia()">+ Agregar día</button></div>
+        <div id="dias-editor" class="dias-editor"></div>
+        <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModal('modal-paquete')">Cancelar</button><button class="btn btn-primary" onclick="guardarPaquete()">Guardar paquete</button></div>
     </div>
 </div>
 
-<!-- Modal crear/editar ejercicio del catalogo -->
-<div id="modal-cat-ejercicio" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 class="modal-title" id="cat-modal-titulo">Nuevo Ejercicio</h3>
-            <button class="modal-close" onclick="cerrarModalCatEjercicio()">✕</button>
-        </div>
-        <div class="form-group"><label>Nombre *</label><input type="text" id="ce-nombre" placeholder="Sentadilla con barra"></div>
-        <div class="form-group">
-            <label>Grupo muscular</label>
-            <select id="ce-grupo">
-                <option value="">Sin especificar</option>
-                <option value="Pecho">Pecho</option>
-                <option value="Espalda">Espalda</option>
-                <option value="Piernas">Piernas</option>
-                <option value="Hombros">Hombros</option>
-                <option value="Brazos">Brazos</option>
-                <option value="Abdomen">Abdomen</option>
-                <option value="Cardio">Cardio</option>
-                <option value="Full Body">Full Body</option>
-            </select>
-        </div>
-        <div class="form-group"><label>Descripción / técnica</label><textarea id="ce-descripcion" rows="3" placeholder="Cómo se hace..."></textarea></div>
-        <div class="form-group"><label>Link de video (YouTube, etc.)</label><input type="text" id="ce-video" placeholder="https://youtube.com/..."></div>
-        <div class="form-group">
-            <label>Imagen demostrativa</label>
-            <div style="display:flex;align-items:center;gap:12px;">
-                <div id="ce-foto-preview" style="width:60px;height:60px;border-radius:8px;background:var(--color-fondo);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">🏋️</div>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('ce-foto').click()">Seleccionar imagen</button>
-                <input type="file" id="ce-foto" accept="image/jpeg,image/png,image/webp" onchange="previsualizarFotoEjercicio(this)" style="display:none;">
-            </div>
-        </div>
-        <div class="form-actions">
-            <button class="btn btn-secondary" onclick="cerrarModalCatEjercicio()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarCatEjercicio()">Guardar</button>
-        </div>
+<div id="modal-asignar" class="modal">
+    <div class="modal-content" style="max-width:430px;">
+        <div class="modal-header"><h3 class="modal-title">Asignar paquete</h3><button class="modal-close" onclick="cerrarModal('modal-asignar')">✕</button></div>
+        <p id="asignar-paquete-nombre" style="color:var(--color-texto-secundario);"></p>
+        <div class="form-group"><label>Cliente *</label><select id="a-cliente"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group"><label>Nombre de la rutina asignada</label><input id="a-nombre"></div>
+        <p style="font-size:.8em;color:var(--color-texto-secundario);">Se creará una copia para el cliente. Los cambios posteriores al paquete no modificarán rutinas ya asignadas.</p>
+        <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModal('modal-asignar')">Cancelar</button><button class="btn btn-primary" onclick="confirmarAsignacion()">Asignar</button></div>
     </div>
 </div>
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
 <script>
-    let rutinas = [];
-    let rutinaActiva = null;
-    let diaActivo = 0;
-    let diaActivoId = null;
-    let vistaActual = "rutinas";
-    let catalogoEjercicios = [];
-    let ejercicioEditando = null;
-    let archivoFotoEjercicio = null;
+    let paquetes = [], catalogo = [], clientes = [], paqueteEditando = null, paqueteAsignando = null, ejercicioEditando = null, secuenciaDia = 0;
+    let paqueteBaseRecomendado = null, clienteRecomendacionId = null, flujoRecomendacionIniciado = false;
+    const ETIQ = {
+        basico:"Básico", intermedio:"Intermedio", avanzado:"Avanzado", competencia:"Competencia",
+        inicio:"Inicio", bajar_peso:"Bajar de peso", ganar_masa:"Ganar masa", tonificacion:"Tonificación",
+        definicion:"Definición", rendimiento:"Rendimiento", adaptacion:"Adaptación", desarrollo:"Desarrollo",
+        todos:"Todos", masculino:"Masculino", femenino:"Femenino"
+    };
 
-    // ================================================================
-    // Sub-tabs
-    // ================================================================
-    function onSubtab(el) {
-        document.querySelectorAll(".subtab").forEach(s => s.classList.remove("activo"));
-        el.classList.add("activo");
-        vistaActual = el.dataset.vista;
-        document.getElementById("vista-rutinas").style.display = vistaActual === "rutinas" ? "block" : "none";
-        document.getElementById("vista-catalogo").style.display = vistaActual === "catalogo" ? "block" : "none";
-        document.getElementById("btn-accion-principal").textContent = vistaActual === "rutinas" ? "+ Nueva Rutina" : "+ Nuevo Ejercicio";
-        document.getElementById("btn-accion-principal").onclick = vistaActual === "rutinas" ? abrirModalNuevaRutina : abrirModalCatEjercicioNuevo;
-        if (vistaActual === "catalogo") cargarCatalogo();
+    function esc(valor) { return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
+    function etiqueta(v) { return ETIQ[v] || v || "—"; }
+    function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
+
+    function cambiarVistaRutinas(vista, boton) {
+        document.querySelectorAll(".subtab").forEach(b => b.classList.remove("activo"));
+        boton.classList.add("activo");
+        document.getElementById("vista-paquetes").style.display = vista === "paquetes" ? "block" : "none";
+        document.getElementById("vista-catalogo").style.display = vista === "catalogo" ? "block" : "none";
+        const accion = document.getElementById("accion-rutinas");
+        accion.textContent = vista === "paquetes" ? "+ Nuevo paquete" : "+ Nuevo ejercicio";
+        accion.onclick = vista === "paquetes" ? () => abrirPaquete() : () => abrirEjercicioCatalogo();
+        if (vista === "catalogo") renderCatalogo();
     }
 
-    // ================================================================
-    // RUTINAS (igual que antes + boton para agregar ejercicios)
-    // ================================================================
-    async function init() {
-        const clientes = await apiFetch("/clientes/?limit=200");
-        const opts = clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos || ""}</option>`).join("");
-        document.getElementById("sel-cliente").innerHTML += opts;
-        document.getElementById("r-cliente").innerHTML = '<option value="">Seleccionar...</option>' + opts;
-        catalogoEjercicios = await apiFetch("/tipos-ejercicio/");
-    }
-
-    async function cargarRutinasCliente() {
-        const id = document.getElementById("sel-cliente").value;
-        const contenedor = document.getElementById("lista-rutinas");
-        if (!id) { contenedor.innerHTML = '<p style="color:var(--color-texto-secundario);font-size:0.85em;text-align:center;padding:20px;">Selecciona un alumno</p>'; return; }
-
-        rutinas = await apiFetch(`/rutinas/cliente/${id}`);
-        if (!rutinas.length) {
-            contenedor.innerHTML = '<p style="color:var(--color-texto-secundario);font-size:0.85em;text-align:center;padding:20px;">Sin rutinas asignadas</p>';
-            return;
-        }
-        contenedor.innerHTML = rutinas.map(r => `
-            <div class="rutina-item" id="ri-${r.id}" onclick="verRutina(${r.id})">💪 ${r.nombre}</div>
-        `).join("");
-    }
-
-    function verRutina(id) {
-        rutinaActiva = rutinas.find(r => r.id === id);
-        if (!rutinaActiva) return;
-
-        document.querySelectorAll(".rutina-item").forEach(el => el.classList.remove("activa"));
-        document.getElementById(`ri-${id}`).classList.add("activa");
-        document.getElementById("panel-vacio").style.display = "none";
-        document.getElementById("panel-detalle").style.display = "block";
-        document.getElementById("rutina-titulo").textContent = rutinaActiva.nombre;
-
-        const tabs = document.getElementById("dia-tabs");
-        tabs.innerHTML = (rutinaActiva.dias || []).map((dia, i) => `
-            <button class="dia-tab ${i === 0 ? "activo" : ""}" onclick="verDia(${i}, this)">${dia.nombre}</button>
-        `).join("");
-
-        diaActivo = 0;
-        verDia(0, tabs.querySelector(".dia-tab"));
-    }
-
-    function verDia(idx, el) {
-        document.querySelectorAll(".dia-tab").forEach(t => t.classList.remove("activo"));
-        if (el) el.classList.add("activo");
-        diaActivo = idx;
-        const dia = rutinaActiva?.dias?.[idx];
-        diaActivoId = dia?.id || null;
-        const lista = document.getElementById("ejercicios-lista");
-        if (!dia || !dia.ejercicios.length) {
-            lista.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏋️</div><div class="empty-state-title">Sin ejercicios</div></div>';
-            return;
-        }
-        lista.innerHTML = dia.ejercicios.map(e => `
-            <div class="ejercicio-row">
-                <div style="flex:1;">
-                    <div class="ejercicio-nombre">${e.nombre}</div>
-                    <div class="ejercicio-meta">
-                        ${e.series ? `${e.series} series` : ""}
-                        ${e.repeticiones ? ` · ${e.repeticiones} reps` : ""}
-                        ${e.peso ? ` · ${e.peso}` : ""}
-                    </div>
-                    ${e.notas ? `<div class="ejercicio-meta" style="font-style:italic;">${e.notas}</div>` : ""}
-                </div>
-                <button class="btn btn-sm btn-danger" onclick="eliminarEjercicioDia(${e.id})">🗑️</button>
-            </div>
-        `).join("");
-    }
-
-    async function eliminarEjercicioDia(ejercicioId) {
-        if (!(await confirmDialog("¿Quitar este ejercicio del día?"))) return;
+    async function cargar() {
         try {
-            await apiFetch(`/rutina-ejercicios/${ejercicioId}`, { method: "DELETE" });
-            showSuccess("Ejercicio eliminado");
-            await cargarRutinasCliente();
-            const idPrevio = rutinaActiva.id;
-            rutinaActiva = rutinas.find(r => r.id === idPrevio);
-            verRutina(idPrevio);
-            document.querySelectorAll(".dia-tab")[diaActivo]?.click();
+            [paquetes, catalogo, clientes] = await Promise.all([
+                apiFetch("/paquetes-rutina/"),
+                apiFetch("/tipos-ejercicio/?solo_activos=true"),
+                apiFetch("/clientes/"),
+            ]);
+            clientes.sort((a,b) => `${a.nombre} ${a.apellidos||""}`.localeCompare(`${b.nombre} ${b.apellidos||""}`));
+            renderPaquetes();
+            renderCatalogo();
+            iniciarFlujoRecomendadoDesdeUrl();
         } catch (e) { showError(e.message); }
     }
 
-    function abrirModalNuevaRutina() {
-        document.getElementById("r-nombre").value = "";
-        document.getElementById("r-dias").value = "Dia 1, Dia 2, Dia 3";
-        const sel = document.getElementById("sel-cliente").value;
-        if (sel) document.getElementById("r-cliente").value = sel;
-        document.getElementById("modal-rutina").classList.add("active");
+    function renderCatalogo() {
+        const input = document.getElementById("buscar-ejercicio");
+        if (!input) return;
+        const buscar = input.value.trim().toLowerCase();
+        const filas = catalogo.filter(e => !buscar || `${e.nombre} ${e.grupo_muscular||""} ${e.categoria||""}`.toLowerCase().includes(buscar));
+        const cont = document.getElementById("catalogo-grid");
+        if (!filas.length) { cont.innerHTML = '<div class="vacio">No hay ejercicios. Crea el catálogo que usarás al armar los paquetes.</div>'; return; }
+        cont.innerHTML = filas.map(e => `<article class="ejercicio-card">
+            ${e.imagen_url ? `<img class="ejercicio-img" src="${urlFoto(e.imagen_url)}" alt="${esc(e.nombre)}">` : '<div class="ejercicio-img">Ejercicio</div>'}
+            <div class="ejercicio-info"><h3>${esc(e.nombre)}</h3><p>${esc(e.grupo_muscular || "Sin grupo")} · ${esc(etiqueta(e.nivel || "todos"))}</p><div class="paquete-actions"><button class="btn btn-secondary btn-sm" onclick="abrirEjercicioCatalogo(${e.id})">Editar</button><button class="btn btn-danger btn-sm" onclick="desactivarEjercicioCatalogo(${e.id})">Desactivar</button></div></div>
+        </article>`).join("");
     }
 
-    function cerrarModal() { document.getElementById("modal-rutina").classList.remove("active"); }
-
-    async function guardarRutina() {
-        const clienteId = parseInt(document.getElementById("r-cliente").value);
-        const nombre = document.getElementById("r-nombre").value.trim();
-        const diasTexto = document.getElementById("r-dias").value.trim();
-        if (!clienteId || !nombre) { showError("Cliente y nombre son obligatorios"); return; }
-
-        const dias = diasTexto ? diasTexto.split(",").map((d, i) => ({ nombre: d.trim(), orden: i })) : [];
-        try {
-            await apiFetch("/rutinas/", { method: "POST", body: JSON.stringify({ cliente_id: clienteId, nombre, dias }) });
-            showSuccess("Rutina creada");
-            cerrarModal();
-            document.getElementById("sel-cliente").value = clienteId;
-            cargarRutinasCliente();
-        } catch (e) { showError(e.message); }
+    function abrirEjercicioCatalogo(id=null) {
+        ejercicioEditando = id ? catalogo.find(e => e.id === id) : null;
+        const e = ejercicioEditando;
+        document.getElementById("ej-titulo").textContent = e ? "Editar ejercicio" : "Nuevo ejercicio";
+        document.getElementById("ce-nombre").value = e?.nombre || "";
+        document.getElementById("ce-grupo").value = e?.grupo_muscular || "";
+        document.getElementById("ce-categoria").value = e?.categoria || "";
+        document.getElementById("ce-nivel").value = e?.nivel || "";
+        document.getElementById("ce-descripcion").value = e?.descripcion || "";
+        document.getElementById("ce-video").value = e?.video_url || "";
+        document.getElementById("ce-imagen").value = "";
+        document.getElementById("modal-ejercicio").classList.add("active");
     }
 
-    // ================================================================
-    // Agregar ejercicio a un dia (desde catalogo o texto libre)
-    // ================================================================
-    function abrirModalAgregarEjercicio() {
-        if (!diaActivoId) { showError("Selecciona un día primero"); return; }
-        document.getElementById("ae-catalogo").innerHTML = '<option value="">-- Ejercicio libre (sin catálogo) --</option>' +
-            catalogoEjercicios.map(e => `<option value="${e.id}">${e.nombre}${e.grupo_muscular ? " (" + e.grupo_muscular + ")" : ""}</option>`).join("");
-        ["ae-nombre","ae-series","ae-reps","ae-peso","ae-notas"].forEach(id => document.getElementById(id).value = "");
-        document.getElementById("ae-preview").style.display = "none";
-        document.getElementById("modal-agregar-ejercicio").classList.add("active");
-    }
-
-    function cerrarModalAgregarEjercicio() { document.getElementById("modal-agregar-ejercicio").classList.remove("active"); }
-
-    function onSeleccionCatalogoEjercicio() {
-        const id = parseInt(document.getElementById("ae-catalogo").value);
-        const preview = document.getElementById("ae-preview");
-        if (!id) { preview.style.display = "none"; return; }
-        const ej = catalogoEjercicios.find(e => e.id === id);
-        if (!ej) return;
-        document.getElementById("ae-nombre").value = ej.nombre;
-        if (ej.imagen_url) {
-            document.getElementById("ae-preview-img").src = urlFoto(ej.imagen_url);
-            document.getElementById("ae-preview-img").style.display = "block";
-        } else {
-            document.getElementById("ae-preview-img").style.display = "none";
-        }
-        const linkVideo = document.getElementById("ae-preview-video");
-        if (ej.video_url) { linkVideo.href = ej.video_url; linkVideo.style.display = "inline-block"; }
-        else linkVideo.style.display = "none";
-        preview.style.display = "block";
-    }
-
-    async function guardarEjercicioEnDia() {
-        const nombre = document.getElementById("ae-nombre").value.trim();
-        if (!nombre) { showError("El nombre del ejercicio es obligatorio"); return; }
-        const tipoEjercicioId = parseInt(document.getElementById("ae-catalogo").value) || null;
-        const datos = {
-            nombre, tipo_ejercicio_id: tipoEjercicioId,
-            series: parseInt(document.getElementById("ae-series").value) || null,
-            repeticiones: document.getElementById("ae-reps").value.trim() || null,
-            peso: document.getElementById("ae-peso").value.trim() || null,
-            notas: document.getElementById("ae-notas").value.trim() || null,
-        };
-        try {
-            await apiFetch(`/rutina-dias/${diaActivoId}/ejercicios`, { method: "POST", body: JSON.stringify(datos) });
-            showSuccess("Ejercicio agregado");
-            cerrarModalAgregarEjercicio();
-            const idPrevio = rutinaActiva.id;
-            const diaIdx = diaActivo;
-            await cargarRutinasCliente();
-            rutinaActiva = rutinas.find(r => r.id === idPrevio);
-            verRutina(idPrevio);
-            document.querySelectorAll(".dia-tab")[diaIdx]?.click();
-        } catch (e) { showError(e.message); }
-    }
-
-    // ================================================================
-    // CATALOGO DE EJERCICIOS (CRUD con imagen/video)
-    // ================================================================
-    async function cargarCatalogo() {
-        catalogoEjercicios = await apiFetch("/tipos-ejercicio/?solo_activos=false");
-        const cont = document.getElementById("cat-grid");
-        if (!catalogoEjercicios.length) {
-            cont.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🏋️</div><div class="empty-state-title">Sin ejercicios en el catálogo</div><div class="empty-state-text">Crea el primero con el botón "+ Nuevo Ejercicio"</div></div>';
-            return;
-        }
-        cont.innerHTML = catalogoEjercicios.map(e => `
-            <div class="cat-card" style="${e.activo ? "" : "opacity:0.55;"}">
-                <div class="cat-card-media">
-                    ${e.imagen_url ? `<img src="${urlFoto(e.imagen_url)}">` : "🏋️"}
-                    ${e.video_url ? '<span class="cat-card-video-badge">🎥 Video</span>' : ""}
-                </div>
-                <div class="cat-card-body">
-                    <div class="cat-card-nombre">${e.nombre}</div>
-                    <div class="cat-card-grupo">${e.grupo_muscular || "Sin grupo muscular"}</div>
-                    <div class="cat-card-desc">${e.descripcion || "Sin descripción"}</div>
-                    <div class="cat-card-acciones">
-                        <button class="btn btn-sm btn-secondary" onclick="abrirModalCatEjercicioEditar(${e.id})">✏️ Editar</button>
-                        ${e.video_url ? `<a class="btn btn-sm btn-secondary" href="${e.video_url}" target="_blank">🎥</a>` : ""}
-                        ${puedeEliminar() ? `<button class="btn btn-sm btn-danger" onclick="eliminarCatEjercicio(${e.id})">🗑️</button>` : ""}
-                    </div>
-                </div>
-            </div>
-        `).join("");
-    }
-
-    function _limpiarFormCatEjercicio() {
-        document.getElementById("ce-nombre").value = "";
-        document.getElementById("ce-grupo").value = "";
-        document.getElementById("ce-descripcion").value = "";
-        document.getElementById("ce-video").value = "";
-        document.getElementById("ce-foto").value = "";
-        document.getElementById("ce-foto-preview").innerHTML = "🏋️";
-        archivoFotoEjercicio = null;
-    }
-
-    function abrirModalCatEjercicioNuevo() {
-        ejercicioEditando = null;
-        document.getElementById("cat-modal-titulo").textContent = "Nuevo Ejercicio";
-        _limpiarFormCatEjercicio();
-        document.getElementById("modal-cat-ejercicio").classList.add("active");
-    }
-
-    function abrirModalCatEjercicioEditar(id) {
-        ejercicioEditando = catalogoEjercicios.find(e => e.id === id);
-        if (!ejercicioEditando) return;
-        document.getElementById("cat-modal-titulo").textContent = "Editar Ejercicio";
-        _limpiarFormCatEjercicio();
-        document.getElementById("ce-nombre").value = ejercicioEditando.nombre;
-        document.getElementById("ce-grupo").value = ejercicioEditando.grupo_muscular || "";
-        document.getElementById("ce-descripcion").value = ejercicioEditando.descripcion || "";
-        document.getElementById("ce-video").value = ejercicioEditando.video_url || "";
-        if (ejercicioEditando.imagen_url) {
-            document.getElementById("ce-foto-preview").innerHTML = `<img src="${urlFoto(ejercicioEditando.imagen_url)}" style="width:100%;height:100%;object-fit:cover;">`;
-        }
-        document.getElementById("modal-cat-ejercicio").classList.add("active");
-    }
-
-    function cerrarModalCatEjercicio() { document.getElementById("modal-cat-ejercicio").classList.remove("active"); }
-
-    function previsualizarFotoEjercicio(input) {
-        archivoFotoEjercicio = input.files && input.files[0] ? input.files[0] : null;
-        if (archivoFotoEjercicio) {
-            const url = URL.createObjectURL(archivoFotoEjercicio);
-            document.getElementById("ce-foto-preview").innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;">`;
-        }
-    }
-
-    async function guardarCatEjercicio() {
+    async function guardarEjercicioCatalogo() {
         const nombre = document.getElementById("ce-nombre").value.trim();
-        if (!nombre) { showError("El nombre es obligatorio"); return; }
-        const datos = {
-            nombre,
-            grupo_muscular: document.getElementById("ce-grupo").value || null,
-            descripcion: document.getElementById("ce-descripcion").value.trim() || null,
-            video_url: document.getElementById("ce-video").value.trim() || null,
-        };
+        if (!nombre) return showError("Ingresa el nombre del ejercicio");
+        const datos = { nombre, grupo_muscular:document.getElementById("ce-grupo").value.trim()||null, categoria:document.getElementById("ce-categoria").value||null, nivel:document.getElementById("ce-nivel").value||null, descripcion:document.getElementById("ce-descripcion").value.trim()||null, video_url:document.getElementById("ce-video").value.trim()||null };
         try {
-            let ejercicio;
-            if (ejercicioEditando) {
-                ejercicio = await apiFetch(`/tipos-ejercicio/${ejercicioEditando.id}`, { method: "PUT", body: JSON.stringify(datos) });
-            } else {
-                ejercicio = await apiFetch("/tipos-ejercicio/", { method: "POST", body: JSON.stringify(datos) });
-            }
-            if (archivoFotoEjercicio) {
-                await apiUploadFile(`/tipos-ejercicio/${ejercicio.id}/imagen`, archivoFotoEjercicio);
-            }
-            showSuccess("Ejercicio guardado");
-            cerrarModalCatEjercicio();
-            cargarCatalogo();
-        } catch (e) { showError(e.message); }
+            const guardado = await apiFetch(ejercicioEditando ? `/tipos-ejercicio/${ejercicioEditando.id}` : "/tipos-ejercicio/", {method:ejercicioEditando?"PUT":"POST",body:JSON.stringify(datos)});
+            const imagen = document.getElementById("ce-imagen").files[0];
+            if (imagen) await apiUploadFile(`/tipos-ejercicio/${guardado.id}/imagen`, imagen);
+            showSuccess(ejercicioEditando ? "Ejercicio actualizado" : "Ejercicio creado");
+            cerrarModal("modal-ejercicio"); await cargar();
+        } catch(e) { showError(e.message); }
     }
 
-    async function eliminarCatEjercicio(id) {
-        if (!(await confirmDialog("¿Eliminar este ejercicio del catálogo?"))) return;
-        try {
-            await apiFetch(`/tipos-ejercicio/${id}`, { method: "DELETE" });
-            showSuccess("Ejercicio eliminado");
-            cargarCatalogo();
-        } catch (e) { showError(e.message); }
+    async function desactivarEjercicioCatalogo(id) {
+        if (!(await confirmDialog("¿Desactivar este ejercicio? Los paquetes existentes conservarán su nombre."))) return;
+        try { await apiFetch(`/tipos-ejercicio/${id}`,{method:"DELETE"}); showSuccess("Ejercicio desactivado"); await cargar(); }
+        catch(e) { showError(e.message); }
     }
 
-    init();
+    function renderPaquetes() {
+        const texto = document.getElementById("buscar").value.trim().toLowerCase();
+        const nivel = document.getElementById("fil-nivel").value;
+        const objetivo = document.getElementById("fil-objetivo").value;
+        const genero = document.getElementById("fil-genero").value;
+        const filas = paquetes.filter(p => (!nivel || p.nivel === nivel) && (!objetivo || p.objetivo === objetivo) && (!genero || p.genero_recomendado === genero) && (!texto || `${p.nombre} ${p.descripcion||""}`.toLowerCase().includes(texto)));
+        const cont = document.getElementById("paquetes");
+        if (!filas.length) {
+            cont.innerHTML = '<div class="vacio">Aún no hay paquetes con estos filtros.<br>Crea opciones como “Básico · Inicio”, “Básico · Bajar de peso”, “Definición” o “Competencia”.</div>';
+            return;
+        }
+        cont.innerHTML = filas.map(p => {
+            const ejercicios = p.dias.reduce((n,d) => n + d.ejercicios.length, 0);
+            const edad = p.edad_min !== null || p.edad_max !== null ? `${p.edad_min ?? 0}–${p.edad_max ?? "+"} años` : "Cualquier edad";
+            return `<article class="paquete-card">
+                <div class="paquete-top"><h3>${esc(p.nombre)}</h3><span class="etiqueta">${esc(etiqueta(p.etapa))}</span></div>
+                <div class="etiquetas"><span class="etiqueta">${esc(etiqueta(p.nivel))}</span><span class="etiqueta">${esc(etiqueta(p.objetivo))}</span><span class="etiqueta">${esc(etiqueta(p.genero_recomendado))}</span></div>
+                <p class="paquete-desc">${esc(p.descripcion || "Sin indicaciones adicionales")}</p>
+                <div class="paquete-resumen"><div><strong>${p.dias.length}</strong>días</div><div><strong>${ejercicios}</strong>ejercicios</div><div><strong>${p.duracion_semanas}</strong>semanas</div></div>
+                <div class="dias-preview">${esc(edad)} · ${p.dias.map(d => esc(d.nombre)).join(" · ") || "Sin días configurados"}</div>
+                <div class="paquete-actions"><button class="btn btn-primary btn-sm" onclick="abrirAsignar(${p.id})">Asignar</button><button class="btn btn-secondary btn-sm" onclick="abrirPaquete(${p.id})">Editar</button><button class="btn btn-danger btn-sm" onclick="desactivarPaquete(${p.id})">Desactivar</button></div>
+            </article>`;
+        }).join("");
+    }
+
+    function opcionesEjercicio(seleccionado) {
+        return '<option value="">Texto libre</option>' + catalogo.map(e => `<option value="${e.id}" ${e.id === seleccionado ? "selected" : ""}>${esc(e.nombre)}${e.grupo_muscular ? " · " + esc(e.grupo_muscular) : ""}</option>`).join("");
+    }
+
+    function abrirPaquete(id=null) {
+        paqueteBaseRecomendado = null;
+        clienteRecomendacionId = null;
+        paqueteEditando = id ? paquetes.find(p => p.id === id) : null;
+        const p = paqueteEditando;
+        document.getElementById("paquete-titulo").textContent = p ? "Editar paquete" : "Nuevo paquete";
+        document.getElementById("p-nombre").value = p?.nombre || "";
+        document.getElementById("p-nivel").value = p?.nivel || "basico";
+        document.getElementById("p-objetivo").value = p?.objetivo || "inicio";
+        document.getElementById("p-etapa").value = p?.etapa || "inicio";
+        document.getElementById("p-genero").value = p?.genero_recomendado || "todos";
+        document.getElementById("p-edad-min").value = p?.edad_min ?? "";
+        document.getElementById("p-edad-max").value = p?.edad_max ?? "";
+        document.getElementById("p-duracion").value = p?.duracion_semanas || 4;
+        document.getElementById("p-descripcion").value = p?.descripcion || "";
+        document.getElementById("dias-editor").innerHTML = "";
+        secuenciaDia = 0;
+        (p?.dias || [{nombre:"Día 1",orden:0,ejercicios:[]}]).forEach(d => agregarDia(d));
+        document.getElementById("modal-paquete").classList.add("active");
+    }
+
+    function iniciarFlujoRecomendadoDesdeUrl() {
+        if (flujoRecomendacionIniciado) return;
+        const params = new URLSearchParams(window.location.search);
+        const paqueteId = parseInt(params.get("recomendar_paquete"));
+        const clienteId = parseInt(params.get("cliente"));
+        if (!paqueteId || !clienteId) return;
+        const base = paquetes.find(p => p.id === paqueteId);
+        if (!base) return showError("El paquete recomendado ya no está disponible");
+        flujoRecomendacionIniciado = true;
+        abrirPaquete(paqueteId);
+        paqueteEditando = null;
+        paqueteBaseRecomendado = base;
+        clienteRecomendacionId = clienteId;
+        document.getElementById("paquete-titulo").textContent = "Adaptar recomendación y guardar como paquete";
+        document.getElementById("p-nombre").value = "";
+        document.getElementById("p-nombre").placeholder = `${base.nombre} personalizado`;
+        document.getElementById("p-nombre").focus();
+    }
+
+    function agregarDia(dia={}) {
+        const key = ++secuenciaDia;
+        const div = document.createElement("section");
+        div.className = "dia-editor";
+        div.dataset.key = key;
+        div.innerHTML = `<div class="dia-cabecera"><input class="dia-nombre" value="${esc(dia.nombre || `Día ${key}`)}" placeholder="Nombre del día"><button class="btn btn-danger btn-sm" onclick="this.closest('.dia-editor').remove()">Quitar día</button></div><div class="ejercicios-editor"></div><button class="btn btn-secondary btn-sm" style="margin-top:9px;" onclick="agregarEjercicio(this)">+ Ejercicio</button>`;
+        document.getElementById("dias-editor").appendChild(div);
+        (dia.ejercicios || []).forEach(e => agregarEjercicio(div.querySelector("button:last-child"), e));
+    }
+
+    function agregarEjercicio(boton, ejercicio={}) {
+        const cont = boton.closest(".dia-editor").querySelector(".ejercicios-editor");
+        const fila = document.createElement("div");
+        fila.className = "ejercicio-editor";
+        fila.innerHTML = `
+            <div class="campo-mini"><label>Ejercicio del catálogo</label><select class="ej-tipo" onchange="seleccionarEjercicio(this)">${opcionesEjercicio(ejercicio.tipo_ejercicio_id)}</select></div>
+            <div class="campo-mini"><label>Nombre *</label><input class="ej-nombre" value="${esc(ejercicio.nombre || "")}" placeholder="Ejercicio"></div>
+            <div class="campo-mini"><label>Series</label><input class="ej-series" type="number" min="1" value="${ejercicio.series || ""}"></div>
+            <div class="campo-mini"><label>Repeticiones</label><input class="ej-reps" value="${esc(ejercicio.repeticiones || "")}" placeholder="12, 10, 8"></div>
+            <div class="campo-mini"><label>Indicaciones / peso</label><input class="ej-notas" value="${esc(ejercicio.notas || ejercicio.peso || "")}" placeholder="Técnica, descanso..."></div>
+            <button class="btn btn-danger btn-sm" onclick="this.closest('.ejercicio-editor').remove()">✕</button>`;
+        cont.appendChild(fila);
+    }
+
+    function seleccionarEjercicio(select) {
+        const ejercicio = catalogo.find(e => e.id === parseInt(select.value));
+        if (ejercicio) select.closest(".ejercicio-editor").querySelector(".ej-nombre").value = ejercicio.nombre;
+    }
+
+    function valorEntero(id) { const v=document.getElementById(id).value; return v === "" ? null : parseInt(v); }
+    function construirDatos() {
+        const dias = [...document.querySelectorAll("#dias-editor .dia-editor")].map((dia, orden) => ({
+            nombre: dia.querySelector(".dia-nombre").value.trim(), orden,
+            ejercicios: [...dia.querySelectorAll(".ejercicio-editor")].map(f => ({
+                tipo_ejercicio_id: f.querySelector(".ej-tipo").value ? parseInt(f.querySelector(".ej-tipo").value) : null,
+                nombre: f.querySelector(".ej-nombre").value.trim(),
+                series: f.querySelector(".ej-series").value ? parseInt(f.querySelector(".ej-series").value) : null,
+                repeticiones: f.querySelector(".ej-reps").value.trim() || null,
+                notas: f.querySelector(".ej-notas").value.trim() || null,
+            }))
+        }));
+        return { nombre:document.getElementById("p-nombre").value.trim(), descripcion:document.getElementById("p-descripcion").value.trim()||null, nivel:document.getElementById("p-nivel").value, objetivo:document.getElementById("p-objetivo").value, etapa:document.getElementById("p-etapa").value, genero_recomendado:document.getElementById("p-genero").value, edad_min:valorEntero("p-edad-min"), edad_max:valorEntero("p-edad-max"), duracion_semanas:parseInt(document.getElementById("p-duracion").value)||4, dias };
+    }
+
+    async function guardarPaquete() {
+        const datos = construirDatos();
+        if (!datos.nombre) return showError("Ingresa el nombre del paquete");
+        if (paqueteBaseRecomendado && datos.nombre.toLowerCase() === paqueteBaseRecomendado.nombre.toLowerCase()) return showError("Debes poner un nombre nuevo al paquete adaptado");
+        if (!datos.dias.length) return showError("Agrega al menos un día");
+        if (datos.dias.some(d => !d.nombre || !d.ejercicios.length || d.ejercicios.some(e => !e.nombre))) return showError("Cada día debe tener nombre y al menos un ejercicio completo");
+        if (datos.edad_min !== null && datos.edad_max !== null && datos.edad_max < datos.edad_min) return showError("Revisa el rango de edades");
+        try {
+            if (paqueteBaseRecomendado && clienteRecomendacionId) {
+                await apiFetch("/paquetes-rutina/guardar-y-asignar", {
+                    method:"POST",
+                    body:JSON.stringify({cliente_id:clienteRecomendacionId, paquete_origen_id:paqueteBaseRecomendado.id, paquete:datos}),
+                });
+                showSuccess("Paquete nuevo guardado y rutina asignada");
+                window.location.href = `clientes.html?ver=${clienteRecomendacionId}&tab=rutinas`;
+                return;
+            }
+            await apiFetch(paqueteEditando ? `/paquetes-rutina/${paqueteEditando.id}` : "/paquetes-rutina/", {method:paqueteEditando?"PUT":"POST",body:JSON.stringify(datos)});
+            showSuccess(paqueteEditando ? "Paquete actualizado" : "Paquete creado");
+            cerrarModal("modal-paquete"); await cargar();
+        } catch(e) { showError(e.message); }
+    }
+
+    async function abrirAsignar(id) {
+        paqueteAsignando = paquetes.find(p => p.id === id);
+        document.getElementById("asignar-paquete-nombre").textContent = paqueteAsignando.nombre;
+        document.getElementById("a-nombre").value = paqueteAsignando.nombre;
+        document.getElementById("a-cliente").innerHTML = '<option value="">Seleccionar...</option>' + clientes.map(c => `<option value="${c.id}">${esc(c.nombre)} ${esc(c.apellidos || "")}</option>`).join("");
+        document.getElementById("modal-asignar").classList.add("active");
+    }
+
+    async function confirmarAsignacion() {
+        const clienteId = parseInt(document.getElementById("a-cliente").value);
+        if (!clienteId) return showError("Selecciona un cliente");
+        try {
+            await apiFetch(`/paquetes-rutina/${paqueteAsignando.id}/asignar`, {method:"POST",body:JSON.stringify({cliente_id:clienteId,nombre:document.getElementById("a-nombre").value.trim()||null})});
+            showSuccess("Rutina asignada al cliente"); cerrarModal("modal-asignar");
+        } catch(e) { showError(e.message); }
+    }
+
+    async function desactivarPaquete(id) {
+        if (!(await confirmDialog("¿Desactivar este paquete? Las rutinas ya asignadas no se eliminarán."))) return;
+        try { await apiFetch(`/paquetes-rutina/${id}`,{method:"DELETE"}); showSuccess("Paquete desactivado"); await cargar(); }
+        catch(e) { showError(e.message); }
+    }
+
+    cargar();
 </script>
 </body>
 </html>

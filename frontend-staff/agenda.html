@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agenda - Soft-MrGym</title>
+    <title>Agenda - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -16,7 +16,7 @@
         .leyenda-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
 
         .grilla-wrap { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:auto; }
-        .grilla { display:grid;grid-template-columns:56px repeat(6,1fr);min-width:900px; }
+        .grilla { display:grid;min-width:1020px;transition:grid-template-columns .2s ease; }
         .grilla-header-hueco { border-bottom:1px solid var(--color-borde); }
         .grilla-header-dia { padding:10px 4px;text-align:center;font-size:0.8em;font-weight:600;border-bottom:1px solid var(--color-borde);border-left:1px solid var(--color-borde); }
         .grilla-header-dia.hoy { color:var(--color-primario); }
@@ -25,12 +25,16 @@
         .col-horas { position:relative; }
         .hora-label { position:absolute;right:6px;transform:translateY(-50%);font-size:0.68em;color:var(--color-texto-secundario); }
 
-        .col-dia { position:relative;border-left:1px solid var(--color-borde);background-image:repeating-linear-gradient(to bottom, transparent, transparent calc(var(--alto-hora) - 1px), var(--color-borde) calc(var(--alto-hora) - 1px), var(--color-borde) var(--alto-hora)); }
+        .col-dia { position:relative;border-left:1px solid var(--color-borde); }
+        .celda-hora { position:absolute;left:0;right:0;border-bottom:1px solid var(--color-borde);background:transparent; }
+        .celda-hora:hover { background:color-mix(in srgb,var(--color-primario) 5%,transparent); }
+        .celda-agregar { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border:1px dashed var(--color-borde);border-radius:50%;background:var(--color-blanco);color:var(--color-primario);font-size:1em;line-height:18px;cursor:pointer;opacity:.55;z-index:1;padding:0; }
+        .celda-hora:hover .celda-agregar,.celda-agregar:focus { opacity:1;border-color:var(--color-primario); }
 
         .evento {
             position:absolute;left:3px;right:3px;border-radius:7px;padding:4px 6px;
             font-size:0.72em;color:#fff;cursor:pointer;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.15);
-            line-height:1.25;
+            line-height:1.25;z-index:2;
         }
         .evento .ev-profesor { font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
         .evento .ev-clase { font-weight:600;opacity:0.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
@@ -44,6 +48,7 @@
         .repetir-dias { display:flex;gap:6px;flex-wrap:wrap;margin-top:6px; }
         .chip-dia { border:1px solid var(--color-borde);border-radius:8px;padding:6px 10px;font-size:0.8em;cursor:pointer;user-select:none;color:var(--color-texto); }
         .chip-dia.activo { background:var(--color-primario);color:#fff;border-color:var(--color-primario); }
+        @media (max-width:768px) { .grilla{min-width:760px}.celda-agregar{opacity:.72}.semana-nav{gap:6px}.semana-nav button{padding:7px 9px;} }
     </style>
 </head>
 <body>
@@ -53,9 +58,9 @@
         <div class="header">
             <div>
                 <h1 class="header-title">Agenda</h1>
-                <p class="header-subtitle">Clases programadas de la semana (lunes a sabado)</p>
+                <p class="header-subtitle">Clases programadas de la semana (lunes a domingo)</p>
             </div>
-            <button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar Clase</button>
+            <button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar</button>
         </div>
 
         <div class="semana-nav">
@@ -77,11 +82,14 @@
 <div id="modal-clase" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h3 class="modal-title">Agendar Clase</h3>
+            <h3 class="modal-title">Agendar</h3>
             <button class="modal-close" onclick="cerrarModal()">✕</button>
         </div>
-        <div class="form-group"><label>Profesor *</label><select id="f-profesor"><option value="">Seleccionar...</option></select></div>
-        <div class="form-group"><label>Nombre de la clase *</label><input type="text" id="f-nombre-clase" placeholder="Salsa Intermedio"></div>
+        <div class="form-group"><label>Tipo de agenda</label><select id="f-tipo-agenda" onchange="toggleTipoAgenda()"><option value="clase">Clase del gimnasio</option><option value="alquiler">Sala alquilada</option></select></div>
+        <div class="form-group" id="f-concepto-row" style="display:none;"><label>Concepto de ingreso *</label><select id="f-concepto-ingreso" onchange="onConceptoAgenda()"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group" id="f-profesor-row"><label>Profesor *</label><select id="f-profesor"><option value="">Seleccionar...</option></select></div>
+        <div class="form-group"><label id="f-nombre-label">Nombre de la clase *</label><input type="text" id="f-nombre-clase" placeholder="Salsa Intermedio"></div>
+        <div class="form-group" id="f-responsable-row" style="display:none;"><label>Persona o empresa que alquila</label><input type="text" id="f-responsable" placeholder="Nombre del responsable"></div>
         <div class="form-group"><label>Sala</label><input type="text" id="f-sala" placeholder="Sala A"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
             <div class="form-group"><label>Fecha *</label><input type="date" id="f-fecha-clase"></div>
@@ -126,12 +134,13 @@
             <button class="btn btn-primary btn-sm" onclick="confirmarDictada()">Confirmar asistencia</button>
         </div>
 
-        <hr style="border:none;border-top:1px solid var(--color-borde);margin:16px 0;">
-
-        <h4 style="font-size:0.85em;margin-bottom:6px;">Profesor de reemplazo (solo esta fecha)</h4>
-        <div class="form-group" style="display:flex;gap:8px;">
-            <select id="f-reemplazo" style="flex:1;"><option value="">-- Sin reemplazo --</option></select>
-            <button class="btn btn-secondary btn-sm" onclick="guardarReemplazo()">Guardar</button>
+        <div id="seccion-reemplazo">
+            <hr style="border:none;border-top:1px solid var(--color-borde);margin:16px 0;">
+            <h4 style="font-size:0.85em;margin-bottom:6px;">Profesor de reemplazo (solo esta fecha)</h4>
+            <div class="form-group" style="display:flex;gap:8px;">
+                <select id="f-reemplazo" style="flex:1;"><option value="">-- Sin reemplazo --</option></select>
+                <button class="btn btn-secondary btn-sm" onclick="guardarReemplazo()">Guardar</button>
+            </div>
         </div>
 
         <hr style="border:none;border-top:1px solid var(--color-borde);margin:16px 0;">
@@ -151,7 +160,7 @@
     const HORA_INICIO = 6;   // 6:00
     const HORA_FIN = 22;     // 22:00
     const ALTO_HORA = 52;    // px por hora
-    const DIAS_NOMBRE = ["Lun","Mar","Mie","Jue","Vie","Sab"];
+    const DIAS_NOMBRE = ["Lun","Mar","Mie","Jue","Vie","Sab","Dom"];
     const COLORES_PROFESOR = ["#7566B8","#4E7096","#5F7F63","#AD7645","#AD6E7C","#7C4155","#3B7A75","#8C6E3F","#5B6B8C","#8C5A5A"];
 
     let fechaBase = new Date();
@@ -159,6 +168,9 @@
     let claseSeleccionada = null;
     let moneda = "S/";
     let clasesSemana = [];
+    let reservasSemana = [];
+    let conceptosAgendaCache = [];
+    let reservaSeleccionada = null;
 
     function formatMonedaSinDecimales(monto) {
         return `${moneda} ${Math.round(monto || 0)}`;
@@ -201,7 +213,7 @@
 
         const inicio = lunes(fechaBase);
         const fin = new Date(inicio);
-        fin.setDate(fin.getDate() + 5); // sabado
+        fin.setDate(fin.getDate() + 6); // domingo
 
         const desde = inicio.toISOString().split("T")[0];
         const hasta = fin.toISOString().split("T")[0];
@@ -209,7 +221,11 @@
         document.getElementById("rango-semana").textContent =
             `${inicio.toLocaleDateString("es-PE",{day:"2-digit",month:"long"})} – ${fin.toLocaleDateString("es-PE",{day:"2-digit",month:"long",year:"numeric"})}`;
 
-        clasesSemana = await apiFetch(`/clases/?desde=${desde}&hasta=${hasta}`);
+        [clasesSemana, reservasSemana, conceptosAgendaCache] = await Promise.all([
+            apiFetch(`/clases/?desde=${desde}&hasta=${hasta}`),
+            apiFetch(`/reservas-sala/?desde=${desde}&hasta=${hasta}`),
+            apiFetch("/conceptos-ingreso/?para_agenda=true"),
+        ]);
         renderGrilla(inicio);
     }
 
@@ -223,38 +239,69 @@
     function renderGrilla(inicio) {
         const hoy = new Date().toISOString().split("T")[0];
         const grilla = document.getElementById("grilla");
-        const alturaTotal = (HORA_FIN - HORA_INICIO) * ALTO_HORA;
+        const fechas = Array.from({length:7}, (_,i) => {
+            const d = new Date(inicio); d.setDate(d.getDate() + i); return d.toISOString().split("T")[0];
+        });
+        const eventosDia = fechas.map(fecha => [
+            ...clasesSemana.filter(c => c.fecha === fecha),
+            ...reservasSemana.filter(r => r.fecha === fecha),
+        ]);
+        const pesosDia = eventosDia.map(eventos => eventos.length ? 1 : .5);
+        grilla.style.gridTemplateColumns = `56px ${pesosDia.map(p => `${p}fr`).join(" ")}`;
+
+        const horasActivas = Array.from({length:HORA_FIN-HORA_INICIO}, (_,indice) => {
+            const hora = HORA_INICIO + indice;
+            return [...clasesSemana,...reservasSemana].some(e => {
+                const ini = horaDecimal(e.hora_inicio);
+                const fin = e.hora_fin ? horaDecimal(e.hora_fin) : ini + 1;
+                return ini < hora + 1 && fin > hora;
+            });
+        });
+        const altosHora = horasActivas.map(activa => activa ? ALTO_HORA : ALTO_HORA / 2);
+        const offsetsHora = [0];
+        altosHora.forEach(alto => offsetsHora.push(offsetsHora[offsetsHora.length-1] + alto));
+        const alturaTotal = offsetsHora[offsetsHora.length-1];
+
+        function offsetHora(decimal) {
+            const valor = Math.max(HORA_INICIO, Math.min(decimal, HORA_FIN));
+            if (valor >= HORA_FIN) return alturaTotal;
+            const indice = Math.floor(valor) - HORA_INICIO;
+            return offsetsHora[indice] + (valor - Math.floor(valor)) * altosHora[indice];
+        }
 
         let html = `<div class="grilla-header-hueco"></div>`;
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 7; i++) {
             const fechaDia = new Date(inicio);
             fechaDia.setDate(fechaDia.getDate() + i);
             const fechaStr = fechaDia.toISOString().split("T")[0];
             const esHoy = fechaStr === hoy;
-            html += `<div class="grilla-header-dia ${esHoy ? "hoy" : ""}">${DIAS_NOMBRE[i]}<span class="num">${fechaDia.getDate()}</span></div>`;
+            html += `<div class="grilla-header-dia ${esHoy ? "hoy" : ""}" title="${eventosDia[i].length ? eventosDia[i].length + ' evento(s)' : 'Día vacío: ancho reducido'}">${DIAS_NOMBRE[i]}<span class="num">${fechaDia.getDate()}</span></div>`;
         }
 
         // columna de horas
         html += `<div class="col-horas" style="height:${alturaTotal}px;">`;
         for (let h = HORA_INICIO; h <= HORA_FIN; h++) {
-            const top = (h - HORA_INICIO) * ALTO_HORA;
+            const top = offsetsHora[h - HORA_INICIO];
             html += `<span class="hora-label" style="top:${top}px;">${h}:00</span>`;
         }
         html += `</div>`;
 
         // columnas de dias
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 7; i++) {
             const fechaDia = new Date(inicio);
             fechaDia.setDate(fechaDia.getDate() + i);
             const fechaStr = fechaDia.toISOString().split("T")[0];
             const clasesDelDia = clasesSemana.filter(c => c.fecha === fechaStr);
 
-            let eventosHtml = "";
+            let eventosHtml = altosHora.map((alto, indice) => {
+                const h = HORA_INICIO + indice;
+                return `<div class="celda-hora" style="top:${offsetsHora[indice]}px;height:${alto}px;"><button class="celda-agregar" onclick="abrirModalClase('${fechaStr}','${String(h).padStart(2,'0')}:00')" title="Agendar el ${fechaStr} a las ${String(h).padStart(2,'0')}:00">+</button></div>`;
+            }).join("");
             clasesDelDia.forEach(c => {
                 const inicioH = Math.max(horaDecimal(c.hora_inicio), HORA_INICIO);
                 const finH = c.hora_fin ? Math.max(horaDecimal(c.hora_fin), inicioH + 0.5) : inicioH + 1;
-                const top = (inicioH - HORA_INICIO) * ALTO_HORA;
-                const alto = Math.max((finH - inicioH) * ALTO_HORA, 30);
+                const top = offsetHora(inicioH);
+                const alto = Math.max(offsetHora(finH) - top, 24);
 
                 const tieneReemplazo = !!c.profesor_reemplazo;
                 const responsable = tieneReemplazo ? c.profesor_reemplazo : c.profesor;
@@ -277,16 +324,24 @@
                 `;
             });
 
-            html += `<div class="col-dia" style="--alto-hora:${ALTO_HORA}px;height:${alturaTotal}px;">${eventosHtml}</div>`;
+            reservasSemana.filter(r => r.fecha === fechaStr).forEach(r => {
+                const inicioH = Math.max(horaDecimal(r.hora_inicio), HORA_INICIO);
+                const finH = r.hora_fin ? Math.max(horaDecimal(r.hora_fin), inicioH + 0.5) : inicioH + 1;
+                const top = offsetHora(inicioH);
+                const alto = Math.max(offsetHora(finH) - top, 24);
+                eventosHtml += `<div class="evento" style="top:${top}px;height:${alto}px;background:#9A6A35;" onclick="abrirReserva(${r.id})"><div class="ev-profesor">Sala alquilada</div><div class="ev-clase">${r.nombre_reserva}</div><div class="ev-meta">${r.sala || "Sin sala"}${r.responsable ? " · " + r.responsable : ""}</div></div>`;
+            });
+
+            html += `<div class="col-dia" style="height:${alturaTotal}px;">${eventosHtml}</div>`;
         }
 
-        grilla.style.setProperty("--alto-hora", `${ALTO_HORA}px`);
         grilla.innerHTML = html;
     }
 
     // ================= Detalle / acciones =================
 
     function abrirDetalle(claseId) {
+        reservaSeleccionada = null;
         claseSeleccionada = clasesSemana.find(c => c.id === claseId);
         if (!claseSeleccionada) return;
 
@@ -298,6 +353,7 @@
         `;
 
         document.getElementById("seccion-marcar-dictada").style.display = c.dictada ? "none" : "block";
+        document.getElementById("seccion-reemplazo").style.display = "block";
         document.getElementById("f-alumnos").value = "";
 
         const selReemplazo = document.getElementById("f-reemplazo");
@@ -311,9 +367,23 @@
         document.getElementById("modal-detalle").classList.add("active");
     }
 
+    function abrirReserva(reservaId) {
+        reservaSeleccionada = reservasSemana.find(r => r.id === reservaId);
+        claseSeleccionada = null;
+        if (!reservaSeleccionada) return;
+        const r = reservaSeleccionada;
+        document.getElementById("detalle-info").innerHTML = `<p style="margin:0 0 4px;"><strong>${r.nombre_reserva}</strong></p><p style="margin:0 0 4px;color:var(--color-texto-secundario);">${formatFecha(r.fecha)} · ${formatHora(r.hora_inicio)}${r.hora_fin ? "-" + formatHora(r.hora_fin) : ""}${r.sala ? " · " + r.sala : ""}</p><p style="margin:0;">Sala alquilada${r.responsable ? " por: <strong>" + r.responsable + "</strong>" : ""}</p>`;
+        document.getElementById("seccion-marcar-dictada").style.display = "none";
+        document.getElementById("seccion-reemplazo").style.display = "none";
+        document.getElementById("opcion-futuras").style.display = "none";
+        document.querySelector('input[name="alcance"][value="una"]').checked = true;
+        document.getElementById("modal-detalle").classList.add("active");
+    }
+
     function cerrarModalDetalle() {
         document.getElementById("modal-detalle").classList.remove("active");
         claseSeleccionada = null;
+        reservaSeleccionada = null;
     }
 
     async function confirmarDictada() {
@@ -344,6 +414,12 @@
     }
 
     async function eliminarClase() {
+        if (reservaSeleccionada) {
+            if (!(await confirmDialog("¿Eliminar esta reserva de sala?"))) return;
+            try { await apiFetch(`/reservas-sala/${reservaSeleccionada.id}`, {method:"DELETE"}); showSuccess("Reserva eliminada"); cerrarModalDetalle(); cargarSemana(); }
+            catch(e) { showError(e.message); }
+            return;
+        }
         const alcance = document.querySelector('input[name="alcance"]:checked').value;
         const mensaje = alcance === "futuras" ? "¿Eliminar esta clase y todas las futuras de la misma serie?" : "¿Eliminar esta clase?";
         if (!(await confirmDialog(mensaje))) return;
@@ -359,7 +435,7 @@
 
     let diasSeleccionados = new Set();
 
-    async function abrirModalClase() {
+    async function abrirModalClase(fechaPreseleccionada=null, horaPreseleccionada=null) {
         if (!profesoresCache.length) {
             const empleados = await apiFetch("/empleados/");
             profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
@@ -368,19 +444,43 @@
         sel.innerHTML = '<option value="">Seleccionar...</option>' +
             profesoresCache.map(p => `<option value="${p.id}">${p.nombre_completo}</option>`).join("");
 
-        document.getElementById("f-fecha-clase").value = new Date().toISOString().split("T")[0];
-        ["nombre-clase","sala","hora-inicio","hora-fin","notas-clase"].forEach(f => {
+        document.getElementById("f-fecha-clase").value = fechaPreseleccionada || new Date().toISOString().split("T")[0];
+        ["nombre-clase","responsable","sala","hora-inicio","hora-fin","notas-clase"].forEach(f => {
             const el = document.getElementById(`f-${f}`);
             if (el) el.value = "";
         });
+        if (horaPreseleccionada) {
+            document.getElementById("f-hora-inicio").value = horaPreseleccionada;
+            const horaFinSugerida = Math.min(parseInt(horaPreseleccionada.slice(0,2)) + 1, 23);
+            document.getElementById("f-hora-fin").value = `${String(horaFinSugerida).padStart(2,"0")}:${horaPreseleccionada.slice(3,5)}`;
+        }
         document.getElementById("f-repetir").checked = false;
+        document.getElementById("f-tipo-agenda").value = "clase";
+        document.getElementById("f-concepto-ingreso").innerHTML = '<option value="">Seleccionar...</option>' + conceptosAgendaCache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join("");
         document.getElementById("f-semanas").value = 4;
         diasSeleccionados = new Set();
         document.getElementById("repetir-dias").innerHTML = DIAS_NOMBRE.map((n, i) => `
             <span class="chip-dia" data-dia="${i}" onclick="toggleDia(${i})">${n}</span>
         `).join("");
         toggleRepetir();
+        toggleTipoAgenda();
         document.getElementById("modal-clase").classList.add("active");
+    }
+
+    function toggleTipoAgenda() {
+        const alquiler = document.getElementById("f-tipo-agenda").value === "alquiler";
+        document.getElementById("f-concepto-row").style.display = alquiler ? "block" : "none";
+        document.getElementById("f-responsable-row").style.display = alquiler ? "block" : "none";
+        document.getElementById("f-profesor-row").style.display = alquiler ? "none" : "block";
+        document.getElementById("f-nombre-label").textContent = alquiler ? "Nombre de la reserva *" : "Nombre de la clase *";
+        document.getElementById("f-repetir").closest(".form-group").style.display = alquiler ? "none" : "block";
+    }
+
+    function onConceptoAgenda() {
+        const concepto = conceptosAgendaCache.find(c => c.id === parseInt(document.getElementById("f-concepto-ingreso").value));
+        if (!concepto) return;
+        document.getElementById("f-nombre-clase").value = concepto.nombre;
+        if (concepto.sala_sugerida) document.getElementById("f-sala").value = concepto.sala_sugerida;
     }
 
     function toggleRepetir() {
@@ -399,6 +499,9 @@
         const fecha = document.getElementById("f-fecha-clase").value;
         const horaInicio = document.getElementById("f-hora-inicio").value;
         if (!fecha || !horaInicio) { showError("Fecha y hora de inicio son obligatorias"); return; }
+        if (document.getElementById("f-tipo-agenda").value === "alquiler") {
+            return guardarReservaSala(fecha, horaInicio);
+        }
         if (!document.getElementById("f-profesor").value) { showError("Selecciona un profesor"); return; }
         if (!document.getElementById("f-nombre-clase").value.trim()) { showError("El nombre de la clase es obligatorio"); return; }
 
@@ -421,6 +524,29 @@
         try {
             const creadas = await apiFetch("/clases/", { method: "POST", body: JSON.stringify(datos) });
             showSuccess(creadas.length > 1 ? `${creadas.length} clases agendadas` : "Clase agendada");
+            cerrarModal();
+            cargarSemana();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function guardarReservaSala(fecha, horaInicio) {
+        const conceptoId = parseInt(document.getElementById("f-concepto-ingreso").value);
+        const nombre = document.getElementById("f-nombre-clase").value.trim();
+        if (!conceptoId) { showError("Selecciona el concepto del alquiler"); return; }
+        if (!nombre) { showError("Ingresa el nombre de la reserva"); return; }
+        const horaFin = document.getElementById("f-hora-fin").value;
+        try {
+            await apiFetch("/reservas-sala/", { method:"POST", body:JSON.stringify({
+                concepto_ingreso_id: conceptoId,
+                nombre_reserva: nombre,
+                responsable: document.getElementById("f-responsable").value.trim() || null,
+                sala: document.getElementById("f-sala").value.trim() || null,
+                fecha,
+                hora_inicio: `${fecha}T${horaInicio}:00`,
+                hora_fin: horaFin ? `${fecha}T${horaFin}:00` : null,
+                notas: document.getElementById("f-notas-clase").value.trim() || null,
+            })});
+            showSuccess("Sala alquilada agregada a la Agenda");
             cerrarModal();
             cargarSemana();
         } catch (e) { showError(e.message); }

@@ -95,6 +95,8 @@ function _aplicarTodo(nombreTema, nombreModo) {
     // El texto se deja neutro (sin tinte) para no perder contraste/legibilidad.
     raiz.setProperty("--color-texto", base.texto);
     raiz.setProperty("--color-texto-secundario", base.textoSecundario);
+    raiz.setProperty("--color-ingreso", esOscuro ? "#63C9A5" : "#187A5B");
+    raiz.setProperty("--color-egreso", esOscuro ? "#E28B9B" : "#7A2438");
 
     document.documentElement.setAttribute("data-modo", nombreModo);
     document.documentElement.style.colorScheme = esOscuro ? "dark" : "light";

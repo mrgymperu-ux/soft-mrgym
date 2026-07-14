@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Configuracion - Soft-MrGym</title>
+    <title>Configuracion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -23,6 +23,7 @@
                 <p class="header-subtitle">Ajustes generales del sistema</p>
             </div>
         </div>
+        <div id="aviso-suscripcion" class="alert alert-error" style="display:none;">La suscripcion de Soft-Gym requiere renovacion. Puedes consultar el estado y los pagos en la tarjeta <strong>Mi suscripcion</strong>.</div>
 
         <div class="config-grid">
             <!-- Datos del gimnasio -->
@@ -41,6 +42,12 @@
                     </div>
                 </div>
                 <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
+            </div>
+
+            <!-- Suscripcion que paga el gimnasio por usar Soft-Gym -->
+            <div class="config-section" id="seccion-suscripcion" style="display:none;">
+                <h3>💳 Mi suscripcion Soft-Gym</h3>
+                <div id="suscripcion-gym"><p style="font-size:.85em;color:var(--color-texto-secundario);">Cargando...</p></div>
             </div>
 
             <!-- QR para compartir con socios -->
@@ -85,7 +92,7 @@
                 <h3>ℹ️ Informacion del Sistema</h3>
                 <table class="table" style="font-size:0.9em;">
                     <tbody>
-                        <tr><td style="color:#636E72;">Version</td><td>Soft-MrGym v1.0</td></tr>
+                        <tr><td style="color:#636E72;">Version</td><td>Soft-Gym v1.0</td></tr>
                         <tr><td style="color:#636E72;">Backend</td><td>FastAPI + SQLAlchemy</td></tr>
                         <tr><td style="color:#636E72;">Base de datos</td><td id="info-bd">SQLite local</td></tr>
                         <tr><td style="color:#636E72;">Usuario actual</td><td id="info-usuario">—</td></tr>
@@ -320,6 +327,39 @@
     }
 
     cargarConfig();
+    if (new URLSearchParams(window.location.search).get("subscription") === "required" || sessionStorage.getItem("mrgym_suscripcion_bloqueada") === "1") {
+        document.getElementById("aviso-suscripcion").style.display = "block";
+    }
+
+    async function cargarSuscripcionGym() {
+        if (!esAdministrador()) return;
+        const seccion = document.getElementById("seccion-suscripcion");
+        seccion.style.display = "block";
+        try {
+            const s = await apiFetch("/suscripcion/mi-plan");
+            if (["activa", "prueba", "gracia", "sin_configurar"].includes(s.estado)) {
+                sessionStorage.removeItem("mrgym_suscripcion_bloqueada");
+                document.getElementById("aviso-suscripcion").style.display = "none";
+            }
+            const etiquetas = { prueba:"Periodo de prueba", activa:"Activa", gracia:"En periodo de gracia", vencida:"Vencida", suspendida:"Suspendida", cancelada:"Cancelada", sin_configurar:"Pendiente de configurar" };
+            const colores = { prueba:"var(--color-info)", activa:"var(--color-exito)", gracia:"var(--color-advertencia)", vencida:"var(--color-error)", suspendida:"var(--color-error)", cancelada:"var(--color-texto-secundario)", sin_configurar:"var(--color-texto-secundario)" };
+            const fecha = v => v ? new Date(v + "T12:00:00").toLocaleDateString("es-PE") : "—";
+            const pagos = (s.pagos || []).slice(0, 3).map(p => `<tr><td>${fecha(p.fecha_pago.slice(0,10))}</td><td>${p.moneda} ${p.monto.toFixed(2)}</td><td>${p.metodo_pago}</td></tr>`).join("");
+            document.getElementById("suscripcion-gym").innerHTML = `
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;margin-bottom:14px;">
+                    <div><div style="font-size:.78em;color:var(--color-texto-secundario);">PLAN ACTUAL</div><strong style="font-size:1.15em;">${s.nombre_plan || "Sin plan"}</strong></div>
+                    <span style="background:var(--color-fondo);color:${colores[s.estado]};padding:5px 9px;border-radius:20px;font-size:.75em;font-weight:700;">${etiquetas[s.estado] || s.estado}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.84em;margin-bottom:14px;">
+                    <div><span style="color:var(--color-texto-secundario);">Vence</span><br><strong>${fecha(s.fecha_fin_periodo)}</strong></div>
+                    <div><span style="color:var(--color-texto-secundario);">Gracia hasta</span><br><strong>${fecha(s.fecha_fin_gracia)}</strong></div>
+                </div>
+                ${pagos ? `<div class="table-container"><table class="table"><thead><tr><th>Fecha</th><th>Monto</th><th>Metodo</th></tr></thead><tbody>${pagos}</tbody></table></div>` : '<p style="font-size:.82em;color:var(--color-texto-secundario);">Aun no hay pagos SaaS registrados.</p>'}
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">La renovacion la registra el administrador de la plataforma. La pasarela automatica se integrara posteriormente.</p>`;
+        } catch (e) {
+            document.getElementById("suscripcion-gym").innerHTML = `<p style="color:var(--color-error);font-size:.85em;">${e.message}</p>`;
+        }
+    }
 
     /* ====== QR para compartir portal de socios ====== */
     async function mostrarQR() {
@@ -389,6 +429,7 @@
 
     mostrarQR();
     cargarLogoActual();
+    cargarSuscripcionGym();
 </script>
 </body>
 </html>

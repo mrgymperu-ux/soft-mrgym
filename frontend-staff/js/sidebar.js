@@ -27,9 +27,8 @@ const NAV_ITEMS = [
     {
         seccion: "Seguimiento",
         items: [
-            { href: "progreso.html", icono: "📈", texto: "Progreso", zona: "progreso" },
             { href: "agenda.html", icono: "📅", texto: "Agenda", zona: "agenda" },
-            { href: "entrenamientos.html", icono: "💪", texto: "Ejercicios", zona: "entrenamientos" },
+            { href: "entrenamientos.html", icono: "💪", texto: "Rutinas", zona: "entrenamientos" },
             { href: "nutricion.html", icono: "🥗", texto: "Nutricion", zona: "nutricion" },
             { href: "retos.html", icono: "🏆", texto: "Retos", zona: "retos" },
         ],
@@ -116,8 +115,9 @@ function renderSidebar() {
     contenedor.innerHTML =
         '<aside class="sidebar' + (colapsado ? ' colapsado' : '') + '">' +
         '<div class="sidebar-header">' +
-        '<div class="logo"><span>🏋️</span><span class="logo-text">Soft-MrGym</span></div>' +
+        '<div class="logo"><span class="logo-brand-icon">🏋️</span><span class="logo-text">Soft-Gym</span></div>' +
         '<button class="btn-toggle-sidebar" onclick="toggleSidebarColapsado()" title="' + (colapsado ? "Expandir menu" : "Minimizar menu") + '">◀</button>' +
+        '<button class="btn-logout-movil" onclick="cerrarSesion()" title="Cerrar sesion">Salir</button>' +
         '</div>' +
         '<nav class="sidebar-nav">' + seccionesHtml + '</nav>' +
         '<div class="sidebar-footer">' +
@@ -129,6 +129,28 @@ function renderSidebar() {
         '</div></div>' +
         '<button class="btn-logout" onclick="cerrarSesion()" title="Cerrar sesion">🚪 <span class="btn-logout-text">Cerrar sesion</span></button>' +
         '</div></aside>';
+
+    cargarMarcaSidebar();
+}
+
+async function cargarMarcaSidebar() {
+    try {
+        const [gimnasio, configuracion] = await Promise.all([
+            apiFetch("/gym-actual/"),
+            apiFetch("/configuracion/"),
+        ]);
+        const marca = document.querySelector("#sidebar-container .logo");
+        const texto = document.querySelector("#sidebar-container .logo-text");
+        const icono = document.querySelector("#sidebar-container .logo-brand-icon");
+        const nombreMarca = String(configuracion.nombre_gimnasio ?? gimnasio.nombre ?? "").trim();
+        if (texto) texto.textContent = nombreMarca;
+        if (marca) marca.classList.toggle("sin-nombre", !nombreMarca);
+        if (icono && gimnasio.logo_url) {
+            icono.innerHTML = '<img src="' + API_BASE_URL + gimnasio.logo_url + '" alt="Logo">';
+        }
+    } catch (_) {
+        // El menu sigue siendo operativo con la marca por defecto.
+    }
 }
 
 function toggleSidebarColapsado() {

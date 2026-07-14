@@ -13,6 +13,11 @@
     --secundario: #636E72;
     --borde: #E5E7EB;
     --exito: #5FA88C;
+    --fuente-xs: 0.75rem;
+    --fuente-sm: 0.8125rem;
+    --fuente-base: 0.875rem;
+    --fuente-md: 1rem;
+    --fuente-lg: 1.25rem;
     --radio: 12px;
     --sombra: 0 2px 10px rgba(0,0,0,0.05);
 }
@@ -24,6 +29,8 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    font-size: 16px;
+    line-height: 1.4;
 }
 
 .nav-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid var(--borde); display: flex; z-index: 50; }
@@ -62,6 +69,15 @@ body {
 .alimento-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #F0F0F2; font-size: 0.85em; }
 .alimento-row:last-child { border-bottom: none; }
 .kcal { color: var(--secundario); }
+.nutri-plan-header { padding:16px; color:#fff; background:linear-gradient(125deg,#2C2544,var(--primario) 72%,var(--primario-oscuro));font-size:var(--fuente-md);font-weight:600; }
+.nutri-plan-header .nutri-kcal-total { float:right;font-size:var(--fuente-xs);font-weight:500;opacity:.9; }
+.nutri-comida { --meal-accent:var(--primario); margin-bottom:14px;background:color-mix(in srgb,var(--meal-accent) 8%,#fff);border:1px solid color-mix(in srgb,var(--meal-accent) 18%,var(--borde));border-radius:9px;overflow:hidden; }
+.nutri-comida.desayuno { --meal-accent:#C76B18; }
+.nutri-comida.comida { --meal-accent:#187A5B; }
+.nutri-comida.aperitivo { --meal-accent:#A47C0A; }
+.nutri-comida.cena { --meal-accent:#405DB0; }
+.nutri-comida-titulo { padding:9px 12px;color:#fff;background:color-mix(in srgb,var(--meal-accent) 80%,#111 20%);font-size:var(--fuente-sm);font-weight:600; }
+.nutri-comida-body { padding:4px 12px; }
 
 .reto-card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: var(--sombra); margin-bottom: 12px; display: flex; }
 .reto-icono { width: 70px; display: flex; align-items: center; justify-content: center; font-size: 1.8em; background: var(--fondo); flex-shrink: 0; }

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ingresos - Soft-MrGym</title>
+    <title>Ingresos - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -117,8 +117,8 @@
         cargar();
     }
 
-    const ETIQ = { membresias:"Membresías", productos:"Productos", otros:"Otros" };
-    const BADGE = { membresias:"cat-membresias", productos:"cat-productos", otros:"cat-otros" };
+    const ETIQ = { membresias:"Membresías", productos:"Productos", otros:"Otros", otros_ingresos:"Otros" };
+    const BADGE = { membresias:"cat-membresias", productos:"cat-productos", otros:"cat-otros", otros_ingresos:"cat-otros" };
 
     async function cargar() {
         const cfg = await getConfiguracion(); moneda = cfg.moneda;

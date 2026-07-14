@@ -1,6 +1,6 @@
-# Contexto: Continuación de desarrollo — Soft-MrGym
+# Contexto: Continuación de desarrollo — Soft-Gym
 
-Estoy desarrollando **Soft-MrGym**, un sistema de gestión de gimnasio, en `D:\Soft-MrGym` (Windows, acceso vía MCP filesystem). Ya tengo mucho avanzado en una conversación anterior con Claude que se hizo demasiado larga. Continúa el trabajo desde aquí.
+Estoy desarrollando **Soft-Gym**, un sistema de gestión de gimnasio, en `D:\Soft-MrGym` (Windows, acceso vía MCP filesystem). Ya tengo mucho avanzado en una conversación anterior con Claude que se hizo demasiado larga. Continúa el trabajo desde aquí.
 
 ## Stack y estructura
 - **Backend**: FastAPI + SQLAlchemy + SQLite (`D:\Soft-MrGym\backend\`) — `main.py` (rutas), `models.py`, `schemas.py`, `auth.py`, `pdf_generator.py` (reportlab), `database.py`.
@@ -36,7 +36,7 @@ Estoy desarrollando **Soft-MrGym**, un sistema de gestión de gimnasio, en `D:\S
 - **`filesystem:edit_file` requiere que `oldText` sea único en el archivo** — si hay bloques repetidos (como varias funciones `_sembrar_*` con el mismo patrón `if agregados: db.commit() ... db.close()`), incluye suficiente contexto único (la línea siguiente, ej. el `def` de la función que sigue) para no reemplazar el lugar equivocado. **Ya pasó dos veces en esta sesión** que el reemplazo se comió accidentalmente la línea `def nombre_funcion():` de la función siguiente — siempre verificar con `python3 -m py_compile` después de cada edit_file en `main.py`.
 - `main.py` es muy grande (>190KB): `filesystem:read_file` completo no cabe en el contexto y lo guarda en un `.json` en `/mnt/user-data/tool_results/`; para revisarlo usa `bash_tool` + `grep`/`sed` sobre ese `.json` extraído a texto plano (`python3 -c "import json; ..."`).
 - **`create_file` a veces falla con un error falso** ("path: Field required") — si pasa, usa `filesystem:write_file` en su lugar (sobrescribe sin problema).
-- El backend usa `uvicorn --reload`: tras editar `.py` del backend, espera ~2-3 segundos antes de probar (se reinicia solo). Si algo no responde, pedir al usuario una captura de la ventana negra "Soft-MrGym Backend" para ver el traceback real.
+- El backend usa `uvicorn --reload`: tras editar `.py` del backend, espera ~2-3 segundos antes de probar (se reinicia solo). Si algo no responde, pedir al usuario una captura de la ventana negra "Soft-Gym Backend" para ver el traceback real.
 - El navegador cachea agresivamente HTML y `js/*.js` — **usar `Ctrl+Shift+R`** (recarga dura) después de cualquier cambio de frontend, tanto si lo prueba el usuario como si lo verifica Claude en Chrome (`computer` con `action:"key", text:"ctrl+shift+r"`). Ya pasó en esta sesión que un cambio parecía "no aplicado" y solo era caché.
 - Para verificar cambios, usar Claude en Chrome: `javascript_tool` (ejecutar JS/fetch directo contra `apiFetch(...)` en la pestaña real) es más confiable y rápido que capturas de pantalla para validar datos; `read_console_messages` con `onlyErrors:true` para chequear errores JS después de cada cambio.
 - **Nunca dejar datos de prueba en la base real**: si hace falta crear un cliente/medida/pago de prueba para verificar un flujo end-to-end, limpiarlo inmediatamente después (soft-delete de Cliente vía `DELETE /clientes/{id}`, hard-delete de Medida/Pago vía sus endpoints DELETE). Esta sesión lo hizo varias veces (ej. cliente "ZZ_PRUEBA_BORRAR").

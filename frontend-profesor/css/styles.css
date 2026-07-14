@@ -13,6 +13,11 @@
     --secundario: #636E72;
     --borde: #E5E7EB;
     --exito: #5FA88C;
+    --fuente-xs: 0.75rem;
+    --fuente-sm: 0.8125rem;
+    --fuente-base: 0.875rem;
+    --fuente-md: 1rem;
+    --fuente-lg: 1.25rem;
     --radio: 12px;
     --sombra: 0 2px 10px rgba(0,0,0,0.05);
 }
@@ -24,6 +29,8 @@ body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    font-size:16px;
+    line-height:1.4;
 }
 
 .nav-bottom { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid var(--borde); display: flex; z-index: 50; }

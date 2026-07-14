@@ -29,11 +29,11 @@ IMPORTANTE - variable de entorno SECRET_KEY:
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -123,11 +123,37 @@ def get_gimnasio_id(usuario: models.Usuario) -> Optional[int]:
     return usuario.gimnasio_id
 
 
+def _suscripcion_permite_acceso(db: Session, gimnasio_id: Optional[int]) -> bool:
+    """Compatibilidad: tenants sin registro SaaS siguen activos hasta configurarlos."""
+    if not gimnasio_id:
+        return True
+    suscripcion = db.query(models.SuscripcionSaas).filter(
+        models.SuscripcionSaas.gimnasio_id == gimnasio_id
+    ).first()
+    if not suscripcion:
+        return True
+    if suscripcion.estado in {"suspendida", "cancelada"}:
+        return False
+    hoy = date.today()
+    if hoy <= suscripcion.fecha_fin_periodo:
+        return True
+    return bool(suscripcion.fecha_fin_gracia and hoy <= suscripcion.fecha_fin_gracia)
+
+
+def _exigir_suscripcion_activa(db: Session, gimnasio_id: Optional[int]):
+    if not _suscripcion_permite_acceso(db, gimnasio_id):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="La suscripcion de Soft-Gym esta vencida o suspendida. Contacta al administrador de la plataforma.",
+        )
+
+
 # ==================================================================
 # DEPENDENCIES - STAFF / PROFESOR
 # ==================================================================
 
 def get_usuario_actual(
+    request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> models.Usuario:
@@ -152,7 +178,11 @@ def get_usuario_actual(
         )
 
     usuario_id = payload.get("sub")
-    usuario = db.query(models.Usuario).filter(models.Usuario.id == int(usuario_id)).first()
+    try:
+        usuario_id = int(usuario_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
 
     if usuario is None or not usuario.activo:
         raise HTTPException(
@@ -160,20 +190,71 @@ def get_usuario_actual(
             detail="Usuario no encontrado o inactivo",
         )
 
+    # Un tenant suspendido no puede seguir usando tokens existentes.
+    # El superadmin de plataforma queda exento para poder administrarlo.
+    if usuario.gimnasio_id and not getattr(usuario, "es_superadmin", False):
+        gimnasio_activo = db.query(models.Gimnasio.id).filter(
+            models.Gimnasio.id == usuario.gimnasio_id,
+            models.Gimnasio.activo == True,
+        ).first()
+        if not gimnasio_activo:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gimnasio suspendido")
+        # El dueño debe poder entrar a Configuración para consultar su
+        # deuda/plan aun cuando el resto del sistema esté bloqueado.
+        rutas_autoservicio = ("/suscripcion/mi-plan", "/configuracion", "/gym-actual")
+        if not request.url.path.startswith(rutas_autoservicio):
+            _exigir_suscripcion_activa(db, usuario.gimnasio_id)
+
     return usuario
 
 
-def requiere_staff(usuario: models.Usuario = Depends(get_usuario_actual)) -> models.Usuario:
+_ZONA_POR_PREFIJO = {
+    "clientes": "clientes", "clientes-historicos": "clientes",
+    "membresias": "membresias", "cliente-membresias": "membresias",
+    "productos": "productos", "compras": "productos",
+    "ventas": "ventas", "asistencias": "asistencias", "asistencias-empleado": "asistencias",
+    "progreso": "progreso", "medidas": "progreso",
+    "tipos-ejercicio": "entrenamientos", "rutinas": "entrenamientos", "paquetes-rutina": "entrenamientos",
+    "rutina-dias": "entrenamientos", "rutina-ejercicios": "entrenamientos",
+    "nutricion": "nutricion", "alimentos": "nutricion", "paquetes-nutricion": "nutricion",
+    "retos": "retos", "clases": "agenda", "reservas-sala": "agenda",
+    "planilla": "planilla", "pagos-planilla": "planilla",
+    "servicios": "pagos", "cargos-servicio": "pagos", "pagos-servicio": "pagos",
+    "ingresos": "pagos", "egresos": "pagos", "gastos": "pagos",
+    "conceptos-ingreso": "pagos", "otros-ingresos": "pagos",
+    "usuarios": "usuarios", "empleados": "usuarios", "puestos": "usuarios",
+    "configuracion": "configuracion", "gym-actual": "configuracion",
+    "metas": "metas", "comisiones": "metas",
+}
+
+
+def _validar_zona_de_ruta(request: Request, usuario: models.Usuario):
+    """Aplica zonas_permitidas tambien en API, no solo en el menu."""
+    if usuario.es_administrador:
+        return
+    prefijo = request.url.path.strip("/").split("/", 1)[0]
+    zona = _ZONA_POR_PREFIJO.get(prefijo)
+    if not zona:
+        return
+    permitidas = {z.strip() for z in (usuario.zonas_permitidas or "").split(",") if z.strip()}
+    if zona not in permitidas:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes acceso a la zona '{zona}'")
+
+
+def requiere_staff(request: Request, usuario: models.Usuario = Depends(get_usuario_actual)) -> models.Usuario:
     """Dependency para rutas exclusivas de staff (admin/recepcion)."""
     if usuario.rol != models.RolUsuario.STAFF:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requiere rol de staff")
+    _validar_zona_de_ruta(request, usuario)
     return usuario
 
 
-def requiere_staff_o_profesor(usuario: models.Usuario = Depends(get_usuario_actual)) -> models.Usuario:
+def requiere_staff_o_profesor(request: Request, usuario: models.Usuario = Depends(get_usuario_actual)) -> models.Usuario:
     """Dependency para rutas accesibles tanto por staff como por profesores."""
     if usuario.rol not in (models.RolUsuario.STAFF, models.RolUsuario.PROFESOR):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No autorizado")
+    if usuario.rol == models.RolUsuario.STAFF:
+        _validar_zona_de_ruta(request, usuario)
     return usuario
 
 
@@ -183,7 +264,7 @@ def requiere_staff_o_profesor(usuario: models.Usuario = Depends(get_usuario_actu
 
 ZONAS_DISPONIBLES = [
     "clientes", "membresias", "productos", "ventas", "venta_rapida",
-    "asistencias", "progreso", "agenda", "entrenamientos", "nutricion",
+    "asistencias", "agenda", "entrenamientos", "nutricion",
     "retos", "planilla", "pagos", "usuarios", "configuracion", "metas",
 ]
 
@@ -281,13 +362,25 @@ def get_cliente_actual(
         )
 
     cliente_id = payload.get("sub")
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == int(cliente_id)).first()
+    try:
+        cliente_id = int(cliente_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
 
     if cliente is None or not cliente.activo:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Alumno no encontrado o inactivo",
         )
+
+    gimnasio_activo = db.query(models.Gimnasio.id).filter(
+        models.Gimnasio.id == cliente.gimnasio_id,
+        models.Gimnasio.activo == True,
+    ).first()
+    if not gimnasio_activo:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gimnasio suspendido")
+    _exigir_suscripcion_activa(db, cliente.gimnasio_id)
 
     return cliente
 
@@ -316,13 +409,25 @@ def get_profesor_actual(
         )
 
     profesor_id = payload.get("sub")
-    profesor = db.query(models.Empleado).filter(models.Empleado.id == int(profesor_id)).first()
+    try:
+        profesor_id = int(profesor_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
+    profesor = db.query(models.Empleado).filter(models.Empleado.id == profesor_id).first()
 
     if profesor is None or not profesor.activo:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Profesor no encontrado o inactivo",
         )
+
+    gimnasio_activo = db.query(models.Gimnasio.id).filter(
+        models.Gimnasio.id == profesor.gimnasio_id,
+        models.Gimnasio.activo == True,
+    ).first()
+    if not gimnasio_activo:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gimnasio suspendido")
+    _exigir_suscripcion_activa(db, profesor.gimnasio_id)
 
     return profesor
 
@@ -337,6 +442,13 @@ def autenticar_usuario(db: Session, username: str, password: str) -> Optional[mo
         return None
     if not verificar_password(password, usuario.password_hash):
         return None
+    if usuario.gimnasio_id and not getattr(usuario, "es_superadmin", False):
+        gimnasio = db.query(models.Gimnasio).filter(
+            models.Gimnasio.id == usuario.gimnasio_id,
+            models.Gimnasio.activo == True,
+        ).first()
+        if not gimnasio:
+            return None
     return usuario
 
 
@@ -346,6 +458,8 @@ def autenticar_alumno(db: Session, dni: str, codigo_acceso: str, gimnasio_id: in
         query = query.filter(models.Cliente.gimnasio_id == gimnasio_id)
     cliente = query.first()
     if not cliente or not cliente.activo:
+        return None
+    if not _suscripcion_permite_acceso(db, cliente.gimnasio_id):
         return None
     if not verificar_codigo_acceso(codigo_acceso, cliente.codigo_acceso):
         return None
@@ -368,6 +482,8 @@ def autenticar_profesor(db: Session, dni: str, codigo_acceso: str, gimnasio_id: 
         query = query.filter(models.Empleado.gimnasio_id == gimnasio_id)
     profesor = query.first()
     if not profesor or not profesor.activo:
+        return None
+    if not _suscripcion_permite_acceso(db, profesor.gimnasio_id):
         return None
     if not verificar_codigo_acceso(codigo_acceso, profesor.codigo_acceso):
         return None

@@ -1,6 +1,6 @@
 """
 models.py
-Definicion de tablas ORM (SQLAlchemy) para Soft-MrGym.
+Definicion de tablas ORM (SQLAlchemy) para Soft-Gym.
 
 Organizado por bloques segun el plan de arquitectura:
   1. Autenticacion y roles (Usuario)
@@ -30,6 +30,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     Enum,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 import enum
@@ -62,6 +63,7 @@ class PlanSaas(Base):
     activo = Column(Boolean, default=True)
 
     gimnasios = relationship("Gimnasio", back_populates="plan")
+    suscripciones = relationship("SuscripcionSaas", back_populates="plan")
 
 
 class Gimnasio(Base):
@@ -98,6 +100,80 @@ class Gimnasio(Base):
     medidas_valores_visibles = Column(Text, nullable=True)
 
     plan = relationship("PlanSaas", back_populates="gimnasios")
+    suscripcion_saas = relationship(
+        "SuscripcionSaas", back_populates="gimnasio", uselist=False,
+        cascade="all, delete-orphan",
+    )
+    pagos_saas = relationship(
+        "PagoSaas", back_populates="gimnasio", cascade="all, delete-orphan",
+    )
+
+    # Compatibilidad temporal con ConfiguracionBase / pdf_generator.
+    # La configuracion operativa vive en esta tabla por tenant; estos
+    # alias permiten retirar la fila global legacy sin romper contratos
+    # de respuesta ni generadores de PDF existentes.
+    @property
+    def nombre_gimnasio(self):
+        return self.nombre
+
+    @nombre_gimnasio.setter
+    def nombre_gimnasio(self, valor):
+        self.nombre = valor
+
+    @property
+    def email(self):
+        return self.email_contacto
+
+    @email.setter
+    def email(self, valor):
+        self.email_contacto = valor
+
+
+class SuscripcionSaas(Base):
+    """Ciclo de acceso que paga un gimnasio para usar la plataforma."""
+    __tablename__ = "suscripciones_saas"
+    __table_args__ = (UniqueConstraint("gimnasio_id", name="uq_suscripcion_saas_gimnasio"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=True)
+    estado = Column(String, nullable=False, default="prueba")
+    fecha_inicio = Column(Date, nullable=False, default=date.today)
+    fecha_fin_periodo = Column(Date, nullable=False)
+    fecha_fin_gracia = Column(Date, nullable=True)
+    dias_gracia = Column(Integer, nullable=False, default=5)
+    auto_renovacion = Column(Boolean, nullable=False, default=False)
+    fecha_suspension = Column(DateTime, nullable=True)
+    notas = Column(Text, nullable=True)
+    creado_en = Column(DateTime, nullable=False, default=datetime.now)
+    actualizado_en = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    gimnasio = relationship("Gimnasio", back_populates="suscripcion_saas")
+    plan = relationship("PlanSaas", back_populates="suscripciones")
+    pagos = relationship("PagoSaas", back_populates="suscripcion", cascade="all, delete-orphan")
+
+
+class PagoSaas(Base):
+    """Pago de la membresia SaaS realizado por un gimnasio."""
+    __tablename__ = "pagos_saas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    suscripcion_id = Column(Integer, ForeignKey("suscripciones_saas.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=True)
+    monto = Column(Float, nullable=False)
+    moneda = Column(String, nullable=False, default="S/")
+    metodo_pago = Column(String, nullable=False, default="manual")
+    referencia = Column(String, nullable=True)
+    fecha_pago = Column(DateTime, nullable=False, default=datetime.now)
+    periodo_inicio = Column(Date, nullable=False)
+    periodo_fin = Column(Date, nullable=False)
+    registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    notas = Column(Text, nullable=True)
+
+    gimnasio = relationship("Gimnasio", back_populates="pagos_saas")
+    suscripcion = relationship("SuscripcionSaas", back_populates="pagos")
+    plan = relationship("PlanSaas")
 
 
 # ==================================================================
@@ -158,12 +234,15 @@ class Usuario(Base):
 
 class Cliente(Base):
     __tablename__ = "clientes"
+    __table_args__ = (
+        UniqueConstraint("gimnasio_id", "dni", name="uq_clientes_gimnasio_dni"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     nombre = Column(String, nullable=False, index=True)
     apellidos = Column(String, nullable=True)
-    dni = Column(String, unique=True, index=True, nullable=True)
+    dni = Column(String, index=True, nullable=True)
     telefono = Column(String, nullable=True)
     email = Column(String, nullable=True, index=True)
     fecha_nacimiento = Column(Date, nullable=True)
@@ -324,6 +403,32 @@ class ClienteMembresia(Base):
 
     cliente = relationship("Cliente", back_populates="membresias_cliente")
     membresia = relationship("Membresia", back_populates="clientes_con_este_plan")
+    pagos = relationship(
+        "PagoMembresia",
+        back_populates="cliente_membresia",
+        order_by="PagoMembresia.fecha_pago.desc()",
+        cascade="all, delete-orphan",
+    )
+
+
+class PagoMembresia(Base):
+    """
+    Registro individual de cada pago realizado contra una
+    ClienteMembresia. Permite ver el historial completo de pagos
+    (parciales o totales) de una membresia asignada.
+    """
+    __tablename__ = "pagos_membresia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cliente_membresia_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=False, index=True)
+    monto = Column(Float, nullable=False)
+    metodo_pago = Column(String, default="efectivo")
+    fecha_pago = Column(DateTime, default=datetime.now)
+    registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    notas = Column(String, nullable=True)
+
+    cliente_membresia = relationship("ClienteMembresia", back_populates="pagos")
+    registrado_por = relationship("Usuario")
 
 
 # ==================================================================
@@ -410,6 +515,7 @@ class Compra(Base):
     fecha = Column(DateTime, default=datetime.now)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(Text, nullable=True)
+    metodo_pago = Column(String, default="efectivo")  # efectivo | cuenta
 
     producto = relationship("Producto")
 
@@ -518,8 +624,8 @@ class RutinaDia(Base):
 
 class RutinaEjercicio(Base):
     """Un ejercicio dentro de un dia de rutina. Si se elige del
-    catalogo (tipo_ejercicio_id), nombre se autocompleta pero queda
-    editable; tambien se admite texto libre sin catalogo."""
+    catalogo (tipo_ejercicio_id), conserva el nombre canonico y recibe
+    sus cambios; tambien se admite texto libre sin catalogo."""
     __tablename__ = "rutina_ejercicios"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -532,6 +638,55 @@ class RutinaEjercicio(Base):
     notas = Column(Text, nullable=True)
 
     dia = relationship("RutinaDia", back_populates="ejercicios")
+    tipo_ejercicio = relationship("TipoEjercicio")
+
+
+class PaqueteRutina(Base):
+    """Plantilla reutilizable de entrenamiento para un perfil especifico."""
+    __tablename__ = "paquetes_rutina"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    nombre = Column(String, nullable=False)
+    descripcion = Column(Text, nullable=True)
+    nivel = Column(String, default="basico")
+    objetivo = Column(String, default="inicio")
+    etapa = Column(String, default="inicio")
+    genero_recomendado = Column(String, default="todos")
+    edad_min = Column(Integer, nullable=True)
+    edad_max = Column(Integer, nullable=True)
+    duracion_semanas = Column(Integer, default=4)
+    activo = Column(Boolean, default=True)
+    fecha_creacion = Column(DateTime, default=datetime.now)
+
+    dias = relationship("PaqueteRutinaDia", back_populates="paquete", cascade="all, delete-orphan", order_by="PaqueteRutinaDia.orden")
+
+
+class PaqueteRutinaDia(Base):
+    __tablename__ = "paquete_rutina_dias"
+
+    id = Column(Integer, primary_key=True, index=True)
+    paquete_id = Column(Integer, ForeignKey("paquetes_rutina.id"), nullable=False)
+    nombre = Column(String, nullable=False)
+    orden = Column(Integer, default=0)
+
+    paquete = relationship("PaqueteRutina", back_populates="dias")
+    ejercicios = relationship("PaqueteRutinaEjercicio", back_populates="dia", cascade="all, delete-orphan", order_by="PaqueteRutinaEjercicio.id")
+
+
+class PaqueteRutinaEjercicio(Base):
+    __tablename__ = "paquete_rutina_ejercicios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dia_id = Column(Integer, ForeignKey("paquete_rutina_dias.id"), nullable=False)
+    tipo_ejercicio_id = Column(Integer, ForeignKey("tipos_ejercicio.id"), nullable=True)
+    nombre = Column(String, nullable=False)
+    series = Column(Integer, nullable=True)
+    repeticiones = Column(String, nullable=True)
+    peso = Column(String, nullable=True)
+    notas = Column(Text, nullable=True)
+
+    dia = relationship("PaqueteRutinaDia", back_populates="ejercicios")
     tipo_ejercicio = relationship("TipoEjercicio")
 
 
@@ -574,6 +729,9 @@ class ComidaPlan(Base):
     nombre_alimento = Column(String, nullable=False)
     calorias = Column(Integer, nullable=True)
     cantidad_gramos = Column(Float, nullable=True)
+    # Texto sencillo que ve el cliente (ej. "3 huevos", "1/2 taza").
+    # Los gramos se conservan aparte solo para los calculos nutricionales.
+    porcion_cliente = Column(String, nullable=True)
 
     plan = relationship("PlanNutricion", back_populates="comidas")
     alimento = relationship("Alimento")
@@ -651,6 +809,7 @@ class PaqueteAlimento(Base):
     paquete_id = Column(Integer, ForeignKey("paquetes_nutricion.id"), nullable=False)
     alimento_id = Column(Integer, ForeignKey("alimentos.id"), nullable=False)
     cantidad_gramos = Column(Float, nullable=False, default=100.0)
+    porcion_cliente = Column(String, nullable=True)
 
     paquete = relationship("PaqueteNutricion", back_populates="items")
     alimento = relationship("Alimento")
@@ -821,6 +980,24 @@ class ClaseDictada(Base):
     profesor_reemplazo = relationship("Empleado", foreign_keys=[profesor_reemplazo_id])
 
 
+class ReservaSala(Base):
+    """Bloque de Agenda para un alquiler u otro uso externo de una sala."""
+    __tablename__ = "reservas_sala"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    concepto_ingreso_id = Column(Integer, ForeignKey("conceptos_otro_ingreso.id"), nullable=False)
+    nombre_reserva = Column(String, nullable=False)
+    responsable = Column(String, nullable=True)
+    sala = Column(String, nullable=True)
+    fecha = Column(Date, nullable=False)
+    hora_inicio = Column(DateTime, nullable=False)
+    hora_fin = Column(DateTime, nullable=True)
+    notas = Column(Text, nullable=True)
+
+    concepto = relationship("ConceptoOtroIngreso")
+
+
 class PagoPlanilla(Base):
     """
     Registro historico de un pago de planilla realizado a un
@@ -860,6 +1037,7 @@ class PagoPlanilla(Base):
     fecha_pago = Column(DateTime, default=datetime.now)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # quien registro el pago
+    metodo_pago = Column(String, default="efectivo")  # efectivo | cuenta
 
     # --- Solo PROFESOR: el periodo se identifica por el rango de
     # fechas usado en el calculo (no por mes calendario, ya que las
@@ -938,9 +1116,7 @@ class PagoServicio(Base):
     fecha_pago = Column(DateTime, default=datetime.now)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
-    # Metodo con el que se cobro este pago (Efectivo/Tarjeta/QR), igual
-    # que en Ventas y ClienteMembresia, para que tambien impacte el
-    # balance de caja Efectivo vs Cuenta.
+    # Origen de fondos del gimnasio: caja fisica o cuenta bancaria/digital.
     metodo_pago = Column(String, default="efectivo")
 
     cargo = relationship("CargoServicio", back_populates="pagos")
@@ -995,6 +1171,37 @@ class CategoriaGasto(str, enum.Enum):
     OTROS             = "otros"              # alquiler, servicios, mantenimiento, etc.
 
 
+class ConceptoOtroIngreso(Base):
+    """Concepto reutilizable para ingresos ajenos a membresias y ventas."""
+    __tablename__ = "conceptos_otro_ingreso"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    nombre = Column(String, nullable=False)
+    descripcion = Column(Text, nullable=True)
+    monto_sugerido = Column(Float, default=0.0)
+    mostrar_agenda = Column(Boolean, default=False)
+    sala_sugerida = Column(String, nullable=True)
+    activo = Column(Boolean, default=True)
+    fecha_creacion = Column(DateTime, default=datetime.now)
+
+
+class OtroIngreso(Base):
+    """Cobro registrado contra un concepto de otros ingresos."""
+    __tablename__ = "otros_ingresos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    concepto_id = Column(Integer, ForeignKey("conceptos_otro_ingreso.id"), nullable=False)
+    fecha = Column(DateTime, default=datetime.now)
+    monto = Column(Float, nullable=False)
+    metodo_pago = Column(String, default="efectivo")
+    descripcion = Column(Text, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+
+    concepto = relationship("ConceptoOtroIngreso")
+
+
 class Gasto(Base):
     """
     Registro unificado de egresos del gimnasio. Los pagos de planilla
@@ -1013,6 +1220,7 @@ class Gasto(Base):
     referencia_id  = Column(Integer, nullable=True)  # id en PagoPlanilla o Compra segun categoria
     usuario_id     = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas          = Column(Text, nullable=True)
+    metodo_pago    = Column(String, default="efectivo")  # efectivo | cuenta
 
 
 class MetaMensual(Base):

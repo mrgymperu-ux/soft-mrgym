@@ -13,12 +13,18 @@ Convencion de permisos:
 
 from datetime import datetime, date, timedelta
 from typing import List, Optional
+import calendar
 import os
 import uuid
 import csv
 import io
+import asyncio
+import time
+import logging
+import urllib.request
+import unicodedata
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -28,7 +34,74 @@ from sqlalchemy.orm import Session
 from . import models, schemas, auth, pdf_generator
 from .database import get_db, engine, SessionLocal, SQLALCHEMY_DATABASE_URL
 
-app = FastAPI(title="Soft-MrGym API")
+logger = logging.getLogger("soft-mrgym")
+
+app = FastAPI(title="Soft-Gym API")
+
+# ==================================================================
+# KEEP-ALIVE INTELIGENTE (anti-sleep Render free tier)
+# - Solo se auto-pinga si NO hubo trafico en los ultimos 13 min
+# - Solo entre 6:00 AM y 11:00 PM hora Lima (UTC-5)
+# - Fuera de ese horario deja dormir al contenedor (ahorra horas)
+# ==================================================================
+_ultimo_request_ts = time.time()
+_INTERVALO_CHECK_SEG = 60           # revisa cada 60 segundos
+_UMBRAL_INACTIVIDAD_SEG = 13 * 60   # 13 min (Render duerme a los 15)
+_HORA_INICIO = 6    # 6 AM Lima
+_HORA_FIN = 23       # 11 PM Lima
+_ZONA_LIMA_OFFSET = -5  # UTC-5 (Peru no tiene horario de verano)
+
+
+def _hora_lima_actual() -> tuple:
+    """Retorna (hora, dia_semana) en Lima. dia_semana: 0=lunes, 6=domingo."""
+    utc_now = datetime.utcnow()
+    lima_now = utc_now + timedelta(hours=_ZONA_LIMA_OFFSET)
+    return lima_now.hour, lima_now.weekday()
+
+
+def _en_horario_activo() -> bool:
+    """True si estamos en horario donde el keep-alive debe funcionar.
+    Lun-Sab: 6am - 11pm | Dom: 6am - 1pm"""
+    hora, dia = _hora_lima_actual()
+    if dia == 6:  # domingo
+        return _HORA_INICIO <= hora < 13
+    return _HORA_INICIO <= hora < _HORA_FIN
+
+
+async def _keep_alive_loop():
+    """Background task: si no hubo trafico reciente y estamos en horario,
+    hace un GET a la URL externa para que Render no duerma el contenedor."""
+    external_url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not external_url:
+        logger.info("[keep-alive] No RENDER_EXTERNAL_URL, keep-alive desactivado (dev local)")
+        return
+    ping_url = f"{external_url}/ping"
+    logger.info(f"[keep-alive] Activo -> {ping_url} (horario {_HORA_INICIO}:00-{_HORA_FIN}:00 Lima)")
+    while True:
+        await asyncio.sleep(_INTERVALO_CHECK_SEG)
+        try:
+            if not _en_horario_activo():
+                continue  # fuera de horario, dejar dormir
+            inactividad = time.time() - _ultimo_request_ts
+            if inactividad < _UMBRAL_INACTIVIDAD_SEG:
+                continue  # hubo trafico reciente, no hace falta
+            # Self-ping a traves de la URL externa (Render lo cuenta como trafico)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: urllib.request.urlopen(ping_url, timeout=10).read()
+            )
+            logger.info(f"[keep-alive] Ping enviado (inactivo {inactividad:.0f}s)")
+        except Exception as e:
+            logger.warning(f"[keep-alive] Error: {e}")
+
+
+@app.middleware("http")
+async def track_last_request(request: Request, call_next):
+    """Registra el timestamp de cada request para el keep-alive."""
+    global _ultimo_request_ts
+    _ultimo_request_ts = time.time()
+    return await call_next(request)
 
 
 # ==================================================================
@@ -51,6 +124,137 @@ def q(db: Session, Model, usuario: models.Usuario):
     return db.query(Model).filter(Model.gimnasio_id == gid)
 
 
+def _del_gym(db: Session, Model, entidad_id: int, usuario: models.Usuario):
+    """Obtiene una entidad raiz por id, siempre limitada al tenant actual."""
+    return q(db, Model, usuario).filter(Model.id == entidad_id).first()
+
+
+def _cliente_membresia_del_gym(db: Session, cm_id: int, usuario: models.Usuario):
+    """Resuelve una membresia asignada a traves del gimnasio de su cliente."""
+    return (
+        db.query(models.ClienteMembresia)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.id == cm_id,
+            models.Cliente.gimnasio_id == get_gid(usuario),
+        )
+        .first()
+    )
+
+
+def _pago_membresia_del_gym(db: Session, pago_id: int, usuario: models.Usuario):
+    return (
+        db.query(models.PagoMembresia)
+        .join(models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(models.PagoMembresia.id == pago_id, models.Cliente.gimnasio_id == get_gid(usuario))
+        .first()
+    )
+
+
+def _rutina_dia_del_gym(db: Session, dia_id: int, usuario: models.Usuario):
+    return (
+        db.query(models.RutinaDia)
+        .join(models.Rutina, models.Rutina.id == models.RutinaDia.rutina_id)
+        .filter(models.RutinaDia.id == dia_id, models.Rutina.gimnasio_id == get_gid(usuario))
+        .first()
+    )
+
+
+def _rutina_ejercicio_del_gym(db: Session, ejercicio_id: int, usuario: models.Usuario):
+    return (
+        db.query(models.RutinaEjercicio)
+        .join(models.RutinaDia, models.RutinaDia.id == models.RutinaEjercicio.dia_id)
+        .join(models.Rutina, models.Rutina.id == models.RutinaDia.rutina_id)
+        .filter(models.RutinaEjercicio.id == ejercicio_id, models.Rutina.gimnasio_id == get_gid(usuario))
+        .first()
+    )
+
+
+def _pago_servicio_del_gym(db: Session, pago_id: int, usuario: models.Usuario):
+    return (
+        db.query(models.PagoServicio)
+        .join(models.CargoServicio, models.CargoServicio.id == models.PagoServicio.cargo_id)
+        .filter(models.PagoServicio.id == pago_id, models.CargoServicio.gimnasio_id == get_gid(usuario))
+        .first()
+    )
+
+
+def _configuracion_del_gym(db: Session, usuario: models.Usuario) -> models.Gimnasio:
+    """Fuente unica de configuracion operativa para el tenant autenticado."""
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    return gimnasio
+
+
+def _sumar_meses(fecha: date, meses: int) -> date:
+    """Suma meses conservando el dia cuando existe en el mes destino."""
+    indice = fecha.month - 1 + meses
+    anio = fecha.year + indice // 12
+    mes = indice % 12 + 1
+    dia = min(fecha.day, calendar.monthrange(anio, mes)[1])
+    return date(anio, mes, dia)
+
+
+def _estado_suscripcion(suscripcion: Optional[models.SuscripcionSaas]) -> str:
+    if not suscripcion:
+        return "sin_configurar"
+    if suscripcion.estado in {"suspendida", "cancelada"}:
+        return suscripcion.estado
+    hoy = date.today()
+    if hoy <= suscripcion.fecha_fin_periodo:
+        return "prueba" if suscripcion.estado == "prueba" else "activa"
+    if suscripcion.fecha_fin_gracia and hoy <= suscripcion.fecha_fin_gracia:
+        return "gracia"
+    return "vencida"
+
+
+def _crear_prueba_saas(db: Session, gimnasio: models.Gimnasio, dias: int = 14):
+    """Crea la prueba inicial; no se usa para tenants legacy ya existentes."""
+    hoy = date.today()
+    suscripcion = models.SuscripcionSaas(
+        gimnasio_id=gimnasio.id,
+        plan_id=gimnasio.plan_id,
+        estado="prueba",
+        fecha_inicio=hoy,
+        fecha_fin_periodo=hoy + timedelta(days=dias - 1),
+        fecha_fin_gracia=hoy + timedelta(days=dias + 4),
+        dias_gracia=5,
+    )
+    db.add(suscripcion)
+    return suscripcion
+
+
+def _serializar_suscripcion(gimnasio: models.Gimnasio, incluir_pagos: bool = True) -> dict:
+    suscripcion = gimnasio.suscripcion_saas
+    if not suscripcion:
+        return {
+            "id": None, "gimnasio_id": gimnasio.id, "plan_id": gimnasio.plan_id,
+            "nombre_plan": gimnasio.plan.nombre if gimnasio.plan else None,
+            "estado": "sin_configurar", "dias_gracia": 0,
+            "dias_restantes": None, "auto_renovacion": False, "pagos": [],
+        }
+    estado = _estado_suscripcion(suscripcion)
+    limite = suscripcion.fecha_fin_gracia or suscripcion.fecha_fin_periodo
+    dias_restantes = (limite - date.today()).days
+    return {
+        "id": suscripcion.id,
+        "gimnasio_id": gimnasio.id,
+        "plan_id": suscripcion.plan_id,
+        "nombre_plan": suscripcion.plan.nombre if suscripcion.plan else None,
+        "estado": estado,
+        "fecha_inicio": suscripcion.fecha_inicio,
+        "fecha_fin_periodo": suscripcion.fecha_fin_periodo,
+        "fecha_fin_gracia": suscripcion.fecha_fin_gracia,
+        "dias_gracia": suscripcion.dias_gracia,
+        "dias_restantes": max(dias_restantes, 0),
+        "auto_renovacion": suscripcion.auto_renovacion,
+        "notas": suscripcion.notas,
+        "pagos": sorted(suscripcion.pagos, key=lambda p: p.fecha_pago, reverse=True) if incluir_pagos else [],
+    }
+
+
 def _validar_limite_plan(db: Session, usuario: models.Usuario, recurso: str):
     """
     Valida que el gimnasio no haya alcanzado el limite de su plan SaaS
@@ -67,6 +271,8 @@ def _validar_limite_plan(db: Session, usuario: models.Usuario, recurso: str):
     plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == gimnasio.plan_id).first()
     if not plan:
         return
+    if not plan.activo:
+        raise HTTPException(status_code=403, detail="El plan del gimnasio esta inactivo")
 
     mapa = {
         "clientes": (plan.max_clientes, models.Cliente, models.Cliente.activo == True),
@@ -81,9 +287,10 @@ def _validar_limite_plan(db: Session, usuario: models.Usuario, recurso: str):
     if limite == 0:  # 0 = ilimitado
         return
 
-    actual = db.query(func.count(modelo.id)).filter(
-        modelo.gimnasio_id == gid, filtro_extra
-    ).scalar() or 0
+    query_actual = db.query(func.count(modelo.id)).filter(modelo.gimnasio_id == gid, filtro_extra)
+    if recurso == "usuarios_staff":
+        query_actual = query_actual.filter(models.Usuario.rol == models.RolUsuario.STAFF)
+    actual = query_actual.scalar() or 0
 
     if actual >= limite:
         nombres = {"clientes": "clientes", "productos": "productos", "rutinas": "rutinas", "usuarios_staff": "usuarios de staff"}
@@ -105,6 +312,8 @@ def _validar_nutricion_habilitada(db: Session, usuario: models.Usuario):
     plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == gimnasio.plan_id).first()
     if not plan:
         return
+    if not plan.activo:
+        raise HTTPException(status_code=403, detail="El plan del gimnasio esta inactivo")
     if not plan.nutricion_habilitada:
         raise HTTPException(
             status_code=403,
@@ -174,8 +383,12 @@ def _eliminar_foto_anterior(foto_url: Optional[str]):
 # ========================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
+    allow_origins=[o.strip() for o in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002",
+    ).split(",") if o.strip()],
+    # La autenticacion usa Bearer JWT, no cookies cross-origin.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -290,11 +503,12 @@ def _migrar_columnas_nuevas():
             ("desde", "DATE"),
             ("hasta", "DATE"),
             ("gimnasio_id", "INTEGER"),
+            ("metodo_pago", "VARCHAR"),
         ],
         # clientes_extra: ya fusionado arriba en la entrada "clientes"
         "rutina_ejercicios": [("tipo_ejercicio_id", "INTEGER")],
-        "comidas_plan": [("alimento_id", "INTEGER"), ("cantidad_gramos", "FLOAT")],
-        "pagos_servicio": [("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
+        "comidas_plan": [("alimento_id", "INTEGER"), ("cantidad_gramos", "FLOAT"), ("porcion_cliente", "VARCHAR")],
+        "pagos_servicio": [("metodo_pago", "VARCHAR")],
         "cargos_servicio": [
             ("recurrente_tipo", "VARCHAR"),
             ("recurrente_dias_semana", "VARCHAR"),
@@ -316,15 +530,16 @@ def _migrar_columnas_nuevas():
             ("gimnasio_id", "INTEGER"),
         ],
         "clientes_historicos": [("gimnasio_id", "INTEGER")],
-        "compras": [("gimnasio_id", "INTEGER")],
+        "compras": [("gimnasio_id", "INTEGER"), ("metodo_pago", "VARCHAR")],
         "asistencias": [("gimnasio_id", "INTEGER")],
         "progresos": [("gimnasio_id", "INTEGER")],
         "rutinas": [("gimnasio_id", "INTEGER")],
         "paquetes_nutricion": [("gimnasio_id", "INTEGER")],
+        "paquete_alimentos": [("porcion_cliente", "VARCHAR")],
         "retos": [("gimnasio_id", "INTEGER")],
         "puestos": [("gimnasio_id", "INTEGER")],
         "servicios": [("gimnasio_id", "INTEGER")],
-        "gastos": [("gimnasio_id", "INTEGER")],
+        "gastos": [("gimnasio_id", "INTEGER"), ("metodo_pago", "VARCHAR")],
         "metas_mensuales": [("gimnasio_id", "INTEGER")],
         "tramos_comision": [("gimnasio_id", "INTEGER")],
         "medidas": [("gimnasio_id", "INTEGER")],
@@ -342,6 +557,22 @@ def _migrar_columnas_nuevas():
                         conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {nombre_columna} {tipo}"))
                     except Exception:
                         pass  # columna ya existe o tipo incompatible
+
+        # En PostgreSQL el DNI debe ser unico dentro de cada gimnasio,
+        # no en toda la plataforma. Bases nuevas reciben la restriccion
+        # desde models.py; esta conversion cubre despliegues existentes.
+        if not es_sqlite:
+            restricciones = sa_inspect(conn).get_unique_constraints("clientes")
+            for restriccion in restricciones:
+                if restriccion.get("column_names") == ["dni"] and restriccion.get("name"):
+                    nombre = restriccion["name"].replace('"', '""')
+                    conn.execute(text(f'ALTER TABLE clientes DROP CONSTRAINT "{nombre}"'))
+            restricciones = sa_inspect(conn).get_unique_constraints("clientes")
+            if not any(r.get("column_names") == ["gimnasio_id", "dni"] for r in restricciones):
+                conn.execute(text(
+                    "ALTER TABLE clientes ADD CONSTRAINT uq_clientes_gimnasio_dni "
+                    "UNIQUE (gimnasio_id, dni)"
+                ))
         conn.commit()
 
 
@@ -451,8 +682,20 @@ def _sembrar_gimnasio_default():
         db.close()
 
 
+# ==================================================================
+# ENDPOINT DE SALUD (usado por el keep-alive y monitoreo)
+# ==================================================================
+@app.get("/ping", tags=["Sistema"])
+def ping():
+    """Health check liviano. Usado por el keep-alive interno."""
+    hora, dia = _hora_lima_actual()
+    return {"status": "ok", "hora_lima": hora, "dia": dia, "keep_alive_activo": _en_horario_activo()}
+
+
 @app.on_event("startup")
 def startup_event():
+    # Lanzar keep-alive como tarea de fondo
+    asyncio.get_event_loop().create_task(_keep_alive_loop())
     # En PostgreSQL, crear ENUMs puede fallar si ya existen (race condition
     # entre workers de gunicorn, o deploy anterior parcial). Se maneja
     # creando las tablas en un solo intento robusto.
@@ -482,6 +725,7 @@ def startup_event():
     _sembrar_gimnasio_default()  # garantiza que exista el gimnasio 1 y asigna data existente
     _sembrar_puestos_iniciales()
     _sembrar_ejercicios_catalogo()
+    _sembrar_paquetes_rutina_iniciales()
     _sembrar_alimentos_iniciales()
     _sembrar_alimentos_expansion_lima()
     _sembrar_alimentos_expansion_lima_2()
@@ -489,6 +733,8 @@ def startup_event():
     _sembrar_paquetes_nutricion_variantes()
     _sembrar_servicios_iniciales()
     _sembrar_porciones_caseras()
+    _normalizar_porciones_cliente()
+    _sincronizar_nombres_ejercicios_catalogo()
 
 
 def _sembrar_ejercicios_catalogo():
@@ -599,6 +845,191 @@ def _sembrar_ejercicios_catalogo():
             nuevos += 1
         if nuevos:
             db.commit()
+    finally:
+        db.close()
+
+
+def _sembrar_paquetes_rutina_iniciales():
+    """Crea paquetes editables por objetivo, genero y nivel para cada gimnasio."""
+    plantillas = {
+        "adaptacion_a": [
+            ("Step basico subir y bajar", "12"), ("Sentadilla copa con mancuerna", "12"),
+            ("Remo en maquina", "12"), ("Press en maquina de pecho", "12"), ("Plancha frontal", "25 s"),
+        ],
+        "adaptacion_b": [
+            ("Trote en el sitio", "45 s"), ("Prensa de piernas (maquina)", "12"),
+            ("Jalon al pecho (maquina)", "12"), ("Elevaciones laterales", "12"), ("Crunch abdominal", "15"),
+        ],
+        "movilidad": [
+            ("Estiramiento de cuadriceps de pie", "30 s"), ("Estiramiento de isquiotibiales", "30 s"),
+            ("Estiramiento de pecho en pared", "30 s"), ("Estiramiento de espalda (gato-vaca)", "10"),
+            ("Estiramiento de hombros", "30 s"),
+        ],
+        "quema_full": [
+            ("Saltos de tijera", "40 s"), ("Sentadilla copa con mancuerna", "15"),
+            ("Remo con mancuerna", "12"), ("Rodillazos altos", "40 s"), ("Bicicleta abdominal", "20"),
+        ],
+        "quema_piernas": [
+            ("Step con rodillazo", "16"), ("Zancadas con mancuernas", "12 por lado"),
+            ("Patinadores laterales", "40 s"), ("Sentadilla con salto", "12"), ("Plancha lateral", "30 s por lado"),
+        ],
+        "hiit": [
+            ("Burpees", "12"), ("Mountain climbers", "40 s"), ("Kettlebell swing", "15"),
+            ("Battle ropes", "30 s"), ("Rodillazos altos", "45 s"),
+        ],
+        "empuje": [
+            ("Press de banca con barra", "8-10"), ("Press inclinado con mancuernas", "10"),
+            ("Press militar con mancuernas", "10"), ("Elevaciones laterales", "12"),
+            ("Extension de triceps con mancuerna", "12"),
+        ],
+        "jale": [
+            ("Remo con barra", "8-10"), ("Jalon al pecho (maquina)", "10-12"),
+            ("Remo con mancuerna", "10 por lado"), ("Curl con barra", "10"),
+            ("Curl de biceps con mancuernas", "12"),
+        ],
+        "piernas_masa": [
+            ("Sentadilla con barra", "8-10"), ("Prensa de piernas (maquina)", "10-12"),
+            ("Peso muerto rumano con barra", "10"), ("Curl de femoral (maquina)", "12"),
+            ("Elevacion de talones (pantorrilla)", "15"),
+        ],
+        "gluteos_base": [
+            ("Sentadilla copa con mancuerna", "12"), ("Hip thrust en maquina", "12"),
+            ("Peso muerto rumano con mancuernas", "12"), ("Abduccion de cadera (maquina)", "15"),
+            ("Caminata lateral con banda", "16 pasos"),
+        ],
+        "gluteos_avanzado": [
+            ("Hip thrust con barra", "8-10"), ("Sentadilla bulgara", "10 por lado"),
+            ("Peso muerto rumano con barra", "10"), ("Patada de gluteo en polea", "12 por lado"),
+            ("Abduccion de cadera (maquina)", "15"),
+        ],
+        "superior_tono": [
+            ("Press inclinado con mancuernas", "12"), ("Remo con mancuerna", "12"),
+            ("Elevaciones laterales", "15"), ("Curl de biceps con mancuernas", "12"),
+            ("Extension de triceps con mancuerna", "12"),
+        ],
+        "core": [
+            ("Plancha frontal", "40 s"), ("Plancha lateral", "30 s por lado"),
+            ("Russian twist", "20"), ("Elevacion de piernas", "12"), ("Bicicleta abdominal", "20"),
+        ],
+        "funcional": [
+            ("Kettlebell swing", "15"), ("Thruster con mancuernas", "12"),
+            ("Wall ball con pelota", "15"), ("Step up con mancuerna", "12 por lado"),
+            ("Mountain climbers", "40 s"),
+        ],
+        "potencia": [
+            ("Clean and press con mancuerna", "8 por lado"), ("Box jump (step alto)", "10"),
+            ("Thruster con mancuernas", "10"), ("Battle ropes", "30 s"), ("Burpees", "12"),
+        ],
+    }
+
+    # nombre, nivel, objetivo, etapa, genero, semanas, descripcion, dias
+    recetas = [
+        ("Inicio · Adaptacion general", "basico", "inicio", "adaptacion", "todos", 4,
+         "Para personas sin experiencia. Tres dias, tecnica controlada y descanso de 60 a 90 segundos.",
+         [("Dia 1 · Cuerpo completo", "adaptacion_a"), ("Dia 2 · Fuerza inicial", "adaptacion_b"), ("Dia 3 · Movilidad", "movilidad")]),
+        ("Bajar peso · Principiante mixto", "basico", "bajar_peso", "inicio", "todos", 6,
+         "Circuito inicial de bajo impacto. Mantener un ritmo conversacional y priorizar la tecnica.",
+         [("Dia 1 · Circuito", "quema_full"), ("Dia 2 · Fuerza base", "adaptacion_b"), ("Dia 3 · Circuito y core", "quema_piernas")]),
+        ("Bajar peso · Intermedio femenino", "intermedio", "bajar_peso", "desarrollo", "femenino", 6,
+         "Combina fuerza de tren inferior, circuito metabolico y core. Descanso de 45 a 60 segundos.",
+         [("Dia 1 · Gluteos", "gluteos_base"), ("Dia 2 · Metabolico", "quema_full"), ("Dia 3 · Superior", "superior_tono"), ("Dia 4 · HIIT", "hiit")]),
+        ("Bajar peso · Avanzado masculino", "avanzado", "bajar_peso", "desarrollo", "masculino", 8,
+         "Cinco dias con fuerza y acondicionamiento. Requiere dominio tecnico y recuperacion adecuada.",
+         [("Dia 1 · Empuje", "empuje"), ("Dia 2 · HIIT", "hiit"), ("Dia 3 · Piernas", "piernas_masa"), ("Dia 4 · Jale", "jale"), ("Dia 5 · Funcional", "funcional")]),
+        ("Ganar masa · Principiante masculino", "basico", "ganar_masa", "adaptacion", "masculino", 6,
+         "Tres dias de cuerpo completo para aprender patrones y progresar cargas sin llegar al fallo.",
+         [("Dia 1 · Base", "adaptacion_a"), ("Dia 2 · Tren superior", "superior_tono"), ("Dia 3 · Piernas", "piernas_masa")]),
+        ("Ganar masa · Intermedio masculino", "intermedio", "ganar_masa", "desarrollo", "masculino", 8,
+         "Division de cuatro dias con sobrecarga progresiva. Descansos de 90 a 120 segundos en compuestos.",
+         [("Dia 1 · Empuje", "empuje"), ("Dia 2 · Jale", "jale"), ("Dia 3 · Piernas", "piernas_masa"), ("Dia 4 · Superior", "superior_tono")]),
+        ("Ganar masa · Avanzado masculino", "avanzado", "ganar_masa", "desarrollo", "masculino", 10,
+         "Cinco dias de hipertrofia para alumnos experimentados, con control de carga y recuperacion.",
+         [("Dia 1 · Pecho y hombro", "empuje"), ("Dia 2 · Espalda", "jale"), ("Dia 3 · Piernas", "piernas_masa"), ("Dia 4 · Superior", "superior_tono"), ("Dia 5 · Piernas 2", "piernas_masa")]),
+        ("Ganar masa · Principiante femenino", "basico", "ganar_masa", "adaptacion", "femenino", 6,
+         "Base de tres dias con enfasis en gluteos y piernas, sin descuidar tren superior y core.",
+         [("Dia 1 · Gluteos", "gluteos_base"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · Piernas y core", "adaptacion_b")]),
+        ("Ganar masa · Intermedio femenino", "intermedio", "ganar_masa", "desarrollo", "femenino", 8,
+         "Cuatro dias con dos estimulos de tren inferior y progresion de cargas.",
+         [("Dia 1 · Gluteos", "gluteos_avanzado"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · Piernas", "piernas_masa"), ("Dia 4 · Gluteos y core", "gluteos_base")]),
+        ("Ganar masa · Avanzado femenino", "avanzado", "ganar_masa", "desarrollo", "femenino", 10,
+         "Cinco dias para alumnas avanzadas, con tres estimulos inferiores y dos superiores/funcionales.",
+         [("Dia 1 · Gluteos fuerza", "gluteos_avanzado"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · Piernas", "piernas_masa"), ("Dia 4 · Funcional", "funcional"), ("Dia 5 · Gluteos volumen", "gluteos_base")]),
+        ("Tonificacion · Principiante femenino", "basico", "tonificacion", "inicio", "femenino", 6,
+         "Tres dias equilibrados con cargas moderadas, repeticiones controladas y trabajo de postura.",
+         [("Dia 1 · Inferior", "gluteos_base"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · Cuerpo completo", "quema_full")]),
+        ("Tonificacion · Intermedio mixto", "intermedio", "tonificacion", "desarrollo", "todos", 8,
+         "Cuatro dias que combinan fuerza, core y acondicionamiento para mejorar composicion corporal.",
+         [("Dia 1 · Superior", "superior_tono"), ("Dia 2 · Piernas", "gluteos_base"), ("Dia 3 · Funcional", "funcional"), ("Dia 4 · Core y cardio", "quema_piernas")]),
+        ("Tonificacion · Avanzado femenino", "avanzado", "tonificacion", "definicion", "femenino", 8,
+         "Cinco dias con enfasis inferior, circuitos y densidad de trabajo para alumnas experimentadas.",
+         [("Dia 1 · Gluteos", "gluteos_avanzado"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · HIIT", "hiit"), ("Dia 4 · Piernas", "piernas_masa"), ("Dia 5 · Funcional", "funcional")]),
+        ("Definicion · Intermedio masculino", "intermedio", "definicion", "definicion", "masculino", 8,
+         "Mantiene fuerza y masa muscular mientras aumenta el gasto mediante dos sesiones metabolicas.",
+         [("Dia 1 · Empuje", "empuje"), ("Dia 2 · Piernas", "piernas_masa"), ("Dia 3 · Jale", "jale"), ("Dia 4 · HIIT", "hiit")]),
+        ("Definicion · Intermedio femenino", "intermedio", "definicion", "definicion", "femenino", 8,
+         "Fuerza de cuerpo completo con enfasis en gluteos, core y acondicionamiento.",
+         [("Dia 1 · Gluteos", "gluteos_avanzado"), ("Dia 2 · Superior", "superior_tono"), ("Dia 3 · Funcional", "funcional"), ("Dia 4 · Core y cardio", "quema_piernas")]),
+        ("Definicion · Avanzado mixto", "avanzado", "definicion", "definicion", "todos", 10,
+         "Cinco dias de alta densidad. Supervisar recuperacion y conservar cargas en ejercicios principales.",
+         [("Dia 1 · Empuje", "empuje"), ("Dia 2 · Piernas", "piernas_masa"), ("Dia 3 · Jale", "jale"), ("Dia 4 · HIIT", "hiit"), ("Dia 5 · Funcional", "funcional")]),
+        ("Rendimiento · Intermedio mixto", "intermedio", "rendimiento", "desarrollo", "todos", 8,
+         "Mejora fuerza general, potencia y capacidad de trabajo con cuatro sesiones semanales.",
+         [("Dia 1 · Fuerza superior", "empuje"), ("Dia 2 · Fuerza inferior", "piernas_masa"), ("Dia 3 · Funcional", "funcional"), ("Dia 4 · Acondicionamiento", "hiit")]),
+        ("Rendimiento · Avanzado mixto", "avanzado", "rendimiento", "competencia", "todos", 10,
+         "Cinco dias para atletas avanzados. Exige tecnica consolidada y control de fatiga.",
+         [("Dia 1 · Potencia", "potencia"), ("Dia 2 · Fuerza superior", "empuje"), ("Dia 3 · Fuerza inferior", "piernas_masa"), ("Dia 4 · Jale", "jale"), ("Dia 5 · Acondicionamiento", "hiit")]),
+    ]
+
+    series_por_nivel = {"basico": 3, "intermedio": 4, "avanzado": 4, "competencia": 5}
+    db = SessionLocal()
+    try:
+        gimnasios = db.query(models.Gimnasio).filter(models.Gimnasio.activo == True).all()
+        for gimnasio in gimnasios:
+            catalogo = {
+                ejercicio.nombre: ejercicio
+                for ejercicio in db.query(models.TipoEjercicio).filter(
+                    models.TipoEjercicio.gimnasio_id == gimnasio.id,
+                    models.TipoEjercicio.activo == True,
+                ).all()
+            }
+            existentes = {
+                nombre for (nombre,) in db.query(models.PaqueteRutina.nombre).filter(
+                    models.PaqueteRutina.gimnasio_id == gimnasio.id
+                ).all()
+            }
+            for nombre, nivel, objetivo, etapa, genero, semanas, descripcion, dias_receta in recetas:
+                if nombre in existentes:
+                    continue
+                nombres_requeridos = {
+                    nombre_ejercicio
+                    for _, clave in dias_receta
+                    for nombre_ejercicio, _ in plantillas[clave]
+                }
+                if not nombres_requeridos.issubset(catalogo):
+                    continue
+                dias = []
+                for orden, (nombre_dia, clave) in enumerate(dias_receta, start=1):
+                    ejercicios = [models.PaqueteRutinaEjercicio(
+                        tipo_ejercicio_id=catalogo[nombre_ejercicio].id,
+                        nombre=nombre_ejercicio,
+                        series=series_por_nivel[nivel],
+                        repeticiones=repeticiones,
+                        notas="Carga que permita completar la tecnica sin dolor.",
+                    ) for nombre_ejercicio, repeticiones in plantillas[clave]]
+                    dias.append(models.PaqueteRutinaDia(nombre=nombre_dia, orden=orden, ejercicios=ejercicios))
+                db.add(models.PaqueteRutina(
+                    gimnasio_id=gimnasio.id,
+                    nombre=nombre,
+                    descripcion=descripcion,
+                    nivel=nivel,
+                    objetivo=objetivo,
+                    etapa=etapa,
+                    genero_recomendado=genero,
+                    duracion_semanas=semanas,
+                    dias=dias,
+                ))
+                existentes.add(nombre)
+        db.commit()
     finally:
         db.close()
 
@@ -1051,9 +1482,9 @@ def _sembrar_puestos_iniciales():
 # ==================================================================
 
 def _resolver_gimnasio_id_por_slug(db: Session, slug: Optional[str]) -> Optional[int]:
-    """Convierte un slug a gimnasio_id. Devuelve None si no viene slug (compat local)."""
+    """Convierte un slug a gimnasio_id; es obligatorio en portales multi-tenant."""
     if not slug:
-        return None
+        raise HTTPException(status_code=400, detail="Debes indicar el gimnasio")
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
     if not gimnasio:
         raise HTTPException(status_code=404, detail=f"Gimnasio '{slug}' no encontrado")
@@ -1204,7 +1635,7 @@ def service_worker_gimnasio(slug: str):
     como PWA. No cachea nada (la app necesita conexion para funcionar).
     """
     from fastapi.responses import Response
-    sw = """// Service Worker - Soft-MrGym PWA
+    sw = """// Service Worker - Soft-Gym PWA
 self.addEventListener('install', e => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
@@ -1332,18 +1763,22 @@ def crear_usuario(datos: schemas.UsuarioCreate, db: Session = Depends(get_db), u
     a un empleado_id, ese Empleado debe existir y, para un usuario
     con rol PROFESOR, debe ser de tipo PROFESOR_DE_SALA.
     """
-    _validar_limite_plan(db, usuario_admin, "usuarios_staff")
+    if datos.rol == models.RolUsuario.STAFF:
+        _validar_limite_plan(db, usuario_admin, "usuarios_staff")
     existente = db.query(models.Usuario).filter(models.Usuario.username == datos.username).first()
     if existente:
         raise HTTPException(status_code=400, detail="Ese nombre de usuario ya esta en uso")
 
     if datos.empleado_id:
-        empleado = db.query(models.Empleado).filter(models.Empleado.id == datos.empleado_id).first()
+        empleado = _del_gym(db, models.Empleado, datos.empleado_id, usuario_admin)
         if not empleado:
             raise HTTPException(status_code=404, detail="Empleado no encontrado")
         if datos.rol == models.RolUsuario.PROFESOR and empleado.tipo != models.TipoEmpleado.PROFESOR_DE_SALA:
             raise HTTPException(status_code=400, detail="El empleado asociado no es un profesor de sala")
-        ya_ligado = db.query(models.Usuario).filter(models.Usuario.empleado_id == datos.empleado_id, models.Usuario.activo == True).first()
+        ya_ligado = q(db, models.Usuario, usuario_admin).filter(
+            models.Usuario.empleado_id == datos.empleado_id,
+            models.Usuario.activo == True,
+        ).first()
         if ya_ligado:
             raise HTTPException(status_code=400, detail=f"Ese empleado ya tiene una cuenta de acceso activa ('{ya_ligado.username}')")
 
@@ -1387,7 +1822,7 @@ def actualizar_usuario(
         if set(datos_dict.keys()) - campos_autoservicio:
             raise HTTPException(status_code=403, detail="Solo puedes cambiar tu propia contraseña")
 
-    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    usuario = q(db, models.Usuario, usuario_actual).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -1409,7 +1844,7 @@ def desactivar_usuario(usuario_id: int, db: Session = Depends(get_db), usuario_a
     if usuario_id == usuario_actual.id:
         raise HTTPException(status_code=400, detail="No puedes desactivar tu propia cuenta")
 
-    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    usuario = q(db, models.Usuario, usuario_actual).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     usuario.activo = False
@@ -1431,6 +1866,88 @@ def mi_cuenta(usuario: models.Usuario = Depends(auth.get_usuario_actual)):
 # INGRESOS / EGRESOS (vistas agregadas filtrables para el panel)
 # ==================================================================
 
+@app.get("/conceptos-ingreso/", response_model=List[schemas.ConceptoOtroIngreso], tags=["Finanzas"])
+def listar_conceptos_ingreso(
+    solo_activos: bool = True,
+    para_agenda: bool = False,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff),
+):
+    query = q(db, models.ConceptoOtroIngreso, usuario)
+    if solo_activos:
+        query = query.filter(models.ConceptoOtroIngreso.activo == True)
+    if para_agenda:
+        query = query.filter(models.ConceptoOtroIngreso.mostrar_agenda == True)
+    return query.order_by(models.ConceptoOtroIngreso.nombre).all()
+
+
+@app.post("/conceptos-ingreso/", response_model=schemas.ConceptoOtroIngreso, tags=["Finanzas"])
+def crear_concepto_ingreso(datos: schemas.ConceptoOtroIngresoCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    if not datos.nombre.strip():
+        raise HTTPException(status_code=400, detail="El nombre del concepto es obligatorio")
+    valores = datos.model_dump()
+    valores["nombre"] = datos.nombre.strip()
+    concepto = models.ConceptoOtroIngreso(**valores, gimnasio_id=get_gid(usuario))
+    db.add(concepto); db.commit(); db.refresh(concepto)
+    return concepto
+
+
+@app.put("/conceptos-ingreso/{concepto_id}", response_model=schemas.ConceptoOtroIngreso, tags=["Finanzas"])
+def actualizar_concepto_ingreso(concepto_id: int, datos: schemas.ConceptoOtroIngresoUpdate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    concepto = _del_gym(db, models.ConceptoOtroIngreso, concepto_id, usuario)
+    if not concepto:
+        raise HTTPException(status_code=404, detail="Concepto no encontrado")
+    for campo, valor in datos.model_dump(exclude_unset=True).items():
+        setattr(concepto, campo, valor.strip() if campo == "nombre" and valor else valor)
+    db.commit(); db.refresh(concepto)
+    return concepto
+
+
+@app.delete("/conceptos-ingreso/{concepto_id}", tags=["Finanzas"])
+def desactivar_concepto_ingreso(concepto_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+    concepto = _del_gym(db, models.ConceptoOtroIngreso, concepto_id, usuario)
+    if not concepto:
+        raise HTTPException(status_code=404, detail="Concepto no encontrado")
+    concepto.activo = False; db.commit()
+    return {"ok": True}
+
+
+@app.get("/otros-ingresos/", response_model=List[schemas.OtroIngreso], tags=["Finanzas"])
+def listar_otros_ingresos(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff),
+):
+    query = q(db, models.OtroIngreso, usuario)
+    if desde:
+        query = query.filter(models.OtroIngreso.fecha >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        query = query.filter(models.OtroIngreso.fecha <= datetime.combine(hasta, datetime.max.time()))
+    return query.order_by(models.OtroIngreso.fecha.desc()).limit(min(limit, 500)).all()
+
+
+@app.post("/otros-ingresos/", response_model=schemas.OtroIngreso, tags=["Finanzas"])
+def registrar_otro_ingreso(datos: schemas.OtroIngresoCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    concepto = _del_gym(db, models.ConceptoOtroIngreso, datos.concepto_id, usuario)
+    if not concepto or not concepto.activo:
+        raise HTTPException(status_code=404, detail="Concepto de ingreso no encontrado")
+    valores = datos.model_dump()
+    valores["fecha"] = datos.fecha or datetime.now()
+    ingreso = models.OtroIngreso(**valores, gimnasio_id=get_gid(usuario), usuario_id=usuario.id)
+    db.add(ingreso); db.commit(); db.refresh(ingreso)
+    return ingreso
+
+
+@app.delete("/otros-ingresos/{ingreso_id}", tags=["Finanzas"])
+def eliminar_otro_ingreso(ingreso_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+    ingreso = _del_gym(db, models.OtroIngreso, ingreso_id, usuario)
+    if not ingreso:
+        raise HTTPException(status_code=404, detail="Ingreso no encontrado")
+    db.delete(ingreso); db.commit()
+    return {"ok": True}
+
 @app.get("/ingresos/", tags=["Finanzas"])
 def listar_ingresos(
     desde: Optional[date] = None,
@@ -1450,31 +1967,40 @@ def listar_ingresos(
         hasta = hoy.replace(day=_cal.monthrange(hoy.year, hoy.month)[1])
     desde_dt = datetime.combine(desde, datetime.min.time())
     hasta_dt  = datetime.combine(hasta, datetime.max.time())
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     detalle = []
 
     if not tipo or tipo == "membresias":
-        for cm in db.query(models.ClienteMembresia).join(
-            models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id
-        ).filter(
-            models.Cliente.gimnasio_id == get_gid(usuario),
-            models.ClienteMembresia.fecha_inicio >= desde,
-            models.ClienteMembresia.fecha_inicio <= hasta,
-            models.ClienteMembresia.monto_pagado > 0,
-        ).all():
-            cli  = db.query(models.Cliente).filter(models.Cliente.id == cm.cliente_id).first()
-            plan = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
-            metodo = cm.metodo_pago or "efectivo"
+        # Cada pago individual (inicial o a cuenta) como linea separada
+        pagos_membresia = (
+            db.query(models.PagoMembresia)
+            .join(models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id)
+            .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+            .filter(
+                models.Cliente.gimnasio_id == get_gid(usuario),
+                models.PagoMembresia.fecha_pago >= desde_dt,
+                models.PagoMembresia.fecha_pago <= hasta_dt,
+            )
+            .all()
+        )
+        for pm in pagos_membresia:
+            cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == pm.cliente_membresia_id).first()
+            cli = db.query(models.Cliente).filter(models.Cliente.id == cm.cliente_id).first() if cm else None
+            plan = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first() if cm else None
+            metodo = pm.metodo_pago or "efectivo"
             comision_gym = 0.0
             if metodo == "tarjeta":
-                comision_gym = round((cm.monto_pagado or 0.0) * (config.comision_tarjeta or 0.0) / 100, 2)
+                comision_gym = round(pm.monto * (config.comision_tarjeta or 0.0) / 100, 2)
             elif metodo == "qr":
-                comision_gym = round((cm.monto_pagado or 0.0) * (config.comision_qr or 0.0) / 100, 2)
-            detalle.append({"id": cm.id,
-                "fecha": datetime.combine(cm.fecha_inicio, datetime.min.time()).isoformat(),
+                comision_gym = round(pm.monto * (config.comision_qr or 0.0) / 100, 2)
+            nombre_cli = (cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'
+            nombre_plan = plan.nombre if plan else 'Plan ?'
+            nota_tipo = pm.notas or 'Pago membresía'
+            detalle.append({"id": pm.id,
+                "fecha": pm.fecha_pago.isoformat(),
                 "categoria": "membresias",
-                "descripcion": f"{plan.nombre if plan else 'Plan ?'} — {(cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'}",
-                "monto": cm.monto_pagado,
+                "descripcion": f"{nombre_plan} — {nombre_cli} ({nota_tipo})",
+                "monto": pm.monto,
                 "metodo_pago": metodo,
                 "comision_gym": comision_gym})
 
@@ -1490,10 +2016,26 @@ def listar_ingresos(
                 "metodo_pago": v.metodo_pago.value if hasattr(v.metodo_pago, "value") else v.metodo_pago,
                 "comision_gym": v.costo_comision_gym or 0.0})
 
+    if not tipo or tipo in ("otros", "otros_ingresos"):
+        for ingreso in db.query(models.OtroIngreso).filter(
+            models.OtroIngreso.gimnasio_id == get_gid(usuario),
+            models.OtroIngreso.fecha >= desde_dt,
+            models.OtroIngreso.fecha <= hasta_dt,
+        ).all():
+            detalle.append({
+                "id": ingreso.id,
+                "fecha": ingreso.fecha.isoformat(),
+                "categoria": "otros_ingresos",
+                "descripcion": f"{ingreso.concepto.nombre if ingreso.concepto else 'Otro ingreso'}{(' — ' + ingreso.descripcion) if ingreso.descripcion else ''}",
+                "monto": ingreso.monto,
+                "metodo_pago": ingreso.metodo_pago,
+                "comision_gym": 0.0,
+            })
+
     detalle.sort(key=lambda x: x["fecha"], reverse=True)
     tot_m = sum(d["monto"] for d in detalle if d["categoria"] == "membresias")
     tot_p = sum(d["monto"] for d in detalle if d["categoria"] == "productos")
-    tot_o = sum(d["monto"] for d in detalle if d["categoria"] == "otros")
+    tot_o = sum(d["monto"] for d in detalle if d["categoria"] in ("otros", "otros_ingresos"))
     return {"total": round(tot_m + tot_p + tot_o, 2), "membresias": round(tot_m, 2),
             "productos": round(tot_p, 2), "otros": round(tot_o, 2), "detalle": detalle}
 
@@ -1517,7 +2059,7 @@ def listar_egresos(
         hasta = hoy.replace(day=_cal.monthrange(hoy.year, hoy.month)[1])
     desde_dt = datetime.combine(desde, datetime.min.time())
     hasta_dt  = datetime.combine(hasta, datetime.max.time())
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     detalle = []
 
     if not tipo or tipo == "compra_producto":
@@ -1527,7 +2069,7 @@ def listar_egresos(
         ).all():
             detalle.append({"id": c.id, "fecha": c.fecha.isoformat(), "categoria": "compra_producto",
                 "descripcion": f"{c.cantidad} x {c.producto.nombre if c.producto else '?'} (S/{c.costo_unitario}/u)",
-                "monto": c.costo_total})
+                "monto": c.costo_total, "metodo_pago": c.metodo_pago})
 
     if not tipo or tipo == "pago_staff":
         for p in db.query(models.PagoPlanilla).filter(
@@ -1537,7 +2079,7 @@ def listar_egresos(
         ).all():
             detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_staff",
                 "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {p.mes}/{p.anio}{' (' + p.notas + ')' if p.notas else ''}",
-                "monto": p.monto_total})
+                "monto": p.monto_total, "metodo_pago": p.metodo_pago})
 
     if not tipo or tipo == "pago_profesor":
         for p in db.query(models.PagoPlanilla).filter(
@@ -1548,18 +2090,22 @@ def listar_egresos(
             periodo = f"{p.desde} al {p.hasta}" if p.desde and p.hasta else f"{p.mes}/{p.anio}"
             detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_profesor",
                 "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {periodo}",
-                "monto": p.monto_total})
+                "monto": p.monto_total, "metodo_pago": p.metodo_pago})
 
     if not tipo or tipo == "pago_servicio":
-        for p in db.query(models.PagoServicio).filter(
-            models.PagoServicio.fecha_pago >= desde_dt, models.PagoServicio.fecha_pago <= hasta_dt,
+        for p in db.query(models.PagoServicio).join(
+            models.CargoServicio, models.CargoServicio.id == models.PagoServicio.cargo_id
+        ).filter(
+            models.CargoServicio.gimnasio_id == get_gid(usuario),
+            models.PagoServicio.fecha_pago >= desde_dt,
+            models.PagoServicio.fecha_pago <= hasta_dt,
         ).all():
             cargo = p.cargo
             servicio_nombre = cargo.servicio.nombre if cargo and cargo.servicio else "Servicio"
             periodo = f"{cargo.mes}/{cargo.anio}" if cargo else ""
             detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_servicio",
                 "descripcion": f"{servicio_nombre} — {(cargo.concepto + ' ' if cargo and cargo.concepto else '')}{periodo}".strip(),
-                "monto": p.monto})
+                "monto": p.monto, "metodo_pago": p.metodo_pago})
 
     if not tipo or tipo == "otros":
         for g in db.query(models.Gasto).filter(
@@ -1568,7 +2114,8 @@ def listar_egresos(
             models.Gasto.fecha >= desde_dt, models.Gasto.fecha <= hasta_dt,
         ).all():
             detalle.append({"id": g.id, "fecha": g.fecha.isoformat(), "categoria": "otros",
-                "descripcion": g.descripcion or "Gasto general", "monto": g.monto})
+                "descripcion": g.descripcion or "Gasto general", "monto": g.monto,
+                "metodo_pago": g.metodo_pago})
 
     # ---- Comision de pasarela (tarjeta/QR): no es un registro propio
     # en la base, se deriva de las Ventas y Membresias cobradas con
@@ -1578,6 +2125,7 @@ def listar_egresos(
     # venta/membresia de la que viene.
     if not tipo or tipo == "comision":
         for v in db.query(models.Venta).filter(
+            models.Venta.gimnasio_id == get_gid(usuario),
             models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt,
             models.Venta.metodo_pago != models.MetodoPago.EFECTIVO,
         ).all():
@@ -1585,9 +2133,13 @@ def listar_egresos(
                 continue
             metodo_txt = "Tarjeta" if v.metodo_pago == models.MetodoPago.TARJETA else "QR"
             detalle.append({"id": v.id, "fecha": v.fecha_venta.isoformat(), "categoria": "comision",
-                "descripcion": f"Comisión {metodo_txt} — Venta #{v.id}", "monto": v.costo_comision_gym})
+                "descripcion": f"Comisión {metodo_txt} — Venta #{v.id}", "monto": v.costo_comision_gym,
+                "metodo_pago": "cuenta"})
 
-        for cm in db.query(models.ClienteMembresia).filter(
+        for cm in db.query(models.ClienteMembresia).join(
+            models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id
+        ).filter(
+            models.Cliente.gimnasio_id == get_gid(usuario),
             models.ClienteMembresia.fecha_inicio >= desde,
             models.ClienteMembresia.fecha_inicio <= hasta,
             models.ClienteMembresia.monto_pagado > 0,
@@ -1604,7 +2156,7 @@ def listar_egresos(
             detalle.append({"id": cm.id, "fecha": datetime.combine(cm.fecha_inicio, datetime.min.time()).isoformat(),
                 "categoria": "comision",
                 "descripcion": f"Comisión {metodo_txt} — Membresía {(cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'}",
-                "monto": comision})
+                "monto": comision, "metodo_pago": "cuenta"})
 
     detalle.sort(key=lambda x: x["fecha"], reverse=True)
     tot_c = sum(d["monto"] for d in detalle if d["categoria"] == "compra_producto")
@@ -1634,6 +2186,7 @@ def crear_gasto(
         referencia_id=datos.referencia_id,
         usuario_id=getattr(usuario, "id", None),
         notas=datos.notas,
+        metodo_pago=datos.metodo_pago,
         gimnasio_id=get_gid(usuario),
     )
     db.add(g); db.commit(); db.refresh(g)
@@ -1641,8 +2194,8 @@ def crear_gasto(
 
 
 @app.delete("/gastos/{gasto_id}", tags=["Finanzas"])
-def eliminar_gasto(gasto_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_administrador)):
-    g = db.query(models.Gasto).filter(models.Gasto.id == gasto_id).first()
+def eliminar_gasto(gasto_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+    g = _del_gym(db, models.Gasto, gasto_id, usuario)
     if not g:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
     db.delete(g); db.commit()
@@ -1652,6 +2205,7 @@ def eliminar_gasto(gasto_id: int, db: Session = Depends(get_db), _=Depends(auth.
 @app.get("/dashboard/stats", response_model=schemas.DashboardStats, tags=["Dashboard"])
 def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
     gid = get_gid(usuario)
+    _cerrar_asistencias_vencidas(db, gid)
     total_clientes = db.query(models.Cliente).filter(
         models.Cliente.activo == True,
         models.Cliente.gimnasio_id == gid,
@@ -1673,6 +2227,10 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid)
         .scalar()
     )
+    ingresos_mes += db.query(func.coalesce(func.sum(models.OtroIngreso.monto), 0.0)).filter(
+        models.OtroIngreso.fecha >= datetime.combine(inicio_mes, datetime.min.time()),
+        models.OtroIngreso.gimnasio_id == gid,
+    ).scalar()
 
     productos_bajo_stock = (
         db.query(models.Producto)
@@ -1692,7 +2250,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     asistencias_hoy = asistencias_hoy_query.count()
     presentes_ahora = asistencias_hoy_query.filter(models.Asistencia.fecha_hora_salida.is_(None)).count()
 
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     limite_aviso = date.today() + timedelta(days=config.dias_aviso_vencimiento or 7)
     membresias_por_vencer = (
         db.query(models.ClienteMembresia)
@@ -1755,9 +2313,14 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         )
         .all()
     )
+    otros_ingresos_hoy = db.query(models.OtroIngreso).filter(
+        models.OtroIngreso.fecha >= hoy,
+        models.OtroIngreso.gimnasio_id == gid,
+    ).all()
 
     balance_efectivo_hoy = sum(v.total for v in ventas_hoy if v.metodo_pago == models.MetodoPago.EFECTIVO)
     balance_efectivo_hoy += sum(cm.monto_pagado or 0.0 for cm in membresias_hoy if (cm.metodo_pago or "efectivo") == "efectivo")
+    balance_efectivo_hoy += sum(i.monto for i in otros_ingresos_hoy if i.metodo_pago == "efectivo")
 
     balance_cuenta_hoy = sum(
         v.total - (v.costo_comision_gym or 0.0) for v in ventas_hoy if v.metodo_pago != models.MetodoPago.EFECTIVO
@@ -1768,6 +2331,11 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
             balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_tarjeta or 0.0) / 100)
         elif metodo == "qr":
             balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_qr or 0.0) / 100)
+    for ingreso in otros_ingresos_hoy:
+        if ingreso.metodo_pago == "tarjeta":
+            balance_cuenta_hoy += ingreso.monto * (1 - (config.comision_tarjeta or 0.0) / 100)
+        elif ingreso.metodo_pago == "qr":
+            balance_cuenta_hoy += ingreso.monto * (1 - (config.comision_qr or 0.0) / 100)
 
     return schemas.DashboardStats(
         total_clientes=total_clientes,
@@ -1885,6 +2453,8 @@ def listado_completo_clientes(
             saldo=saldo,
             porcentaje_asistencia=_calcular_porcentaje_asistencia(db, c.id),
             tiene_membresia_catalogo=tiene_cm_vigente,
+            fecha_pago_saldo=ultimo_plan_cm.fecha_pago_saldo if ultimo_plan_cm else None,
+            ultimo_cm_id=ultimo_plan_cm.id if ultimo_plan_cm else None,
         ))
 
     if orden == "vencer":
@@ -1961,6 +2531,8 @@ def ultimos_clientes_con_ingreso(
 @app.post("/clientes/", response_model=schemas.Cliente, tags=["Clientes"])
 def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
     _validar_limite_plan(db, usuario, "clientes")
+    if cliente.dni and q(db, models.Cliente, usuario).filter(models.Cliente.dni == cliente.dni).first():
+        raise HTTPException(status_code=400, detail="Ya existe un cliente con ese DNI en este gimnasio")
     db_cliente = models.Cliente(**cliente.model_dump(), gimnasio_id=get_gid(usuario))
     db.add(db_cliente)
     db.commit()
@@ -2086,7 +2658,11 @@ async def importar_clientes(
     errores: List[str] = []
 
     ids_existentes = {fila[0] for fila in db.query(models.Cliente.id).all()}
-    dnis_existentes = {fila[0] for fila in db.query(models.Cliente.dni).all() if fila[0]}
+    dnis_existentes = {
+        fila[0] for fila in db.query(models.Cliente.dni).filter(
+            models.Cliente.gimnasio_id == get_gid(_)
+        ).all() if fila[0]
+    }
     ids_vistos_en_archivo = set()
 
     for fila in lector:
@@ -2112,6 +2688,7 @@ async def importar_clientes(
 
             nuevo = models.Cliente(
                 id=id_cliente,
+                gimnasio_id=get_gid(_),
                 nombre=nombres,
                 apellidos=(fila.get("apellidos") or "").strip() or None,
                 direccion=(fila.get("direccion") or "").strip() or None,
@@ -2163,7 +2740,16 @@ def actualizar_cliente(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    for campo, valor in datos.model_dump(exclude_unset=True).items():
+    datos_dict = datos.model_dump(exclude_unset=True)
+    monto_anterior = round(cm.monto_pagado or 0.0, 2)
+    if datos_dict.get("dni"):
+        duplicado = q(db, models.Cliente, usuario).filter(
+            models.Cliente.dni == datos_dict["dni"],
+            models.Cliente.id != cliente_id,
+        ).first()
+        if duplicado:
+            raise HTTPException(status_code=400, detail="Ya existe un cliente con ese DNI en este gimnasio")
+    for campo, valor in datos_dict.items():
         setattr(cliente, campo, valor)
 
     db.commit()
@@ -2457,7 +3043,7 @@ async def importar_historicos_desde_reportes(
     _=Depends(auth.requiere_permiso_exportar),
 ):
     """Alias de /clientes-historicos/importar, expuesto tambien bajo /reportes para la pantalla de Reportes."""
-    return await importar_clientes_historicos(archivo=archivo, db=db)
+    return await importar_clientes_historicos(archivo=archivo, db=db, _=_)
 
 
 # ==================================================================
@@ -2473,7 +3059,11 @@ def mi_agenda_profesor(
     hoy = date.today()
     return (
         db.query(models.ClaseDictada)
-        .filter(models.ClaseDictada.profesor_id == profesor.id, models.ClaseDictada.fecha >= hoy)
+        .filter(
+            models.ClaseDictada.profesor_id == profesor.id,
+            models.ClaseDictada.gimnasio_id == profesor.gimnasio_id,
+            models.ClaseDictada.fecha >= hoy,
+        )
         .order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio)
         .all()
     )
@@ -2491,6 +3081,7 @@ def otros_profesores(
             models.Empleado.tipo == models.TipoEmpleado.PROFESOR_DE_SALA,
             models.Empleado.activo == True,
             models.Empleado.id != profesor.id,
+            models.Empleado.gimnasio_id == profesor.gimnasio_id,
         )
         .order_by(models.Empleado.nombre_completo)
         .all()
@@ -2510,13 +3101,19 @@ def asignar_reemplazo_desde_portal(
     puede hacerlo sobre clases donde el es el titular o el actual
     reemplazo (no sobre clases de otros profesores).
     """
-    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id).first()
+    clase = db.query(models.ClaseDictada).filter(
+        models.ClaseDictada.id == clase_id,
+        models.ClaseDictada.gimnasio_id == profesor.gimnasio_id,
+    ).first()
     if not clase:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
     if clase.profesor_id != profesor.id and clase.profesor_reemplazo_id != profesor.id:
         raise HTTPException(status_code=403, detail="Solo puedes modificar tus propias clases")
     if datos.profesor_reemplazo_id:
-        reemplazo = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_reemplazo_id).first()
+        reemplazo = db.query(models.Empleado).filter(
+            models.Empleado.id == datos.profesor_reemplazo_id,
+            models.Empleado.gimnasio_id == profesor.gimnasio_id,
+        ).first()
         if not reemplazo or reemplazo.tipo != models.TipoEmpleado.PROFESOR_DE_SALA or not reemplazo.activo:
             raise HTTPException(status_code=400, detail="El reemplazo debe ser un profesor de sala activo")
     clase.profesor_reemplazo_id = datos.profesor_reemplazo_id
@@ -2528,7 +3125,7 @@ def asignar_reemplazo_desde_portal(
 @app.get("/portal-profesor/ocupado", response_model=List[schemas.ClaseOcupada], tags=["Portal Profesor"])
 def ocupado_salas(
     dias: int = 7,
-    _: models.Empleado = Depends(auth.get_profesor_actual),
+    profesor: models.Empleado = Depends(auth.get_profesor_actual),
     db: Session = Depends(get_db),
 ):
     """
@@ -2540,11 +3137,15 @@ def ocupado_salas(
     limite = hoy + timedelta(days=dias)
     filas = (
         db.query(models.ClaseDictada)
-        .filter(models.ClaseDictada.fecha >= hoy, models.ClaseDictada.fecha <= limite)
+        .filter(
+            models.ClaseDictada.gimnasio_id == profesor.gimnasio_id,
+            models.ClaseDictada.fecha >= hoy,
+            models.ClaseDictada.fecha <= limite,
+        )
         .order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio)
         .all()
     )
-    return [
+    resultado = [
         schemas.ClaseOcupada(
             fecha=clase.fecha,
             hora_inicio=clase.hora_inicio,
@@ -2556,6 +3157,20 @@ def ocupado_salas(
         )
         for clase in filas
     ]
+    reservas = db.query(models.ReservaSala).filter(
+        models.ReservaSala.gimnasio_id == profesor.gimnasio_id,
+        models.ReservaSala.fecha >= hoy,
+        models.ReservaSala.fecha <= limite,
+    ).all()
+    resultado.extend(schemas.ClaseOcupada(
+        fecha=r.fecha,
+        hora_inicio=r.hora_inicio,
+        hora_fin=r.hora_fin,
+        sala=r.sala,
+        nombre_clase=r.nombre_reserva,
+        nombre_profesor="Sala alquilada",
+    ) for r in reservas)
+    return sorted(resultado, key=lambda x: (x.fecha, x.hora_inicio))
 
 
 # ==================================================================
@@ -2600,7 +3215,7 @@ def buscar_clientes_historicos(
     """
     # Busqueda por palabras, independiente del orden (los historicos
     # guardan "Apellidos, Nombres" y el staff suele buscar al reves).
-    query = db.query(models.ClienteHistorico)
+    query = q(db, models.ClienteHistorico, _)
     for palabra in buscar.split():
         like = f"%{palabra}%"
         query = query.filter(
@@ -2645,7 +3260,9 @@ async def importar_clientes_historicos(
     errores: List[str] = []
 
     carnets_existentes = {
-        fila[0] for fila in db.query(models.ClienteHistorico.num_carnet).all() if fila[0] is not None
+        fila[0] for fila in db.query(models.ClienteHistorico.num_carnet).filter(
+            models.ClienteHistorico.gimnasio_id == get_gid(_)
+        ).all() if fila[0] is not None
     }
 
     for fila in lector:
@@ -2673,6 +3290,7 @@ async def importar_clientes_historicos(
             email_raw = (fila.get("email") or "").strip()
 
             registro = models.ClienteHistorico(
+                gimnasio_id=get_gid(_),
                 num_carnet=num_carnet,
                 nombre_completo=nombre_raw,
                 apellidos=apellidos,
@@ -2726,12 +3344,12 @@ def reingresar_cliente_historico(
     una nueva membresia en Venta Rapida.
     """
     _validar_limite_plan(db, _, "clientes")
-    historico = db.query(models.ClienteHistorico).filter(models.ClienteHistorico.id == historico_id).first()
+    historico = _del_gym(db, models.ClienteHistorico, historico_id, _)
     if not historico:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
     if historico.migrado and historico.cliente_nuevo_id:
-        cliente_existente = db.query(models.Cliente).filter(models.Cliente.id == historico.cliente_nuevo_id).first()
+        cliente_existente = _del_gym(db, models.Cliente, historico.cliente_nuevo_id, _)
         if cliente_existente:
             return cliente_existente
 
@@ -2784,7 +3402,7 @@ def membresias_por_vencer(
     pensado para la tarjeta clickeable 'Membresias por vencer' del
     panel principal.
     """
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     dias_efectivos = dias if dias is not None else (config.dias_aviso_vencimiento or 7)
     hoy = date.today()
     limite = hoy + timedelta(days=dias_efectivos)
@@ -2966,20 +3584,42 @@ def asignar_membresia_a_cliente(
     if not membresia:
         raise HTTPException(status_code=404, detail="Membresia no encontrada")
 
+    if datos.cliente_id != cliente_id:
+        raise HTTPException(status_code=400, detail="El cliente del cuerpo no coincide con la URL")
+
     fecha_inicio = datos.fecha_inicio or date.today()
     fecha_fin = datos.fecha_fin or (fecha_inicio + timedelta(days=membresia.duracion_dias))
+    if fecha_fin < fecha_inicio:
+        raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
+    monto_inicial = datos.monto_pagado if datos.monto_pagado is not None else membresia.precio
+    if monto_inicial < 0 or monto_inicial > membresia.precio + 0.01:
+        raise HTTPException(status_code=400, detail="El monto inicial debe estar entre 0 y el precio de la membresia")
 
     db_cm = models.ClienteMembresia(
         cliente_id=cliente_id,
         membresia_id=datos.membresia_id,
         fecha_inicio=fecha_inicio,
         fecha_fin=fecha_fin,
-        monto_pagado=datos.monto_pagado if datos.monto_pagado is not None else membresia.precio,
+        monto_pagado=round(monto_inicial, 2),
         fecha_pago_saldo=datos.fecha_pago_saldo,
         metodo_pago=datos.metodo_pago or "efectivo",
         vendido_por_id=usuario_actual.id,
     )
     db.add(db_cm)
+
+    # Registrar el pago inicial en el historial (si hay monto)
+    if db_cm.monto_pagado and db_cm.monto_pagado > 0:
+        pago_inicial = models.PagoMembresia(
+            cliente_membresia_id=None,  # se asigna tras flush
+            monto=db_cm.monto_pagado,
+            metodo_pago=db_cm.metodo_pago or "efectivo",
+            registrado_por_id=usuario_actual.id,
+            notas="Pago inicial al asignar membresía",
+        )
+        db.add(db_cm)
+        db.flush()  # obtener db_cm.id
+        pago_inicial.cliente_membresia_id = db_cm.id
+        db.add(pago_inicial)
 
     # Al matricular/renovar, estos datos del cliente se recalculan
     # solos (no se ingresan a mano en el formulario de Cliente).
@@ -3004,10 +3644,10 @@ def asignar_membresia_a_cliente(
 def listar_membresias_de_cliente(
     cliente_id: int,
     db: Session = Depends(get_db),
-    _=Depends(auth.requiere_staff),
+    usuario=Depends(auth.requiere_staff),
 ):
     """Historial completo de membresias asignadas a un cliente (incluye inactivas), de la mas reciente a la mas antigua."""
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return (
@@ -3039,8 +3679,8 @@ def _sincronizar_fechas_cliente(db: Session, cliente_id: int):
 
 
 @app.get("/cliente-membresias/{cm_id}", response_model=schemas.ClienteMembresia, tags=["Membresias"])
-def obtener_cliente_membresia(cm_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff)):
-    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+def obtener_cliente_membresia(cm_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
     return cm
@@ -3051,7 +3691,7 @@ def editar_cliente_membresia(
     cm_id: int,
     datos: schemas.ClienteMembresiaUpdate,
     db: Session = Depends(get_db),
-    _=Depends(auth.requiere_administrador),
+    usuario=Depends(auth.requiere_administrador),
 ):
     """
     Correccion administrativa de una membresia asignada: plan,
@@ -3059,14 +3699,14 @@ def editar_cliente_membresia(
     administrador. Tras guardar, se resincronizan las fechas de
     renovacion/vencimiento de la ficha del cliente.
     """
-    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
 
     datos_dict = datos.model_dump(exclude_unset=True)
 
     if "membresia_id" in datos_dict:
-        membresia = db.query(models.Membresia).filter(models.Membresia.id == datos_dict["membresia_id"]).first()
+        membresia = _del_gym(db, models.Membresia, datos_dict["membresia_id"], usuario)
         if not membresia:
             raise HTTPException(status_code=404, detail="Membresia no encontrada")
 
@@ -3075,6 +3715,24 @@ def editar_cliente_membresia(
 
     for campo, valor in datos_dict.items():
         setattr(cm, campo, valor)
+
+    plan_actual = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
+    if not plan_actual:
+        raise HTTPException(status_code=404, detail="Membresia no encontrada")
+    if (cm.monto_pagado or 0.0) > plan_actual.precio + 0.01:
+        raise HTTPException(status_code=400, detail="El monto pagado no puede superar el precio de la membresia")
+
+    if "monto_pagado" in datos_dict and datos_dict["monto_pagado"] is not None:
+        ajuste = round(datos_dict["monto_pagado"] - monto_anterior, 2)
+        if ajuste:
+            metodo = cm.metodo_pago.value if hasattr(cm.metodo_pago, "value") else cm.metodo_pago
+            db.add(models.PagoMembresia(
+                cliente_membresia_id=cm.id,
+                monto=ajuste,
+                metodo_pago=metodo or "efectivo",
+                registrado_por_id=usuario.id,
+                notas="Ajuste administrativo de pago",
+            ))
 
     if cm.fecha_fin and cm.fecha_inicio and cm.fecha_fin < cm.fecha_inicio:
         raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
@@ -3085,10 +3743,80 @@ def editar_cliente_membresia(
     return cm
 
 
+@app.put("/cliente-membresias/{cm_id}/pagar-saldo", response_model=schemas.ClienteMembresia, tags=["Membresias"])
+def pagar_saldo_membresia(
+    cm_id: int,
+    datos: schemas.PagoSaldoRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Pago rapido de saldo pendiente de una membresia asignada.
+    Cualquier staff puede usarlo (no requiere administrador).
+    Suma el monto al monto_pagado existente; si el saldo llega a 0,
+    limpia la fecha_pago_saldo automaticamente.
+    """
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if not cm:
+        raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+
+    membresia = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
+    precio = membresia.precio if membresia else 0
+    pagado_actual = cm.monto_pagado or 0
+    saldo_actual = round(max(precio - pagado_actual, 0), 2)
+
+    if datos.monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    if datos.monto > saldo_actual + 0.01:
+        raise HTTPException(status_code=400, detail=f"El monto ({datos.monto}) supera el saldo pendiente ({saldo_actual})")
+
+    nuevo_pagado = round(min(pagado_actual + datos.monto, precio), 2)
+    cm.monto_pagado = nuevo_pagado
+    metodo_pago = datos.metodo_pago.value if hasattr(datos.metodo_pago, "value") else datos.metodo_pago
+    cm.metodo_pago = metodo_pago or cm.metodo_pago
+
+    # Registrar el pago individual en el historial
+    pago = models.PagoMembresia(
+        cliente_membresia_id=cm.id,
+        monto=datos.monto,
+        metodo_pago=metodo_pago or "efectivo",
+        registrado_por_id=usuario.id,
+    )
+    db.add(pago)
+
+    # Si queda saldo 0, limpiar la fecha de pago programada;
+    # si queda saldo y viene fecha_proximo_pago, actualizarla
+    if nuevo_pagado >= precio:
+        cm.fecha_pago_saldo = None
+    elif datos.fecha_proximo_pago:
+        cm.fecha_pago_saldo = datos.fecha_proximo_pago
+
+    db.commit()
+    db.refresh(cm)
+    return cm
+
+
+@app.delete("/pagos-membresia/{pago_id}", tags=["Membresias"])
+def eliminar_pago_membresia(
+    pago_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Corrige un ingreso eliminando solo el pago elegido, nunca toda la membresia."""
+    pago = _pago_membresia_del_gym(db, pago_id, usuario)
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago de membresia no encontrado")
+    cm = pago.cliente_membresia
+    cm.monto_pagado = round(max((cm.monto_pagado or 0.0) - pago.monto, 0.0), 2)
+    db.delete(pago)
+    db.commit()
+    return {"message": "Pago de membresia eliminado", "monto_pagado": cm.monto_pagado}
+
+
 @app.delete("/cliente-membresias/{cm_id}", tags=["Membresias"])
-def eliminar_cliente_membresia(cm_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_administrador)):
+def eliminar_cliente_membresia(cm_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
     """Elimina una membresia asignada por error (borrado real, corrige el historial). Solo administrador. Resincroniza las fechas de la ficha del cliente."""
-    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id).first()
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
     cliente_id = cm.cliente_id
@@ -3104,14 +3832,16 @@ def recibo_membresia_pdf(
     cliente_id: int,
     cm_id: int,
     db: Session = Depends(get_db),
-    _=Depends(auth.requiere_staff_o_profesor),
+    usuario=Depends(auth.requiere_staff_o_profesor),
 ):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
-    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id, models.ClienteMembresia.cliente_id == cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if cm and cm.cliente_id != cliente_id:
+        cm = None
     if not cliente or not cm:
         raise HTTPException(status_code=404, detail="No encontrado")
     membresia = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     pdf_bytes = pdf_generator.generar_recibo_membresia_pdf(cm, cliente, membresia, config)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -3125,14 +3855,16 @@ def contrato_matricula_pdf(
     cliente_id: int,
     cm_id: int,
     db: Session = Depends(get_db),
-    _=Depends(auth.requiere_staff_o_profesor),
+    usuario=Depends(auth.requiere_staff_o_profesor),
 ):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
-    cm = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.id == cm_id, models.ClienteMembresia.cliente_id == cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if cm and cm.cliente_id != cliente_id:
+        cm = None
     if not cliente or not cm:
         raise HTTPException(status_code=404, detail="No encontrado")
     membresia = db.query(models.Membresia).filter(models.Membresia.id == cm.membresia_id).first()
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     pdf_bytes = pdf_generator.generar_contrato_pdf(cliente, cm, membresia, config)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -3142,14 +3874,14 @@ def contrato_matricula_pdf(
 
 
 @app.get("/clientes/{cliente_id}/ficha", response_model=schemas.ClienteFicha, tags=["Clientes"])
-def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
     """
     Resumen agregado para la columna de busqueda inteligente del
     panel principal: membresia activa, deuda pendiente (precio de
     la membresia menos lo pagado), % de asistencia de los ultimos
     30 dias y los ultimos 2 ingresos.
     """
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
@@ -3363,6 +4095,8 @@ def registrar_compra(
         costo_total=costo_total,
         usuario_id=usuario_actual.id,
         notas=datos.notas,
+        metodo_pago=datos.metodo_pago,
+        gimnasio_id=get_gid(usuario_actual),
     )
     db.add(db_compra)
 
@@ -3434,6 +4168,141 @@ def _escalar_porcion(porcion_casera: str, factor: float) -> str:
     return f"{num_fmt} {resto}"
 
 
+def _sin_tildes(texto: str) -> str:
+    return "".join(
+        caracter for caracter in unicodedata.normalize("NFD", texto or "")
+        if unicodedata.category(caracter) != "Mn"
+    ).lower()
+
+
+def _formatear_cuartos(valor: float) -> str:
+    """Redondea a medidas faciles: 1/4, 1/2, 3/4 o unidades enteras."""
+    cuartos = max(1, int(round(valor * 4)))
+    entero, resto = divmod(cuartos, 4)
+    fraccion = {0: "", 1: "1/4", 2: "1/2", 3: "3/4"}[resto]
+    if entero and fraccion:
+        return f"{entero} {fraccion}"
+    return str(entero) if entero else fraccion
+
+
+def _porcion_cliente_facil(
+    alimento: models.Alimento,
+    gramos: float,
+    porcion_explicita: Optional[str] = None,
+) -> str:
+    """Convierte gramos internos en una instruccion casera facil para el cliente."""
+    if porcion_explicita and porcion_explicita.strip():
+        return porcion_explicita.strip()
+
+    nombre = _sin_tildes(alimento.nombre)
+    gramos = max(float(gramos or alimento.porcion_gramos or 100), 1.0)
+
+    if "huevo" in nombre:
+        cantidad = max(1, int(round(gramos / 50.0)))
+        return f"{cantidad} {'huevo' if cantidad == 1 else 'huevos'}"
+
+    if "atun" in nombre:
+        cantidad = max(1, int(round(gramos / 150.0)))
+        return f"{cantidad} {'lata' if cantidad == 1 else 'latas'}"
+
+    proteinas_en_filete = (
+        "pollo", "pechuga", "pescado", "merluza", "bonito", "jurel",
+        "tilapia", "trucha", "res", "bistec", "lomo",
+    )
+    if alimento.categoria == models.CategoriaAlimento.PROTEINA and any(
+        proteina in nombre for proteina in proteinas_en_filete
+    ):
+        cantidad = max(1, int(round(gramos / 200.0)))
+        return f"{cantidad} {'filete mediano' if cantidad == 1 else 'filetes medianos'}"
+
+    if "palta" in nombre or "aguacate" in nombre:
+        cantidad = max(0.5, round((gramos / 200.0) * 2) / 2)
+        texto = _formatear_cuartos(cantidad)
+        return f"{texto} {'palta' if cantidad <= 1 else 'paltas'}"
+
+    granos = (
+        "arroz", "choclo", "arveja", "lenteja", "frejol", "frijol",
+        "garbanzo", "pallar", "quinua", "mote", "trigo", "cebada", "kiwicha",
+    )
+    if any(grano in nombre for grano in granos):
+        gramos_taza = 165.0 if any(x in nombre for x in ("choclo", "arveja")) else 195.0
+        cantidad = gramos / gramos_taza
+        texto = _formatear_cuartos(cantidad)
+        singular = texto in {"1/4", "1/2", "3/4", "1"}
+        return f"{texto} {'taza' if singular else 'tazas'}"
+
+    casera = (alimento.porcion_casera or "").strip()
+    if casera:
+        import re
+        coincidencia = re.match(r'^([\d./]+)\s*(.*)$', casera)
+        if coincidencia:
+            numero, unidad = coincidencia.groups()
+            try:
+                base = (float(numero.split('/')[0]) / float(numero.split('/')[1])) if '/' in numero else float(numero)
+                factor = gramos / float(alimento.porcion_gramos or 100)
+                valor = base * factor
+                # Frutas, tomates y equivalencias en unidades deben ser numeros enteros.
+                if alimento.categoria == models.CategoriaAlimento.FRUTA or any(
+                    palabra in _sin_tildes(unidad) for palabra in ("unidad", "huevo", "tomate")
+                ):
+                    cantidad = max(1, int(round(valor)))
+                    unidad_limpia = unidad.strip()
+                    return f"{cantidad} {unidad_limpia}"
+                texto = _formatear_cuartos(valor)
+                unidad_limpia = unidad.strip()
+                singular = texto in {"1/4", "1/2", "3/4", "1"}
+                if not singular:
+                    partes = unidad_limpia.split(" ", 1)
+                    if not partes[0].endswith("s"):
+                        partes[0] += "s"
+                    unidad_limpia = " ".join(partes)
+                return f"{texto} {unidad_limpia}"
+            except (ValueError, ZeroDivisionError):
+                pass
+        return casera
+
+    return "1 porcion mediana"
+
+
+def _limitar_gramos_proteina(alimento: models.Alimento, gramos: float) -> float:
+    """Evita porciones proteicas desproporcionadas en paquetes y planes."""
+    gramos = max(float(gramos or alimento.porcion_gramos or 100), 1.0)
+    nombre = _sin_tildes(alimento.nombre)
+    if "atun" in nombre:
+        return min(gramos, 150.0)  # una lata estandar
+    if "huevo" in nombre:
+        return min(gramos, 200.0)  # cuatro huevos aprox.
+    if alimento.categoria == models.CategoriaAlimento.PROTEINA:
+        return min(gramos, 200.0)  # una porcion principal razonable
+    return gramos
+
+
+def _normalizar_porciones_cliente():
+    """Completa porciones faciles en datos antiguos y oculta el gramaje del nombre visible."""
+    db = SessionLocal()
+    try:
+        for item in db.query(models.PaqueteAlimento).all():
+            if item.alimento:
+                item.cantidad_gramos = _limitar_gramos_proteina(item.alimento, item.cantidad_gramos)
+                item.porcion_cliente = _porcion_cliente_facil(
+                    item.alimento, item.cantidad_gramos
+                )
+        for comida in db.query(models.ComidaPlan).all():
+            if comida.alimento:
+                if comida.plan and comida.plan.origen == "automatico":
+                    comida.cantidad_gramos = _limitar_gramos_proteina(comida.alimento, comida.cantidad_gramos)
+                    factor = comida.cantidad_gramos / float(comida.alimento.porcion_gramos or 100)
+                    comida.calorias = round((comida.alimento.calorias or 0.0) * factor)
+                comida.porcion_cliente = _porcion_cliente_facil(
+                    comida.alimento, comida.cantidad_gramos,
+                    None if comida.plan and comida.plan.origen == "automatico" else comida.porcion_cliente,
+                )
+                comida.nombre_alimento = comida.alimento.nombre
+        db.commit()
+    finally:
+        db.close()
+
+
 def _calcular_costo_comision_gym(subtotal: float, metodo_pago: models.MetodoPago, config: models.Configuracion) -> float:
     """
     La comision de la pasarela (tarjeta/QR) NO se le cobra al
@@ -3501,7 +4370,10 @@ def editar_venta(
     venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
     if not venta:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
-    for campo, valor in datos.model_dump(exclude_unset=True).items():
+    datos_dict = datos.model_dump(exclude_unset=True)
+    if datos_dict.get("cliente_id") is not None and not _del_gym(db, models.Cliente, datos_dict["cliente_id"], usuario):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    for campo, valor in datos_dict.items():
         setattr(venta, campo, valor)
     db.commit()
     db.refresh(venta)
@@ -3529,7 +4401,7 @@ def boleta_venta_pdf(venta_id: int, db: Session = Depends(get_db), usuario: mode
     if not venta:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     cliente = db.query(models.Cliente).filter(models.Cliente.id == venta.cliente_id).first() if venta.cliente_id else None
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     pdf_bytes = pdf_generator.generar_boleta_pdf(venta, cliente, config)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -3543,20 +4415,28 @@ def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuar
     if not venta.detalles:
         raise HTTPException(status_code=400, detail="La venta debe tener al menos un producto")
 
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario_actual)
     gid = get_gid(usuario_actual)
+
+    if venta.cliente_id is not None and not _del_gym(db, models.Cliente, venta.cliente_id, usuario_actual):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     subtotal_total = 0.0
     detalles_db = []
 
     for item in venta.detalles:
+        if item.cantidad <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
         producto = db.query(models.Producto).filter(models.Producto.id == item.producto_id, models.Producto.gimnasio_id == gid).first()
         if not producto:
             raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no encontrado")
         if producto.stock < item.cantidad:
             raise HTTPException(status_code=400, detail=f"Stock insuficiente para {producto.nombre}")
 
-        subtotal_item = item.cantidad * item.precio_unitario
+        # El precio es autoridad del servidor. El valor enviado por el
+        # navegador nunca puede alterar una venta ni las comisiones.
+        precio_unitario = round(producto.precio_venta, 2)
+        subtotal_item = round(item.cantidad * precio_unitario, 2)
         subtotal_total += subtotal_item
 
         producto.stock -= item.cantidad
@@ -3565,7 +4445,7 @@ def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuar
             models.DetalleVenta(
                 producto_id=item.producto_id,
                 cantidad=item.cantidad,
-                precio_unitario=item.precio_unitario,
+                precio_unitario=precio_unitario,
                 subtotal=subtotal_item,
             )
         )
@@ -3594,6 +4474,24 @@ def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuar
 # ASISTENCIAS (clientes)
 # ==================================================================
 
+DURACION_MAXIMA_ASISTENCIA = timedelta(hours=3)
+
+
+def _cerrar_asistencias_vencidas(db: Session, gimnasio_id: int, ahora: Optional[datetime] = None) -> int:
+    """Cierra entradas abiertas al cumplir tres horas, sin alterar otros gimnasios."""
+    momento = ahora or datetime.now()
+    limite = momento - DURACION_MAXIMA_ASISTENCIA
+    vencidas = db.query(models.Asistencia).filter(
+        models.Asistencia.gimnasio_id == gimnasio_id,
+        models.Asistencia.fecha_hora_salida.is_(None),
+        models.Asistencia.fecha_hora_entrada <= limite,
+    ).all()
+    for asistencia in vencidas:
+        asistencia.fecha_hora_salida = asistencia.fecha_hora_entrada + DURACION_MAXIMA_ASISTENCIA
+    if vencidas:
+        db.commit()
+    return len(vencidas)
+
 @app.get("/asistencias/", response_model=List[schemas.Asistencia], tags=["Asistencias"])
 def listar_asistencias(
     desde: Optional[date] = None,
@@ -3609,6 +4507,7 @@ def listar_asistencias(
     general, por alumno y por horarios). Si no se envian fechas,
     devuelve las mas recientes hasta el limite.
     """
+    _cerrar_asistencias_vencidas(db, get_gid(usuario))
     query = q(db, models.Asistencia, usuario)
     if desde:
         query = query.filter(models.Asistencia.fecha_hora_entrada >= datetime.combine(desde, datetime.min.time()))
@@ -3621,6 +4520,7 @@ def listar_asistencias(
 
 @app.get("/asistencias/hoy", response_model=List[schemas.Asistencia], tags=["Asistencias"])
 def asistencias_de_hoy(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    _cerrar_asistencias_vencidas(db, get_gid(usuario))
     hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return (
         q(db, models.Asistencia, usuario)
@@ -3632,6 +4532,7 @@ def asistencias_de_hoy(db: Session = Depends(get_db), usuario: models.Usuario = 
 
 @app.post("/asistencias/", response_model=schemas.Asistencia, tags=["Asistencias"])
 def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    _cerrar_asistencias_vencidas(db, get_gid(usuario))
     cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -3644,8 +4545,8 @@ def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get
 
 
 @app.put("/asistencias/registrar-salida", response_model=schemas.Asistencia, tags=["Asistencias"])
-def registrar_salida(datos: schemas.RegistrarSalidaRequest, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
-    asistencia = db.query(models.Asistencia).filter(models.Asistencia.id == datos.asistencia_id).first()
+def registrar_salida(datos: schemas.RegistrarSalidaRequest, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    asistencia = _del_gym(db, models.Asistencia, datos.asistencia_id, usuario)
     if not asistencia:
         raise HTTPException(status_code=404, detail="Asistencia no encontrada")
     asistencia.fecha_hora_salida = datetime.now()
@@ -3697,7 +4598,12 @@ def registrar_entrada_empleado(
 
 @app.put("/asistencias-empleado/{asistencia_id}/salida", response_model=schemas.AsistenciaEmpleado, tags=["Personal"])
 def registrar_salida_empleado(asistencia_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    asistencia = db.query(models.AsistenciaEmpleado).filter(models.AsistenciaEmpleado.id == asistencia_id).first()
+    asistencia = (
+        db.query(models.AsistenciaEmpleado)
+        .join(models.Empleado, models.Empleado.id == models.AsistenciaEmpleado.empleado_id)
+        .filter(models.AsistenciaEmpleado.id == asistencia_id, models.Empleado.gimnasio_id == get_gid(usuario))
+        .first()
+    )
     if not asistencia:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
     asistencia.fecha_hora_salida = datetime.now()
@@ -3711,10 +4617,12 @@ def registrar_salida_empleado(asistencia_id: int, db: Session = Depends(get_db),
 # ==================================================================
 
 @app.get("/progreso/cliente/{cliente_id}", response_model=List[schemas.Progreso], tags=["Progreso"])
-def progreso_de_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
+def progreso_de_cliente(cliente_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    if not _del_gym(db, models.Cliente, cliente_id, usuario):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return (
         db.query(models.Progreso)
-        .filter(models.Progreso.cliente_id == cliente_id)
+        .filter(models.Progreso.cliente_id == cliente_id, models.Progreso.gimnasio_id == get_gid(usuario))
         .order_by(models.Progreso.fecha.desc())
         .all()
     )
@@ -3722,7 +4630,7 @@ def progreso_de_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depend
 
 @app.post("/progreso/", response_model=schemas.Progreso, tags=["Progreso"])
 def registrar_progreso(datos: schemas.ProgresoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, datos.cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
@@ -3740,6 +4648,25 @@ def registrar_progreso(datos: schemas.ProgresoCreate, db: Session = Depends(get_
 # ---- Catalogo de Ejercicios (antes 'Entrenamientos' en el menu) ----
 FOTOS_EJERCICIOS_DIR = os.path.join(UPLOADS_DIR, "ejercicios")
 os.makedirs(FOTOS_EJERCICIOS_DIR, exist_ok=True)
+
+
+def _sincronizar_nombres_ejercicios_catalogo():
+    """Repara nombres antiguos en rutinas/paquetes que siguen enlazados al catalogo."""
+    db = SessionLocal()
+    try:
+        for ejercicio in db.query(models.RutinaEjercicio).filter(
+            models.RutinaEjercicio.tipo_ejercicio_id.isnot(None)
+        ).all():
+            if ejercicio.tipo_ejercicio and ejercicio.nombre != ejercicio.tipo_ejercicio.nombre:
+                ejercicio.nombre = ejercicio.tipo_ejercicio.nombre
+        for ejercicio in db.query(models.PaqueteRutinaEjercicio).filter(
+            models.PaqueteRutinaEjercicio.tipo_ejercicio_id.isnot(None)
+        ).all():
+            if ejercicio.tipo_ejercicio and ejercicio.nombre != ejercicio.tipo_ejercicio.nombre:
+                ejercicio.nombre = ejercicio.tipo_ejercicio.nombre
+        db.commit()
+    finally:
+        db.close()
 
 
 @app.get("/tipos-ejercicio/", response_model=List[schemas.TipoEjercicio], tags=["Entrenamientos"])
@@ -3771,8 +4698,49 @@ def actualizar_tipo_ejercicio(tipo_id: int, datos: schemas.TipoEjercicioUpdate, 
     te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.gimnasio_id == get_gid(usuario)).first()
     if not te:
         raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
-    for campo, valor in datos.model_dump(exclude_unset=True).items():
+    cambios = datos.model_dump(exclude_unset=True)
+    nombre_nuevo = cambios.get("nombre")
+    if nombre_nuevo is not None:
+        nombre_nuevo = nombre_nuevo.strip()
+        if not nombre_nuevo:
+            raise HTTPException(status_code=400, detail="El nombre del ejercicio es obligatorio")
+        cambios["nombre"] = nombre_nuevo
+    nombre_cambio = nombre_nuevo is not None and nombre_nuevo != te.nombre
+
+    for campo, valor in cambios.items():
         setattr(te, campo, valor)
+
+    if nombre_cambio:
+        # Las rutinas y paquetes enlazados al catalogo usan el nombre
+        # canonico. Los ejercicios de texto libre (sin tipo_ejercicio_id)
+        # permanecen intactos.
+        gid = get_gid(usuario)
+        ids_rutinas = [fila[0] for fila in (
+            db.query(models.RutinaEjercicio.id)
+            .join(models.RutinaDia, models.RutinaDia.id == models.RutinaEjercicio.dia_id)
+            .join(models.Rutina, models.Rutina.id == models.RutinaDia.rutina_id)
+            .filter(
+                models.RutinaEjercicio.tipo_ejercicio_id == te.id,
+                models.Rutina.gimnasio_id == gid,
+            ).all()
+        )]
+        ids_paquetes = [fila[0] for fila in (
+            db.query(models.PaqueteRutinaEjercicio.id)
+            .join(models.PaqueteRutinaDia, models.PaqueteRutinaDia.id == models.PaqueteRutinaEjercicio.dia_id)
+            .join(models.PaqueteRutina, models.PaqueteRutina.id == models.PaqueteRutinaDia.paquete_id)
+            .filter(
+                models.PaqueteRutinaEjercicio.tipo_ejercicio_id == te.id,
+                models.PaqueteRutina.gimnasio_id == gid,
+            ).all()
+        )]
+        if ids_rutinas:
+            db.query(models.RutinaEjercicio).filter(
+                models.RutinaEjercicio.id.in_(ids_rutinas)
+            ).update({models.RutinaEjercicio.nombre: nombre_nuevo}, synchronize_session=False)
+        if ids_paquetes:
+            db.query(models.PaqueteRutinaEjercicio).filter(
+                models.PaqueteRutinaEjercicio.id.in_(ids_paquetes)
+            ).update({models.PaqueteRutinaEjercicio.nombre: nombre_nuevo}, synchronize_session=False)
     db.commit()
     db.refresh(te)
     return te
@@ -3807,9 +4775,213 @@ async def subir_imagen_tipo_ejercicio(
     return te
 
 
+@app.get("/rutinas/recomendar/{cliente_id}", response_model=schemas.RecomendacionRutina, tags=["Entrenamientos"])
+def recomendar_paquetes_rutina_cliente(
+    cliente_id: int,
+    objetivo: Optional[str] = None,
+    nivel: Optional[str] = None,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    """Ordena paquetes existentes segun perfil, ultima medida y meta del alumno."""
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    objetivos_validos = {"inicio", "bajar_peso", "ganar_masa", "tonificacion", "definicion", "rendimiento"}
+    niveles_validos = {"basico", "intermedio", "avanzado", "competencia"}
+    if objetivo is not None and objetivo not in objetivos_validos:
+        raise HTTPException(status_code=400, detail="Objetivo de rutina no valido")
+    if nivel is not None and nivel not in niveles_validos:
+        raise HTTPException(status_code=400, detail="Nivel de rutina no valido")
+
+    medida = (
+        db.query(models.Medida)
+        .filter(models.Medida.cliente_id == cliente.id, models.Medida.gimnasio_id == get_gid(usuario))
+        .order_by(models.Medida.fecha.desc(), models.Medida.id.desc())
+        .first()
+    )
+    genero_crudo = (cliente.genero or "").strip().lower()
+    genero = "femenino" if genero_crudo.startswith("fem") else "masculino" if genero_crudo.startswith("mas") else "todos"
+    edad = None
+    if cliente.fecha_nacimiento:
+        hoy = date.today()
+        edad = hoy.year - cliente.fecha_nacimiento.year - (
+            (hoy.month, hoy.day) < (cliente.fecha_nacimiento.month, cliente.fecha_nacimiento.day)
+        )
+
+    peso = medida.peso_kg if medida else None
+    estatura = medida.estatura_cm if medida else None
+    imc = round(peso / ((estatura / 100) ** 2), 1) if peso and estatura else None
+    peso_objetivo = medida.peso_objetivo_kg if medida else None
+    razones_perfil = []
+
+    objetivo_sugerido = objetivo
+    if not objetivo_sugerido and peso and peso_objetivo:
+        diferencia_pct = (peso_objetivo - peso) / peso
+        if diferencia_pct <= -0.03:
+            objetivo_sugerido = "bajar_peso"
+            razones_perfil.append(f"Meta de peso: bajar de {peso:.1f} a {peso_objetivo:.1f} kg")
+        elif diferencia_pct >= 0.03:
+            objetivo_sugerido = "ganar_masa"
+            razones_perfil.append(f"Meta de peso: subir de {peso:.1f} a {peso_objetivo:.1f} kg")
+    if not objetivo_sugerido:
+        if imc is None:
+            objetivo_sugerido = "inicio"
+            razones_perfil.append("Sin peso y estatura completos: se prioriza adaptacion")
+        elif imc >= 30:
+            objetivo_sugerido = "bajar_peso"
+            razones_perfil.append(f"IMC {imc}: se prioriza reduccion de peso con progresion segura")
+        elif imc >= 25:
+            objetivo_sugerido = "definicion"
+            razones_perfil.append(f"IMC {imc}: se prioriza composicion corporal")
+        elif imc < 18.5:
+            objetivo_sugerido = "ganar_masa"
+            razones_perfil.append(f"IMC {imc}: se prioriza ganancia de masa")
+        else:
+            objetivo_sugerido = "tonificacion"
+            razones_perfil.append(f"IMC {imc}: rango saludable, se prioriza tonificacion")
+    elif objetivo is not None:
+        razones_perfil.append("Objetivo seleccionado por el entrenador o el alumno")
+
+    rutinas_previas = q(db, models.Rutina, usuario).filter(
+        models.Rutina.cliente_id == cliente.id,
+        models.Rutina.activo == True,
+    ).count()
+    nivel_sugerido = nivel or ("intermedio" if rutinas_previas >= 2 and (edad is None or 16 <= edad <= 60) else "basico")
+    if nivel is None:
+        razones_perfil.append(
+            "Nivel intermedio por historial de rutinas" if nivel_sugerido == "intermedio"
+            else "Nivel basico para iniciar con una progresion controlada"
+        )
+
+    niveles_orden = {"basico": 0, "intermedio": 1, "avanzado": 2, "competencia": 3}
+    paquetes = q(db, models.PaqueteRutina, usuario).filter(models.PaqueteRutina.activo == True).all()
+    compatibles_genero = [p for p in paquetes if p.genero_recomendado in {"todos", genero}]
+    if compatibles_genero:
+        paquetes = compatibles_genero
+
+    opciones = []
+    for paquete in paquetes:
+        puntuacion = 0
+        motivos = []
+        if paquete.objetivo == objetivo_sugerido:
+            puntuacion += 55
+            motivos.append("Coincide con el objetivo")
+        elif {paquete.objetivo, objetivo_sugerido} <= {"tonificacion", "definicion"}:
+            puntuacion += 24
+            motivos.append("Objetivo de composicion corporal compatible")
+
+        if paquete.genero_recomendado == genero and genero != "todos":
+            puntuacion += 20
+            motivos.append(f"Perfil {genero}")
+        elif paquete.genero_recomendado == "todos":
+            puntuacion += 13
+            motivos.append("Perfil mixto compatible")
+
+        distancia_nivel = abs(niveles_orden.get(paquete.nivel, 0) - niveles_orden.get(nivel_sugerido, 0))
+        if distancia_nivel == 0:
+            puntuacion += 25
+            motivos.append(f"Nivel {nivel_sugerido}")
+        elif distancia_nivel == 1:
+            puntuacion += 8
+            motivos.append("Nivel cercano, requiere adaptacion")
+        else:
+            puntuacion -= 12
+
+        if edad is not None:
+            if paquete.edad_min is not None and edad < paquete.edad_min:
+                puntuacion -= 30
+            if paquete.edad_max is not None and edad > paquete.edad_max:
+                puntuacion -= 30
+        opciones.append({"paquete": paquete, "puntuacion": puntuacion, "motivos": motivos})
+
+    opciones.sort(key=lambda opcion: (-opcion["puntuacion"], opcion["paquete"].nombre))
+    return {
+        "perfil": {
+            "genero": genero,
+            "edad": edad,
+            "peso_kg": peso,
+            "estatura_cm": estatura,
+            "imc": imc,
+            "peso_objetivo_kg": peso_objetivo,
+            "objetivo_sugerido": objetivo_sugerido,
+            "nivel_sugerido": nivel_sugerido,
+            "razones": razones_perfil,
+        },
+        "opciones": opciones[:5],
+    }
+
+
+@app.post("/paquetes-rutina/guardar-y-asignar", response_model=schemas.GuardarRecomendacionRutinaResponse, tags=["Entrenamientos"])
+def guardar_recomendacion_rutina(
+    datos: schemas.GuardarRecomendacionRutinaRequest,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    """Guarda una recomendacion editada como paquete nuevo y la asigna en una sola transaccion."""
+    origen = _del_gym(db, models.PaqueteRutina, datos.paquete_origen_id, usuario)
+    cliente = _del_gym(db, models.Cliente, datos.cliente_id, usuario)
+    if not origen:
+        raise HTTPException(status_code=404, detail="Paquete de origen no encontrado")
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    _validar_limite_plan(db, usuario, "rutinas")
+    _validar_perfil_paquete(datos.paquete)
+    nombre_nuevo = datos.paquete.nombre.strip()
+    if nombre_nuevo.casefold() == origen.nombre.strip().casefold():
+        raise HTTPException(status_code=400, detail="Debes poner un nombre nuevo al paquete adaptado")
+
+    paquete = models.PaqueteRutina(
+        gimnasio_id=get_gid(usuario),
+        nombre=nombre_nuevo,
+        descripcion=datos.paquete.descripcion,
+        nivel=datos.paquete.nivel,
+        objetivo=datos.paquete.objetivo,
+        etapa=datos.paquete.etapa,
+        genero_recomendado=datos.paquete.genero_recomendado,
+        edad_min=datos.paquete.edad_min,
+        edad_max=datos.paquete.edad_max,
+        duracion_semanas=datos.paquete.duracion_semanas,
+        dias=_validar_dias_paquete(datos.paquete.dias, db, usuario),
+    )
+    db.add(paquete)
+    db.flush()
+
+    dias_rutina = [models.RutinaDia(
+        nombre=dia.nombre,
+        orden=dia.orden,
+        ejercicios=[models.RutinaEjercicio(
+            tipo_ejercicio_id=ejercicio.tipo_ejercicio_id,
+            nombre=ejercicio.nombre,
+            series=ejercicio.series,
+            repeticiones=ejercicio.repeticiones,
+            peso=ejercicio.peso,
+            notas=ejercicio.notas,
+        ) for ejercicio in dia.ejercicios],
+    ) for dia in paquete.dias]
+    rutina = models.Rutina(
+        gimnasio_id=get_gid(usuario),
+        cliente_id=cliente.id,
+        nombre=nombre_nuevo,
+        dias=dias_rutina,
+    )
+    db.add(rutina)
+    db.commit()
+    db.refresh(paquete)
+    db.refresh(rutina)
+    return {"paquete": paquete, "rutina": rutina}
+
+
 @app.get("/rutinas/cliente/{cliente_id}", response_model=List[schemas.Rutina], tags=["Entrenamientos"])
-def rutinas_de_cliente(cliente_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
-    return db.query(models.Rutina).filter(models.Rutina.cliente_id == cliente_id, models.Rutina.activo == True).all()
+def rutinas_de_cliente(cliente_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    if not _del_gym(db, models.Cliente, cliente_id, usuario):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return db.query(models.Rutina).filter(
+        models.Rutina.cliente_id == cliente_id,
+        models.Rutina.gimnasio_id == get_gid(usuario),
+        models.Rutina.activo == True,
+    ).all()
 
 
 @app.post("/rutina-dias/{dia_id}/ejercicios", response_model=schemas.RutinaEjercicio, tags=["Entrenamientos"])
@@ -3817,10 +4989,10 @@ def agregar_ejercicio_a_dia(
     dia_id: int,
     datos: schemas.RutinaEjercicioCreate,
     db: Session = Depends(get_db),
-    _=Depends(auth.requiere_staff_o_profesor),
+    usuario=Depends(auth.requiere_staff_o_profesor),
 ):
     """Agrega un ejercicio a un dia de rutina ya existente. Si tipo_ejercicio_id viene del catalogo, el nombre puede autocompletarse en el frontend pero queda editable."""
-    dia = db.query(models.RutinaDia).filter(models.RutinaDia.id == dia_id).first()
+    dia = _rutina_dia_del_gym(db, dia_id, usuario)
     if not dia:
         raise HTTPException(status_code=404, detail="Dia de rutina no encontrado")
     ej = models.RutinaEjercicio(dia_id=dia_id, **datos.model_dump())
@@ -3831,8 +5003,8 @@ def agregar_ejercicio_a_dia(
 
 
 @app.delete("/rutina-ejercicios/{ejercicio_id}", tags=["Entrenamientos"])
-def eliminar_ejercicio_de_dia(ejercicio_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff_o_profesor)):
-    ej = db.query(models.RutinaEjercicio).filter(models.RutinaEjercicio.id == ejercicio_id).first()
+def eliminar_ejercicio_de_dia(ejercicio_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    ej = _rutina_ejercicio_del_gym(db, ejercicio_id, usuario)
     if not ej:
         raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
     db.delete(ej)
@@ -3843,7 +5015,7 @@ def eliminar_ejercicio_de_dia(ejercicio_id: int, db: Session = Depends(get_db), 
 @app.post("/rutinas/", response_model=schemas.Rutina, tags=["Entrenamientos"])
 def crear_rutina(datos: schemas.RutinaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
     _validar_limite_plan(db, usuario, "rutinas")
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, datos.cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
@@ -3860,13 +5032,163 @@ def crear_rutina(datos: schemas.RutinaCreate, db: Session = Depends(get_db), usu
 
 
 @app.delete("/rutinas/{rutina_id}", tags=["Entrenamientos"])
-def eliminar_rutina(rutina_id: int, db: Session = Depends(get_db), _=Depends(auth.requiere_staff)):
-    rutina = db.query(models.Rutina).filter(models.Rutina.id == rutina_id).first()
+def eliminar_rutina(rutina_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    rutina = _del_gym(db, models.Rutina, rutina_id, usuario)
     if not rutina:
         raise HTTPException(status_code=404, detail="Rutina no encontrada")
     db.delete(rutina)
     db.commit()
     return {"ok": True}
+
+
+def _validar_dias_paquete(datos_dias, db: Session, usuario):
+    """Valida referencias al catalogo y construye el arbol de una plantilla."""
+    gid = get_gid(usuario)
+    ids = {
+        ejercicio.tipo_ejercicio_id
+        for dia in datos_dias for ejercicio in dia.ejercicios
+        if ejercicio.tipo_ejercicio_id is not None
+    }
+    if ids:
+        validos = {
+            fila[0] for fila in db.query(models.TipoEjercicio.id).filter(
+                models.TipoEjercicio.gimnasio_id == gid,
+                models.TipoEjercicio.id.in_(ids),
+            ).all()
+        }
+        if validos != ids:
+            raise HTTPException(status_code=400, detail="Uno o mas ejercicios no pertenecen a este gimnasio")
+    return [
+        models.PaqueteRutinaDia(
+            nombre=dia.nombre,
+            orden=dia.orden,
+            ejercicios=[models.PaqueteRutinaEjercicio(**ej.model_dump()) for ej in dia.ejercicios],
+        )
+        for dia in datos_dias
+    ]
+
+
+def _validar_perfil_paquete(datos):
+    if datos.edad_min is not None and datos.edad_max is not None and datos.edad_max < datos.edad_min:
+        raise HTTPException(status_code=400, detail="La edad maxima no puede ser menor que la edad minima")
+    if not datos.nombre.strip():
+        raise HTTPException(status_code=400, detail="El nombre del paquete es obligatorio")
+
+
+@app.get("/paquetes-rutina/", response_model=List[schemas.PaqueteRutina], tags=["Entrenamientos"])
+def listar_paquetes_rutina(
+    solo_activos: bool = True,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    query = q(db, models.PaqueteRutina, usuario)
+    if solo_activos:
+        query = query.filter(models.PaqueteRutina.activo == True)
+    return query.order_by(models.PaqueteRutina.nivel, models.PaqueteRutina.nombre).all()
+
+
+@app.post("/paquetes-rutina/", response_model=schemas.PaqueteRutina, tags=["Entrenamientos"])
+def crear_paquete_rutina(
+    datos: schemas.PaqueteRutinaCreate,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    _validar_perfil_paquete(datos)
+    paquete = models.PaqueteRutina(
+        gimnasio_id=get_gid(usuario),
+        nombre=datos.nombre.strip(),
+        descripcion=datos.descripcion,
+        nivel=datos.nivel,
+        objetivo=datos.objetivo,
+        etapa=datos.etapa,
+        genero_recomendado=datos.genero_recomendado,
+        edad_min=datos.edad_min,
+        edad_max=datos.edad_max,
+        duracion_semanas=datos.duracion_semanas,
+        dias=_validar_dias_paquete(datos.dias, db, usuario),
+    )
+    db.add(paquete)
+    db.commit()
+    db.refresh(paquete)
+    return paquete
+
+
+@app.put("/paquetes-rutina/{paquete_id}", response_model=schemas.PaqueteRutina, tags=["Entrenamientos"])
+def actualizar_paquete_rutina(
+    paquete_id: int,
+    datos: schemas.PaqueteRutinaCreate,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    paquete = _del_gym(db, models.PaqueteRutina, paquete_id, usuario)
+    if not paquete:
+        raise HTTPException(status_code=404, detail="Paquete de rutina no encontrado")
+    _validar_perfil_paquete(datos)
+    for campo in ("descripcion", "nivel", "objetivo", "etapa", "genero_recomendado", "edad_min", "edad_max", "duracion_semanas"):
+        setattr(paquete, campo, getattr(datos, campo))
+    paquete.nombre = datos.nombre.strip()
+    paquete.dias.clear()
+    paquete.dias.extend(_validar_dias_paquete(datos.dias, db, usuario))
+    db.commit()
+    db.refresh(paquete)
+    return paquete
+
+
+@app.delete("/paquetes-rutina/{paquete_id}", tags=["Entrenamientos"])
+def desactivar_paquete_rutina(
+    paquete_id: int,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff),
+):
+    paquete = _del_gym(db, models.PaqueteRutina, paquete_id, usuario)
+    if not paquete:
+        raise HTTPException(status_code=404, detail="Paquete de rutina no encontrado")
+    paquete.activo = False
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/paquetes-rutina/{paquete_id}/asignar", response_model=schemas.Rutina, tags=["Entrenamientos"])
+def asignar_paquete_rutina(
+    paquete_id: int,
+    datos: schemas.AsignarPaqueteRutina,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff_o_profesor),
+):
+    _validar_limite_plan(db, usuario, "rutinas")
+    paquete = _del_gym(db, models.PaqueteRutina, paquete_id, usuario)
+    cliente = _del_gym(db, models.Cliente, datos.cliente_id, usuario)
+    if not paquete or not paquete.activo:
+        raise HTTPException(status_code=404, detail="Paquete de rutina no encontrado")
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    dias = [
+        models.RutinaDia(
+            nombre=dia.nombre,
+            orden=dia.orden,
+            ejercicios=[
+                models.RutinaEjercicio(
+                    tipo_ejercicio_id=ej.tipo_ejercicio_id,
+                    nombre=ej.nombre,
+                    series=ej.series,
+                    repeticiones=ej.repeticiones,
+                    peso=ej.peso,
+                    notas=ej.notas,
+                ) for ej in dia.ejercicios
+            ],
+        ) for dia in paquete.dias
+    ]
+    rutina = models.Rutina(
+        gimnasio_id=get_gid(usuario),
+        cliente_id=cliente.id,
+        nombre=(datos.nombre or paquete.nombre).strip(),
+        dias=dias,
+    )
+    db.add(rutina)
+    db.commit()
+    db.refresh(rutina)
+    return rutina
 
 
 # ==================================================================
@@ -3946,7 +5268,17 @@ def listar_paquetes_nutricion(
 
 @app.post("/paquetes-nutricion/", response_model=schemas.PaqueteNutricion, tags=["Nutricion"])
 def crear_paquete_nutricion(datos: schemas.PaqueteNutricionCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
-    items_db = [models.PaqueteAlimento(alimento_id=i.alimento_id, cantidad_gramos=i.cantidad_gramos) for i in datos.items]
+    items_db = []
+    for item in datos.items:
+        alimento = _del_gym(db, models.Alimento, item.alimento_id, usuario)
+        if not alimento:
+            raise HTTPException(status_code=404, detail="Alimento no encontrado")
+        gramos_item = _limitar_gramos_proteina(alimento, item.cantidad_gramos)
+        items_db.append(models.PaqueteAlimento(
+            alimento_id=item.alimento_id,
+            cantidad_gramos=gramos_item,
+            porcion_cliente=_porcion_cliente_facil(alimento, gramos_item, item.porcion_cliente),
+        ))
     db_paq = models.PaqueteNutricion(
         nombre=datos.nombre, tipo_comida=datos.tipo_comida, proposito=datos.proposito,
         notas=datos.notas, items=items_db, gimnasio_id=get_gid(usuario),
@@ -3974,7 +5306,18 @@ def actualizar_paquete_nutricion(
     if items_nuevos is not None:
         db.query(models.PaqueteAlimento).filter(models.PaqueteAlimento.paquete_id == paquete_id).delete()
         for item in items_nuevos:
-            db.add(models.PaqueteAlimento(paquete_id=paquete_id, alimento_id=item["alimento_id"], cantidad_gramos=item["cantidad_gramos"]))
+            alimento = _del_gym(db, models.Alimento, item["alimento_id"], usuario)
+            if not alimento:
+                raise HTTPException(status_code=404, detail="Alimento no encontrado")
+            gramos_item = _limitar_gramos_proteina(alimento, item["cantidad_gramos"])
+            db.add(models.PaqueteAlimento(
+                paquete_id=paquete_id,
+                alimento_id=item["alimento_id"],
+                cantidad_gramos=gramos_item,
+                porcion_cliente=_porcion_cliente_facil(
+                    alimento, gramos_item, item.get("porcion_cliente")
+                ),
+            ))
     db.commit()
     db.refresh(paq)
     return paq
@@ -3998,10 +5341,10 @@ def aplicar_paquete_a_plan(
     usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
 ):
     """Genera las filas ComidaPlan de un plan de cliente a partir de los alimentos de un Paquete (calcula las calorias segun la cantidad_gramos de cada item)."""
-    paquete = db.query(models.PaqueteNutricion).filter(models.PaqueteNutricion.id == paquete_id).first()
+    paquete = _del_gym(db, models.PaqueteNutricion, paquete_id, usuario)
     if not paquete:
         raise HTTPException(status_code=404, detail="Paquete no encontrado")
-    plan = db.query(models.PlanNutricion).filter(models.PlanNutricion.id == datos.plan_id).first()
+    plan = _del_gym(db, models.PlanNutricion, datos.plan_id, usuario)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan de nutricion no encontrado")
 
@@ -4016,17 +5359,20 @@ def aplicar_paquete_a_plan(
     creadas = []
     for item in paquete.items:
         alimento = item.alimento
-        factor = (item.cantidad_gramos or 0.0) / (alimento.porcion_gramos or 100.0)
+        gramos_item = _limitar_gramos_proteina(alimento, item.cantidad_gramos)
+        factor = gramos_item / (alimento.porcion_gramos or 100.0)
         calorias_item = round((alimento.calorias or 0.0) * factor)
-        # Porcion legible: "Huevo cocido (100g) - 1.5 unidades" si hay porcion_casera
-        porcion_txt = f" - {_escalar_porcion(alimento.porcion_casera, factor)}" if alimento.porcion_casera else ""
+        porcion_cliente = _porcion_cliente_facil(
+            alimento, gramos_item
+        )
         comida = models.ComidaPlan(
             plan_id=plan.id,
             tipo=tipo_comida_map[paquete.tipo_comida],
             alimento_id=alimento.id,
-            nombre_alimento=f"{alimento.nombre} ({item.cantidad_gramos:.0f}g){porcion_txt}",
+            nombre_alimento=alimento.nombre,
             calorias=calorias_item,
-            cantidad_gramos=item.cantidad_gramos,
+            cantidad_gramos=gramos_item,
+            porcion_cliente=porcion_cliente,
         )
         db.add(comida)
         creadas.append(comida)
@@ -4044,9 +5390,15 @@ def listar_planes_nutricion(db: Session = Depends(get_db), usuario: models.Usuar
 
 @app.get("/nutricion/cliente/{cliente_id}", response_model=List[schemas.PlanNutricion], tags=["Nutricion"])
 def planes_de_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    if not _del_gym(db, models.Cliente, cliente_id, usuario):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return (
         db.query(models.PlanNutricion)
-        .filter(models.PlanNutricion.cliente_id == cliente_id, models.PlanNutricion.activo == True)
+        .filter(
+            models.PlanNutricion.cliente_id == cliente_id,
+            models.PlanNutricion.gimnasio_id == get_gid(usuario),
+            models.PlanNutricion.activo == True,
+        )
         .all()
     )
 
@@ -4054,7 +5406,27 @@ def planes_de_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: m
 @app.post("/nutricion/", response_model=schemas.PlanNutricion, tags=["Nutricion"])
 def crear_plan_nutricion(datos: schemas.PlanNutricionCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
     _validar_nutricion_habilitada(db, usuario)
-    comidas_db = [models.ComidaPlan(**c.model_dump()) for c in datos.comidas]
+    if datos.cliente_id is not None and not _del_gym(db, models.Cliente, datos.cliente_id, usuario):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    comidas_db = []
+    for comida in datos.comidas:
+        alimento = None
+        if comida.alimento_id is not None:
+            alimento = _del_gym(db, models.Alimento, comida.alimento_id, usuario)
+            if not alimento:
+                raise HTTPException(status_code=404, detail="Alimento no encontrado")
+        datos_comida = comida.model_dump()
+        if alimento:
+            datos_comida["cantidad_gramos"] = _limitar_gramos_proteina(
+                alimento, comida.cantidad_gramos
+            )
+            datos_comida["nombre_alimento"] = alimento.nombre
+            datos_comida["porcion_cliente"] = _porcion_cliente_facil(
+                alimento, datos_comida["cantidad_gramos"], comida.porcion_cliente
+            )
+            factor = datos_comida["cantidad_gramos"] / float(alimento.porcion_gramos or 100)
+            datos_comida["calorias"] = round((alimento.calorias or 0.0) * factor)
+        comidas_db.append(models.ComidaPlan(**datos_comida))
     db_plan = models.PlanNutricion(
         cliente_id=datos.cliente_id,
         titulo=datos.titulo,
@@ -4077,7 +5449,7 @@ def actualizar_plan_nutricion(plan_id: int, datos: schemas.PlanNutricionUpdate, 
     (activo=False) cuando se lo reemplaza por una version adaptada
     nueva, sin borrar el historico.
     """
-    plan = db.query(models.PlanNutricion).filter(models.PlanNutricion.id == plan_id).first()
+    plan = _del_gym(db, models.PlanNutricion, plan_id, usuario)
     if not plan:
         raise HTTPException(status_code=404, detail="Plan no encontrado")
     for campo, valor in datos.model_dump(exclude_unset=True).items():
@@ -4175,7 +5547,7 @@ def _calorias_totales_paquete(paquete: models.PaqueteNutricion) -> float:
     return total
 
 
-def _elegir_paquete_por_calorias(db: Session, tipo_comida, proposito, kcal_objetivo: float) -> Optional[models.PaqueteNutricion]:
+def _elegir_paquete_por_calorias(db: Session, gimnasio_id: int, tipo_comida, proposito, kcal_objetivo: float) -> Optional[models.PaqueteNutricion]:
     """De los paquetes activos que calzan con el tipo de comida y el proposito, elige el que mas se acerca a kcal_objetivo."""
     candidatos = (
         db.query(models.PaqueteNutricion)
@@ -4183,6 +5555,7 @@ def _elegir_paquete_por_calorias(db: Session, tipo_comida, proposito, kcal_objet
             models.PaqueteNutricion.tipo_comida == tipo_comida,
             models.PaqueteNutricion.proposito == proposito,
             models.PaqueteNutricion.activo == True,
+            models.PaqueteNutricion.gimnasio_id == gimnasio_id,
         )
         .all()
     )
@@ -4215,20 +5588,23 @@ def _generar_plan_automatico_interno(db: Session, cliente: models.Cliente, perfi
     comidas_db = []
     tipos_map = {"desayuno": models.TipoComida.DESAYUNO, "comida": models.TipoComida.COMIDA, "cena": models.TipoComida.CENA}
     for clave, tipo_enum in tipos_map.items():
-        paquete = _elegir_paquete_por_calorias(db, tipo_enum, perfil["proposito"], perfil["reparto"][clave])
+        paquete = _elegir_paquete_por_calorias(db, cliente.gimnasio_id, tipo_enum, perfil["proposito"], perfil["reparto"][clave])
         if not paquete:
             continue
         for item in paquete.items:
             alimento = item.alimento
             if not alimento:
                 continue
-            factor = (item.cantidad_gramos or 0.0) / (alimento.porcion_gramos or 100.0)
-            porcion_txt = f" - {_escalar_porcion(alimento.porcion_casera, factor)}" if alimento.porcion_casera else ""
+            gramos_item = _limitar_gramos_proteina(alimento, item.cantidad_gramos)
+            factor = gramos_item / (alimento.porcion_gramos or 100.0)
             comidas_db.append(models.ComidaPlan(
                 tipo=tipo_enum, alimento_id=alimento.id,
-                nombre_alimento=f"{alimento.nombre} ({item.cantidad_gramos:.0f}g){porcion_txt}",
+                nombre_alimento=alimento.nombre,
                 calorias=round((alimento.calorias or 0.0) * factor),
-                cantidad_gramos=item.cantidad_gramos,
+                cantidad_gramos=gramos_item,
+                porcion_cliente=_porcion_cliente_facil(
+                    alimento, gramos_item
+                ),
             ))
 
     db_plan = models.PlanNutricion(
@@ -4238,6 +5614,7 @@ def _generar_plan_automatico_interno(db: Session, cliente: models.Cliente, perfi
         calorias_objetivo=perfil["calorias_objetivo"],
         origen="automatico",
         comidas=comidas_db,
+        gimnasio_id=cliente.gimnasio_id,
     )
     db.add(db_plan)
     db.commit()
@@ -4285,7 +5662,7 @@ def generar_plan_automatico(cliente_id: int, db: Session = Depends(get_db), usua
     esto permite generarlo manualmente bajo pedido para cualquier cliente.
     """
     _validar_nutricion_habilitada(db, usuario)
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
@@ -4320,6 +5697,8 @@ def generar_planes_automaticos_masivo(db: Session = Depends(get_db), usuario: mo
         .join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
         .join(models.Membresia, models.ClienteMembresia.membresia_id == models.Membresia.id)
         .filter(
+            models.Cliente.gimnasio_id == get_gid(usuario),
+            models.Membresia.gimnasio_id == get_gid(usuario),
             models.Cliente.activo == True,
             models.ClienteMembresia.activo == True,
             models.Membresia.incluye_nutricion == True,
@@ -4460,6 +5839,63 @@ def actualizar_empleado(
 
 # ---- Agenda / Clases dictadas ----
 
+def _validar_sala_disponible(db: Session, gid: int, sala: Optional[str], fecha_evento: date, inicio: datetime, fin: Optional[datetime]):
+    """Evita superponer clases y alquileres en una misma sala."""
+    if not sala or not sala.strip():
+        return
+    fin_evento = fin or (inicio + timedelta(hours=1))
+    clases = db.query(models.ClaseDictada).filter(
+        models.ClaseDictada.gimnasio_id == gid,
+        models.ClaseDictada.fecha == fecha_evento,
+        func.lower(models.ClaseDictada.sala) == sala.strip().lower(),
+    ).all()
+    reservas = db.query(models.ReservaSala).filter(
+        models.ReservaSala.gimnasio_id == gid,
+        models.ReservaSala.fecha == fecha_evento,
+        func.lower(models.ReservaSala.sala) == sala.strip().lower(),
+    ).all()
+    for ocupado in [*clases, *reservas]:
+        fin_ocupado = ocupado.hora_fin or (ocupado.hora_inicio + timedelta(hours=1))
+        if inicio < fin_ocupado and ocupado.hora_inicio < fin_evento:
+            raise HTTPException(status_code=409, detail=f"La sala {sala} ya esta ocupada en ese horario")
+
+@app.get("/reservas-sala/", response_model=List[schemas.ReservaSala], tags=["Agenda"])
+def listar_reservas_sala(
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    db: Session = Depends(get_db),
+    usuario=Depends(auth.requiere_staff),
+):
+    query = q(db, models.ReservaSala, usuario)
+    if desde:
+        query = query.filter(models.ReservaSala.fecha >= desde)
+    if hasta:
+        query = query.filter(models.ReservaSala.fecha <= hasta)
+    return query.order_by(models.ReservaSala.fecha, models.ReservaSala.hora_inicio).all()
+
+
+@app.post("/reservas-sala/", response_model=schemas.ReservaSala, tags=["Agenda"])
+def crear_reserva_sala(datos: schemas.ReservaSalaCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    concepto = _del_gym(db, models.ConceptoOtroIngreso, datos.concepto_ingreso_id, usuario)
+    if not concepto or not concepto.activo or not concepto.mostrar_agenda:
+        raise HTTPException(status_code=400, detail="El concepto no esta habilitado para Agenda")
+    if datos.hora_fin and datos.hora_fin <= datos.hora_inicio:
+        raise HTTPException(status_code=400, detail="La hora fin debe ser posterior a la hora de inicio")
+    _validar_sala_disponible(db, get_gid(usuario), datos.sala, datos.fecha, datos.hora_inicio, datos.hora_fin)
+    reserva = models.ReservaSala(**datos.model_dump(), gimnasio_id=get_gid(usuario))
+    db.add(reserva); db.commit(); db.refresh(reserva)
+    return reserva
+
+
+@app.delete("/reservas-sala/{reserva_id}", tags=["Agenda"])
+def eliminar_reserva_sala(reserva_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    reserva = _del_gym(db, models.ReservaSala, reserva_id, usuario)
+    if not reserva:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    db.delete(reserva); db.commit()
+    return {"ok": True}
+
+
 @app.get("/clases/", response_model=List[schemas.ClaseDictada], tags=["Agenda"])
 def listar_clases(
     desde: Optional[date] = None,
@@ -4481,19 +5917,19 @@ def listar_clases(
 @app.post("/clases/", response_model=List[schemas.ClaseDictada], tags=["Agenda"])
 def agendar_clase(datos: schemas.ClaseDictadaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
     """
-    Agenda una clase. Si se envian dias_semana (lunes=0..sabado=5) y
+    Agenda una clase. Si se envian dias_semana (lunes=0..domingo=6) y
     semanas > 1, crea una SERIE: una clase por cada dia de semana
     elegido, repetida esa cantidad de semanas (todas comparten
     serie_id, lo que permite despues borrar 'esta' o 'esta y las
     futuras'). Sin repeticion, crea una sola clase (lista de 1).
     """
-    profesor = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_id).first()
+    profesor = _del_gym(db, models.Empleado, datos.profesor_id, usuario)
     if not profesor:
         raise HTTPException(status_code=404, detail="Profesor no encontrado")
     if profesor.tipo != models.TipoEmpleado.PROFESOR_DE_SALA:
         raise HTTPException(status_code=400, detail="El empleado seleccionado no es un profesor de sala")
 
-    dias_semana = sorted(set(d for d in datos.dias_semana if 0 <= d <= 5))
+    dias_semana = sorted(set(d for d in datos.dias_semana if 0 <= d <= 6))
     semanas = max(datos.semanas or 1, 1)
 
     hora_inicio_t = datos.hora_inicio.time()
@@ -4515,13 +5951,16 @@ def agendar_clase(datos: schemas.ClaseDictadaCreate, db: Session = Depends(get_d
 
     clases_creadas = []
     for fecha_clase in fechas_a_crear:
+        inicio_clase = datetime.combine(fecha_clase, hora_inicio_t)
+        fin_clase = datetime.combine(fecha_clase, hora_fin_t) if hora_fin_t else None
+        _validar_sala_disponible(db, get_gid(usuario), datos.sala, fecha_clase, inicio_clase, fin_clase)
         db_clase = models.ClaseDictada(
             profesor_id=datos.profesor_id,
             nombre_clase=datos.nombre_clase,
             sala=datos.sala,
             fecha=fecha_clase,
-            hora_inicio=datetime.combine(fecha_clase, hora_inicio_t),
-            hora_fin=datetime.combine(fecha_clase, hora_fin_t) if hora_fin_t else None,
+            hora_inicio=inicio_clase,
+            hora_fin=fin_clase,
             notas=datos.notas,
             serie_id=serie_id,
             gimnasio_id=get_gid(usuario),
@@ -4547,7 +5986,7 @@ def asignar_reemplazo_staff(
     if not clase:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
     if datos.profesor_reemplazo_id:
-        reemplazo = db.query(models.Empleado).filter(models.Empleado.id == datos.profesor_reemplazo_id).first()
+        reemplazo = _del_gym(db, models.Empleado, datos.profesor_reemplazo_id, usuario)
         if not reemplazo or reemplazo.tipo != models.TipoEmpleado.PROFESOR_DE_SALA or not reemplazo.activo:
             raise HTTPException(status_code=400, detail="El reemplazo debe ser un profesor de sala activo")
     clase.profesor_reemplazo_id = datos.profesor_reemplazo_id
@@ -4577,7 +6016,11 @@ def eliminar_clase(
     if alcance == "futuras" and clase.serie_id:
         eliminadas = (
             db.query(models.ClaseDictada)
-            .filter(models.ClaseDictada.serie_id == clase.serie_id, models.ClaseDictada.fecha >= clase.fecha)
+            .filter(
+                models.ClaseDictada.serie_id == clase.serie_id,
+                models.ClaseDictada.gimnasio_id == get_gid(usuario),
+                models.ClaseDictada.fecha >= clase.fecha,
+            )
             .delete(synchronize_session=False)
         )
     else:
@@ -4603,7 +6046,7 @@ def marcar_clase_dictada(
     hora_inicio; si no hay hora_fin, se asume 1 hora), y se usa la
     completa o la reducida segun si se cumplio el minimo de alumnos.
     """
-    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id).first()
+    clase = _del_gym(db, models.ClaseDictada, clase_id, usuario)
     if not clase:
         raise HTTPException(status_code=404, detail="Clase no encontrada")
 
@@ -4644,7 +6087,7 @@ def calcular_planilla_profesor(
     para ESE MISMO rango exacto (desde/hasta) y cuanto queda
     pendiente, para permitir pagos en partes sin pagar de mas.
     """
-    profesor = db.query(models.Empleado).filter(models.Empleado.id == profesor_id).first()
+    profesor = _del_gym(db, models.Empleado, profesor_id, usuario)
     if not profesor:
         raise HTTPException(status_code=404, detail="Profesor no encontrado")
 
@@ -4652,6 +6095,7 @@ def calcular_planilla_profesor(
         db.query(models.ClaseDictada)
         .filter(
             models.ClaseDictada.profesor_id == profesor_id,
+            models.ClaseDictada.gimnasio_id == get_gid(usuario),
             models.ClaseDictada.dictada == True,
             models.ClaseDictada.fecha >= desde,
             models.ClaseDictada.fecha <= hasta,
@@ -4666,6 +6110,7 @@ def calcular_planilla_profesor(
         db.query(models.PagoPlanilla)
         .filter(
             models.PagoPlanilla.empleado_id == profesor_id,
+            models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "profesor",
             models.PagoPlanilla.desde == desde,
             models.PagoPlanilla.hasta == hasta,
@@ -4685,7 +6130,7 @@ def calcular_planilla_profesor(
     )
 
 
-def _calcular_comisiones_periodo(db: Session, usuario_id: int, anio: int, mes: int) -> tuple:
+def _calcular_comisiones_periodo(db: Session, usuario_id: int, gimnasio_id: int, anio: int, mes: int) -> tuple:
     """
     Devuelve (comision_membresias, comision_productos) para un
     usuario en un mes especifico, aplicando la meta y los tramos
@@ -4695,13 +6140,21 @@ def _calcular_comisiones_periodo(db: Session, usuario_id: int, anio: int, mes: i
     desde = date(anio, mes, 1)
     hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
 
-    meta = db.query(models.MetaMensual).filter(models.MetaMensual.anio == anio, models.MetaMensual.mes == mes).first()
+    meta = db.query(models.MetaMensual).filter(
+        models.MetaMensual.gimnasio_id == gimnasio_id,
+        models.MetaMensual.anio == anio,
+        models.MetaMensual.mes == mes,
+    ).first()
     meta_membresias = meta.meta_membresias if meta else 0.0
 
-    config = _get_o_crear_configuracion(db)
+    config = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
     comision_producto_flat = config.comision_producto_porcentaje or 0.0
 
-    tramos = db.query(models.TramoComision).filter(models.TramoComision.activo == True, models.TramoComision.tipo == "membresia").all()
+    tramos = db.query(models.TramoComision).filter(
+        models.TramoComision.gimnasio_id == gimnasio_id,
+        models.TramoComision.activo == True,
+        models.TramoComision.tipo == "membresia",
+    ).all()
 
     ventas_membresias = (
         db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
@@ -4750,7 +6203,7 @@ def calcular_planilla_staff(
     if mes < 1 or mes > 12:
         raise HTTPException(status_code=400, detail="Mes invalido (1-12)")
 
-    empleado = db.query(models.Empleado).filter(models.Empleado.id == empleado_id).first()
+    empleado = _del_gym(db, models.Empleado, empleado_id, usuario)
     if not empleado:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
 
@@ -4762,7 +6215,9 @@ def calcular_planilla_staff(
 
     comision_membresias, comision_productos = 0.0, 0.0
     if empleado.usuario:
-        comision_membresias, comision_productos = _calcular_comisiones_periodo(db, empleado.usuario.id, anio_comision, mes_comision)
+        comision_membresias, comision_productos = _calcular_comisiones_periodo(
+            db, empleado.usuario.id, get_gid(usuario), anio_comision, mes_comision
+        )
 
     sueldo = empleado.sueldo_fijo_mensual or 0.0
     total_a_pagar = round(sueldo + comision_membresias + comision_productos, 2)
@@ -4771,6 +6226,7 @@ def calcular_planilla_staff(
         db.query(models.PagoPlanilla)
         .filter(
             models.PagoPlanilla.empleado_id == empleado_id,
+            models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "staff",
             models.PagoPlanilla.anio == anio,
             models.PagoPlanilla.mes == mes,
@@ -4812,7 +6268,7 @@ def crear_pago_planilla(
     """
     if datos.tipo not in ("staff", "profesor"):
         raise HTTPException(status_code=400, detail="tipo debe ser 'staff' o 'profesor'")
-    empleado = db.query(models.Empleado).filter(models.Empleado.id == datos.empleado_id).first()
+    empleado = _del_gym(db, models.Empleado, datos.empleado_id, usuario_actual)
     if not empleado:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
     if datos.mes < 1 or datos.mes > 12:
@@ -4821,12 +6277,16 @@ def crear_pago_planilla(
         raise HTTPException(status_code=400, detail="El monto a pagar debe ser mayor a 0")
 
     if datos.tipo == "staff":
-        resumen = calcular_planilla_staff(empleado_id=datos.empleado_id, anio=datos.anio, mes=datos.mes, db=db)
+        resumen = calcular_planilla_staff(
+            empleado_id=datos.empleado_id, anio=datos.anio, mes=datos.mes, db=db, usuario=usuario_actual
+        )
         pendiente = resumen.pendiente
     else:
         if not datos.desde or not datos.hasta:
             raise HTTPException(status_code=400, detail="desde y hasta son obligatorios para pagos de profesor")
-        resumen = calcular_planilla_profesor(profesor_id=datos.empleado_id, desde=datos.desde, hasta=datos.hasta, db=db)
+        resumen = calcular_planilla_profesor(
+            profesor_id=datos.empleado_id, desde=datos.desde, hasta=datos.hasta, db=db, usuario=usuario_actual
+        )
         pendiente = resumen.pendiente
 
     if datos.monto_total > pendiente + 0.01:
@@ -4835,7 +6295,11 @@ def crear_pago_planilla(
             detail=f"El monto ({datos.monto_total:.2f}) supera el saldo pendiente ({pendiente:.2f}). Ya se pago {resumen.total_pagado:.2f} de {resumen.total_a_pagar:.2f}.",
         )
 
-    db_pago = models.PagoPlanilla(**datos.model_dump(), usuario_registro_id=usuario_actual.id)
+    db_pago = models.PagoPlanilla(
+        **datos.model_dump(),
+        usuario_registro_id=usuario_actual.id,
+        gimnasio_id=get_gid(usuario_actual),
+    )
     db.add(db_pago)
     db.commit()
     db.refresh(db_pago)
@@ -4878,7 +6342,7 @@ def editar_pago_planilla(
     calculo (es decir: nuevo monto <= total del periodo - resto de
     pagos del mismo periodo), para no permitir pagar de mas.
     """
-    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    pago = _del_gym(db, models.PagoPlanilla, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
 
@@ -4891,11 +6355,15 @@ def editar_pago_planilla(
 
         # Total calculado del periodo (mismo calculo que al crear el pago)
         if pago.tipo == "staff":
-            resumen = calcular_planilla_staff(empleado_id=pago.empleado_id, anio=pago.anio, mes=pago.mes, db=db)
+            resumen = calcular_planilla_staff(
+                empleado_id=pago.empleado_id, anio=pago.anio, mes=pago.mes, db=db, usuario=usuario
+            )
         else:
             if not pago.desde or not pago.hasta:
                 raise HTTPException(status_code=400, detail="Este pago de profesor no tiene rango desde/hasta; no se puede revalidar el saldo")
-            resumen = calcular_planilla_profesor(profesor_id=pago.empleado_id, desde=pago.desde, hasta=pago.hasta, db=db)
+            resumen = calcular_planilla_profesor(
+                profesor_id=pago.empleado_id, desde=pago.desde, hasta=pago.hasta, db=db, usuario=usuario
+            )
 
         # Pendiente excluyendo ESTE pago: lo que se debe si este pago no existiera
         pagado_sin_este = round(resumen.total_pagado - pago.monto_total, 2)
@@ -4909,6 +6377,8 @@ def editar_pago_planilla(
 
     if "notas" in datos_dict:
         pago.notas = datos_dict["notas"]
+    if "metodo_pago" in datos_dict and datos_dict["metodo_pago"] is not None:
+        pago.metodo_pago = datos_dict["metodo_pago"]
 
     db.commit()
     db.refresh(pago)
@@ -4916,9 +6386,9 @@ def editar_pago_planilla(
 
 
 @app.delete("/pagos-planilla/{pago_id}", tags=["Personal"])
-def eliminar_pago_planilla(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+def eliminar_pago_planilla(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
     """Elimina un pago registrado por error. No recalcula nada automaticamente; el pendiente se vuelve a calcular solo."""
-    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    pago = _del_gym(db, models.PagoPlanilla, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     db.delete(pago)
@@ -4928,11 +6398,11 @@ def eliminar_pago_planilla(pago_id: int, db: Session = Depends(get_db), usuario:
 
 @app.get("/pagos-planilla/{pago_id}/recibo.pdf", tags=["Personal"])
 def recibo_pago_planilla_pdf(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    pago = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == pago_id).first()
+    pago = _del_gym(db, models.PagoPlanilla, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     empleado = db.query(models.Empleado).filter(models.Empleado.id == pago.empleado_id).first()
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     pdf_bytes = pdf_generator.generar_recibo_pago_planilla(pago, empleado, config)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -5050,7 +6520,7 @@ def crear_cargo_servicio(datos: schemas.CargoServicioCreate, db: Session = Depen
     Se devuelve solo el primer cargo de la serie; el resto queda
     creado en la base (se ven al refrescar el listado).
     """
-    servicio = db.query(models.Servicio).filter(models.Servicio.id == datos.servicio_id).first()
+    servicio = _del_gym(db, models.Servicio, datos.servicio_id, usuario)
     if not servicio:
         raise HTTPException(status_code=404, detail="Servicio no encontrado")
     if datos.monto_total <= 0:
@@ -5182,7 +6652,7 @@ def crear_pago_servicio(
     usuario_actual: models.Usuario = Depends(auth.requiere_staff),
 ):
     """Registra un pago (total o parcial) contra un cargo de servicio, validando que no supere el saldo pendiente real (recalculado en el servidor)."""
-    cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == datos.cargo_id).first()
+    cargo = _del_gym(db, models.CargoServicio, datos.cargo_id, usuario_actual)
     if not cargo:
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
     if datos.monto <= 0:
@@ -5193,7 +6663,7 @@ def crear_pago_servicio(
         raise HTTPException(status_code=400, detail=f"El monto ({datos.monto:.2f}) supera el saldo pendiente ({pendiente:.2f})")
     db_pago = models.PagoServicio(
         cargo_id=datos.cargo_id, monto=datos.monto, notas=datos.notas,
-        metodo_pago=(datos.metodo_pago.value if datos.metodo_pago else "efectivo"),
+        metodo_pago=datos.metodo_pago,
         usuario_registro_id=usuario_actual.id,
     )
     db.add(db_pago)
@@ -5204,7 +6674,9 @@ def crear_pago_servicio(
 
 @app.get("/pagos-servicio/", response_model=List[schemas.PagoServicio], tags=["Servicios"])
 def listar_pagos_servicio(cargo_id: Optional[int] = None, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    query = db.query(models.PagoServicio)
+    query = db.query(models.PagoServicio).join(
+        models.CargoServicio, models.CargoServicio.id == models.PagoServicio.cargo_id
+    ).filter(models.CargoServicio.gimnasio_id == get_gid(usuario))
     if cargo_id:
         query = query.filter(models.PagoServicio.cargo_id == cargo_id)
     return query.order_by(models.PagoServicio.fecha_pago.desc()).all()
@@ -5218,7 +6690,7 @@ def editar_pago_servicio(
     usuario: models.Usuario = Depends(auth.requiere_administrador),
 ):
     """Correccion administrativa de un pago ya registrado. Solo administrador. El nuevo monto se revalida contra el saldo disponible del cargo, excluyendo este mismo pago del calculo."""
-    pago = db.query(models.PagoServicio).filter(models.PagoServicio.id == pago_id).first()
+    pago = _pago_servicio_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     datos_dict = datos.model_dump(exclude_unset=True)
@@ -5242,9 +6714,9 @@ def editar_pago_servicio(
 
 
 @app.delete("/pagos-servicio/{pago_id}", tags=["Servicios"])
-def eliminar_pago_servicio(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+def eliminar_pago_servicio(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
     """Elimina un pago registrado por error. El pendiente del cargo se recalcula solo."""
-    pago = db.query(models.PagoServicio).filter(models.PagoServicio.id == pago_id).first()
+    pago = _pago_servicio_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     db.delete(pago)
@@ -5281,7 +6753,7 @@ def registrar_medida(
     usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
 ):
     """Registra una nueva toma de medidas para un cliente (el trainer llena los campos que haya medido esa vez)."""
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id).first()
+    cliente = _del_gym(db, models.Cliente, datos.cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     datos_dict = datos.model_dump()
@@ -5329,12 +6801,12 @@ def eliminar_medida(medida_id: int, db: Session = Depends(get_db), usuario: mode
 
 @app.get("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
 def obtener_configuracion(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
-    return _get_o_crear_configuracion(db)
+    return _configuracion_del_gym(db, usuario)
 
 
 @app.put("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
 def actualizar_configuracion(datos: schemas.ConfiguracionUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     for campo, valor in datos.model_dump(exclude_unset=True).items():
         setattr(config, campo, valor)
     db.commit()
@@ -5458,11 +6930,14 @@ def resumen_comisiones(
     desde = date(anio, mes, 1)
     hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
 
-    meta = db.query(models.MetaMensual).filter(models.MetaMensual.anio == anio, models.MetaMensual.mes == mes).first()
+    meta = q(db, models.MetaMensual, usuario).filter(
+        models.MetaMensual.anio == anio,
+        models.MetaMensual.mes == mes,
+    ).first()
     meta_membresias = meta.meta_membresias if meta else 0.0
     meta_productos = meta.meta_productos if meta else 0.0
 
-    config = _get_o_crear_configuracion(db)
+    config = _configuracion_del_gym(db, usuario)
     comision_producto_flat = config.comision_producto_porcentaje or 0.0
 
     tramos = q(db, models.TramoComision, usuario).filter(models.TramoComision.activo == True, models.TramoComision.tipo == "membresia").all()
@@ -5576,6 +7051,7 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depe
     db.add(db_admin)
     db.flush()
 
+    _crear_prueba_saas(db, db_gimnasio)
     _sembrar_datos_gimnasio_nuevo(db, db_gimnasio.id)
     db.commit()
     db.refresh(db_admin)
@@ -5598,8 +7074,8 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depe
 
 def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
     """
-    Copia los datos iniciales (ejercicios, alimentos, paquetes de
-    nutricion, puestos, servicios) del gimnasio 1 (template) al
+    Copia los datos iniciales (ejercicios, paquetes de rutinas,
+    alimentos, paquetes de nutricion, puestos y servicios) del gimnasio 1 al
     nuevo gimnasio. Asi cada gym nuevo arranca con el catalogo
     completo sin hardcodear la data aqui.
     """
@@ -5608,12 +7084,53 @@ def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
         return
 
     # --- Ejercicios ---
+    mapa_ejercicios = {}  # id_viejo -> obj_nuevo (para paquetes de rutinas)
     for ej in db.query(models.TipoEjercicio).filter(models.TipoEjercicio.gimnasio_id == GYM_TEMPLATE).all():
-        db.add(models.TipoEjercicio(
+        nuevo_ejercicio = models.TipoEjercicio(
             gimnasio_id=gimnasio_id, nombre=ej.nombre, grupo_muscular=ej.grupo_muscular,
             categoria=ej.categoria, equipamiento=ej.equipamiento, nivel=ej.nivel,
             genero_recomendado=ej.genero_recomendado, objetivo=ej.objetivo,
             descripcion=ej.descripcion,
+        )
+        db.add(nuevo_ejercicio)
+        db.flush()
+        mapa_ejercicios[ej.id] = nuevo_ejercicio
+
+    # --- Paquetes de rutinas (con dias y ejercicios enlazados) ---
+    for paquete in db.query(models.PaqueteRutina).filter(
+        models.PaqueteRutina.gimnasio_id == GYM_TEMPLATE,
+        models.PaqueteRutina.activo == True,
+    ).all():
+        dias = []
+        for dia in paquete.dias:
+            ejercicios = []
+            for ejercicio in dia.ejercicios:
+                nuevo_catalogo = mapa_ejercicios.get(ejercicio.tipo_ejercicio_id)
+                ejercicios.append(models.PaqueteRutinaEjercicio(
+                    tipo_ejercicio_id=nuevo_catalogo.id if nuevo_catalogo else None,
+                    nombre=nuevo_catalogo.nombre if nuevo_catalogo else ejercicio.nombre,
+                    series=ejercicio.series,
+                    repeticiones=ejercicio.repeticiones,
+                    peso=ejercicio.peso,
+                    notas=ejercicio.notas,
+                ))
+            dias.append(models.PaqueteRutinaDia(
+                nombre=dia.nombre,
+                orden=dia.orden,
+                ejercicios=ejercicios,
+            ))
+        db.add(models.PaqueteRutina(
+            gimnasio_id=gimnasio_id,
+            nombre=paquete.nombre,
+            descripcion=paquete.descripcion,
+            nivel=paquete.nivel,
+            objetivo=paquete.objetivo,
+            etapa=paquete.etapa,
+            genero_recomendado=paquete.genero_recomendado,
+            edad_min=paquete.edad_min,
+            edad_max=paquete.edad_max,
+            duracion_semanas=paquete.duracion_semanas,
+            dias=dias,
         ))
 
     # --- Alimentos ---
@@ -5644,6 +7161,7 @@ def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
                 db.add(models.PaqueteAlimento(
                     paquete_id=nuevo_paq.id, alimento_id=nuevo_al.id,
                     cantidad_gramos=item.cantidad_gramos,
+                    porcion_cliente=item.porcion_cliente,
                 ))
 
     # --- Puestos ---
@@ -5695,6 +7213,9 @@ def listar_gimnasios(db: Session = Depends(get_db), _: models.Usuario = Depends(
             models.Usuario.gimnasio_id == g.id, models.Usuario.activo == True
         ).scalar() or 0
         nombre_plan = g.plan.nombre if g.plan else None
+        suscripcion = g.suscripcion_saas
+        estado_suscripcion = _estado_suscripcion(suscripcion)
+        limite = (suscripcion.fecha_fin_gracia or suscripcion.fecha_fin_periodo) if suscripcion else None
         resultado.append(schemas.GimnasioDetalle(
             id=g.id, nombre=g.nombre, slug=g.slug, plan_id=g.plan_id,
             activo=g.activo, fecha_registro=g.fecha_registro,
@@ -5702,6 +7223,10 @@ def listar_gimnasios(db: Session = Depends(get_db), _: models.Usuario = Depends(
             direccion=g.direccion, logo_url=g.logo_url,
             total_clientes=total_clientes, total_usuarios=total_usuarios,
             nombre_plan=nombre_plan,
+            estado_suscripcion=estado_suscripcion,
+            fecha_fin_periodo=suscripcion.fecha_fin_periodo if suscripcion else None,
+            fecha_fin_gracia=suscripcion.fecha_fin_gracia if suscripcion else None,
+            dias_restantes=max((limite - date.today()).days, 0) if limite else None,
         ))
     return resultado
 
@@ -5741,6 +7266,7 @@ def crear_gimnasio(
         puede_exportar=True,
     )
     db.add(db_admin)
+    _crear_prueba_saas(db, db_gimnasio)
     _sembrar_datos_gimnasio_nuevo(db, db_gimnasio.id)
     db.commit()
     db.refresh(db_gimnasio)
@@ -5769,6 +7295,140 @@ def actualizar_gimnasio(
     db.commit()
     db.refresh(gimnasio)
     return gimnasio
+
+
+@app.get("/saas/gimnasios/{gimnasio_id}/suscripcion", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
+def ver_suscripcion_saas(
+    gimnasio_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    return _serializar_suscripcion(gimnasio)
+
+
+@app.get("/suscripcion/mi-plan", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
+def mi_suscripcion_saas(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    return _serializar_suscripcion(gimnasio)
+
+
+@app.put("/saas/gimnasios/{gimnasio_id}/suscripcion", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
+def actualizar_suscripcion_saas(
+    gimnasio_id: int,
+    datos: schemas.SuscripcionSaasUpdate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    suscripcion = gimnasio.suscripcion_saas
+    if not suscripcion:
+        suscripcion = models.SuscripcionSaas(
+            gimnasio_id=gimnasio.id,
+            plan_id=gimnasio.plan_id,
+            estado="activa",
+            fecha_inicio=date.today(),
+            fecha_fin_periodo=date.today(),
+            fecha_fin_gracia=date.today() + timedelta(days=5),
+            dias_gracia=5,
+        )
+        db.add(suscripcion)
+        db.flush()
+
+    cambios = datos.model_dump(exclude_unset=True)
+    if "plan_id" in cambios:
+        plan = db.query(models.PlanSaas).filter(
+            models.PlanSaas.id == cambios["plan_id"], models.PlanSaas.activo == True
+        ).first()
+        if not plan:
+            raise HTTPException(status_code=400, detail="Plan SaaS no encontrado o inactivo")
+        gimnasio.plan_id = plan.id
+    for campo, valor in cambios.items():
+        if campo not in {"plan_id"}:
+            setattr(suscripcion, campo, valor)
+    if "plan_id" in cambios:
+        suscripcion.plan_id = cambios["plan_id"]
+    if "estado" in cambios:
+        suscripcion.fecha_suspension = datetime.now() if cambios["estado"] in {"suspendida", "cancelada"} else None
+    if "fecha_fin_periodo" in cambios or "dias_gracia" in cambios:
+        suscripcion.fecha_fin_gracia = suscripcion.fecha_fin_periodo + timedelta(days=suscripcion.dias_gracia)
+    db.commit()
+    db.refresh(gimnasio)
+    return _serializar_suscripcion(gimnasio)
+
+
+@app.post("/saas/gimnasios/{gimnasio_id}/suscripcion/renovar", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
+def renovar_suscripcion_saas(
+    gimnasio_id: int,
+    datos: schemas.RenovacionSaasRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    plan_id = datos.plan_id or gimnasio.plan_id
+    plan = db.query(models.PlanSaas).filter(
+        models.PlanSaas.id == plan_id, models.PlanSaas.activo == True
+    ).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail="Selecciona un plan SaaS activo")
+
+    suscripcion = gimnasio.suscripcion_saas
+    hoy = date.today()
+    if suscripcion and suscripcion.fecha_fin_periodo >= hoy and _estado_suscripcion(suscripcion) not in {"cancelada"}:
+        periodo_inicio = suscripcion.fecha_fin_periodo + timedelta(days=1)
+    else:
+        periodo_inicio = hoy
+    periodo_fin = _sumar_meses(periodo_inicio, datos.meses) - timedelta(days=1)
+
+    if not suscripcion:
+        suscripcion = models.SuscripcionSaas(
+            gimnasio_id=gimnasio.id,
+            plan_id=plan.id,
+            estado="activa",
+            fecha_inicio=periodo_inicio,
+            fecha_fin_periodo=periodo_fin,
+            fecha_fin_gracia=periodo_fin + timedelta(days=5),
+            dias_gracia=5,
+        )
+        db.add(suscripcion)
+        db.flush()
+    else:
+        suscripcion.plan_id = plan.id
+        suscripcion.estado = "activa"
+        suscripcion.fecha_fin_periodo = periodo_fin
+        suscripcion.fecha_fin_gracia = periodo_fin + timedelta(days=suscripcion.dias_gracia)
+        suscripcion.fecha_suspension = None
+
+    gimnasio.plan_id = plan.id
+    pago = models.PagoSaas(
+        gimnasio_id=gimnasio.id,
+        suscripcion_id=suscripcion.id,
+        plan_id=plan.id,
+        monto=datos.monto,
+        moneda=datos.moneda,
+        metodo_pago=datos.metodo_pago,
+        referencia=datos.referencia,
+        fecha_pago=datos.fecha_pago or datetime.now(),
+        periodo_inicio=periodo_inicio,
+        periodo_fin=periodo_fin,
+        registrado_por_id=usuario.id,
+        notas=datos.notas,
+    )
+    db.add(pago)
+    db.commit()
+    db.refresh(gimnasio)
+    return _serializar_suscripcion(gimnasio)
 
 
 @app.delete("/saas/gimnasios/{gimnasio_id}", tags=["SaaS"])
@@ -5814,11 +7474,22 @@ def dashboard_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(au
     gimnasios_activos = db.query(func.count(models.Gimnasio.id)).filter(models.Gimnasio.activo == True).scalar() or 0
     total_clientes = db.query(func.count(models.Cliente.id)).filter(models.Cliente.activo == True).scalar() or 0
     total_usuarios = db.query(func.count(models.Usuario.id)).filter(models.Usuario.activo == True).scalar() or 0
+    suscripciones = db.query(models.SuscripcionSaas).all()
+    estados = {"prueba": 0, "activa": 0, "gracia": 0, "vencida": 0, "suspendida": 0, "cancelada": 0, "sin_configurar": 0}
+    for suscripcion in suscripciones:
+        estados[_estado_suscripcion(suscripcion)] += 1
+    estados["sin_configurar"] = max(total_gimnasios - len(suscripciones), 0)
+    ingresos_mes = db.query(func.sum(models.PagoSaas.monto)).filter(
+        func.extract("month", models.PagoSaas.fecha_pago) == date.today().month,
+        func.extract("year", models.PagoSaas.fecha_pago) == date.today().year,
+    ).scalar() or 0.0
     return {
         "total_gimnasios": total_gimnasios,
         "gimnasios_activos": gimnasios_activos,
         "total_clientes_plataforma": total_clientes,
         "total_usuarios_plataforma": total_usuarios,
+        "suscripciones_por_estado": estados,
+        "ingresos_saas_mes": round(float(ingresos_mes), 2),
     }
 
 

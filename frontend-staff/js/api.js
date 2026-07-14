@@ -71,6 +71,11 @@ async function apiFetch(path, options = {}) {
 
     if (!response.ok) {
         const mensaje = (data && data.detail) ? data.detail : `Error ${response.status}`;
+        if (response.status === 402) {
+            sessionStorage.setItem("mrgym_suscripcion_bloqueada", "1");
+            const pagina = window.location.pathname.split("/").pop();
+            if (pagina !== "configuracion.html") window.location.href = "configuracion.html?subscription=required";
+        }
         throw new Error(typeof mensaje === "string" ? mensaje : JSON.stringify(mensaje));
     }
     return data;
