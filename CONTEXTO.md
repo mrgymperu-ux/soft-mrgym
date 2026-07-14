@@ -557,11 +557,13 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 ### ✅ Migración de MrGym a Supabase (2026-07-13)
 - El gimnasio principal local fue migrado a producción reutilizando el tenant técnico vacío `id=1`, ahora llamado `MrGym`; conserva el slug técnico `mi-gimnasio`
 - El gimnasio `prueba gym` (`id=4`) y todos sus conteos permanecieron intactos
-- Se migraron 1,665 clientes (1,662 activos y 3 inactivos), 4 usuarios, 5 empleados, membresías, pagos, productos, ventas, asistencias, rutinas, nutrición, agenda, servicios, planilla, metas y medidas
+- Se migraron 1,665 clientes (1,662 activos y 3 inactivos), 4 usuarios del tenant principal, 5 empleados, membresías, pagos, productos, ventas, asistencias, rutinas, nutrición, agenda, servicios, planilla, metas y medidas
 - Todos los IDs y llaves foráneas se reasignaron dentro de una sola transacción PostgreSQL; la validación posterior confirmó los mismos conteos que SQLite en cada tabla migrada
 - El usuario y contraseña administrativos configurados localmente fueron probados contra `https://soft-mrgym.onrender.com/auth/login`: acceso correcto al gimnasio `MrGym` y al Dashboard
 - Antes de modificar Supabase se creó el respaldo local comprimido `backups/supabase-antes-mrgym-20260713-222833.json.gz`; `backups/` está excluido de Git
 - La herramienta reutilizable y protegida quedó en `scripts/migrate_gym_to_production.py`; aborta ante colisiones o datos operativos inesperados y nunca borra otros gimnasios
+- El usuario local `MrGym` pertenecía a un tercer tenant local (`id=3`) y no formaba parte de la primera copia del tenant principal; se añadió después como quinto usuario administrador de MrGym en producción, conservando exactamente su hash de contraseña local. Antes se generó el respaldo adicional `backups/supabase-antes-mrgym-20260713-224558.json.gz`
+- `scripts/copy_user_to_production.py` permite repetir de forma segura este ajuste para un usuario concreto: valida colisiones, crea respaldo y nunca copia privilegios de superadmin entre tenants
 - Las 10 imágenes locales de clientes, productos y logo no se copiaron a Render para no publicar datos personales en GitHub; siguen pendientes de Supabase Storage o Cloudflare R2
 
 ### 🔲 Pendiente (próxima sesión)
