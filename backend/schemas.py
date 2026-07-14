@@ -377,6 +377,7 @@ class MembresiaBase(BaseModel):
     congelado_no_aparece_pagos: bool = False
     no_aparecer_reporte_cruce_medidas: bool = False
     incluye_nutricion: bool = False
+    incluye_retos: bool = False
 
 
 class MembresiaCreate(MembresiaBase):
@@ -405,6 +406,7 @@ class MembresiaUpdate(BaseModel):
     congelado_no_aparece_pagos: Optional[bool] = None
     no_aparecer_reporte_cruce_medidas: Optional[bool] = None
     incluye_nutricion: Optional[bool] = None
+    incluye_retos: Optional[bool] = None
     activo: Optional[bool] = None
 
 
@@ -1066,6 +1068,8 @@ class ClaseDictadaCreate(BaseModel):
     # dias_semana usa convencion Python weekday: Lunes=0 ... Domingo=6.
     dias_semana: List[int] = []
     semanas: int = 1
+    agenda_nombre: str = "Clases"
+    permite_registro: bool = False
 
 
 class ClaseDictadaUpdate(BaseModel):
@@ -1074,6 +1078,8 @@ class ClaseDictadaUpdate(BaseModel):
     hora_inicio: Optional[datetime] = None
     hora_fin: Optional[datetime] = None
     notas: Optional[str] = None
+    agenda_nombre: Optional[str] = None
+    permite_registro: Optional[bool] = None
 
 
 class MarcarDictadaRequest(BaseModel):
@@ -1105,6 +1111,8 @@ class ClaseDictada(BaseModel):
     serie_id: Optional[str] = None
     profesor_reemplazo_id: Optional[int] = None
     notas: Optional[str] = None
+    agenda_nombre: str = "Clases"
+    permite_registro: bool = False
     profesor: Optional[Empleado] = None
     profesor_reemplazo: Optional[Empleado] = None
 

@@ -1,81 +1,24 @@
 <!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Perfil - Soft-Gym</title>
-    <link rel="stylesheet" href="css/styles.css">
-</head>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal del Socio</title><link rel="stylesheet" href="css/styles.css"></head>
 <body>
-    <div class="page">
-        <div class="page-header"><h1>👤 Mi Perfil</h1></div>
-        <div id="contenido"><p style="color:#636E72;text-align:center;padding:40px;">Cargando...</p></div>
-    </div>
-    <nav class="nav-bottom">
-        <a href="mi-perfil.html" class="nav-btn activo"><span>👤</span><span>Perfil</span></a>
-        <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
-        <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
-        <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
-        <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
-        <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
-    </nav>
-    <script src="js/api.js"></script>
-    <script>
-        requireAuth();
-        let perfilActual = null;
-
-        async function cargar() {
-            perfilActual = await apiFetch("/portal-alumno/mi-perfil");
-            const nombre = `${perfilActual.nombre} ${perfilActual.apellidos || ""}`.trim();
-            const avatar = perfilActual.foto_url
-                ? `<img src="${urlFoto(perfilActual.foto_url)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;">`
-                : `<div style="width:88px;height:88px;border-radius:50%;background:var(--color-primario,#5B4FE5);color:#fff;display:flex;align-items:center;justify-content:center;font-size:1.6em;font-weight:bold;">${getIniciales(nombre)}</div>`;
-
-            document.getElementById("contenido").innerHTML = `
-                <div class="card">
-                    <div class="card-body" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px;">
-                        <div id="avatar-wrap">${avatar}</div>
-                        <div style="text-align:center;">
-                            <div style="font-weight:600;font-size:1.1em;">${nombre}</div>
-                            <div style="color:#636E72;font-size:0.85em;">${perfilActual.email || "Sin email registrado"}</div>
-                        </div>
-                        <label class="btn-primario" style="cursor:pointer;padding:10px 20px;border-radius:8px;background:var(--color-primario,#5B4FE5);color:#fff;font-size:0.9em;">
-                            📷 Actualizar mi foto
-                            <input type="file" id="input-foto" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="subirFoto(this)">
-                        </label>
-                        <p style="font-size:0.75em;color:#636E72;text-align:center;margin:0;">Solo si tu cuenta esta activa y no tienes pagos pendientes.</p>
-                    </div>
-                </div>
-                <div class="card" style="margin-top:16px;">
-                    <div class="card-header">Mis datos</div>
-                    <div class="card-body" style="padding:0;">
-                        <table class="tabla">
-                            <tbody>
-                                <tr><td style="width:40%;color:#636E72;">Telefono</td><td>${perfilActual.telefono || "—"}</td></tr>
-                                <tr><td style="color:#636E72;">Direccion</td><td>${perfilActual.direccion || "—"}</td></tr>
-                                <tr><td style="color:#636E72;">Fecha de nacimiento</td><td>${formatFecha(perfilActual.fecha_nacimiento)}</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
-
-        async function subirFoto(input) {
-            const archivo = input.files && input.files[0];
-            if (!archivo) return;
-            try {
-                const actualizado = await apiUploadFile("/portal-alumno/mi-foto", archivo);
-                perfilActual = actualizado;
-                document.getElementById("avatar-wrap").innerHTML = `<img src="${urlFoto(actualizado.foto_url)}" style="width:88px;height:88px;border-radius:50%;object-fit:cover;">`;
-            } catch (e) {
-                alert(e.message);
-            } finally {
-                input.value = "";
-            }
-        }
-
-        cargar();
-    </script>
-</body>
-</html>
+<div class="page perfil-page">
+  <div class="portal-topbar"><span></span><button id="theme-switch" class="theme-switch" type="button" aria-label="Cambiar tema" onclick="cambiarTema()"><span></span></button></div>
+  <div id="contenido"><p class="estado-cargando">Cargando...</p></div>
+</div>
+<nav class="nav-bottom">
+  <a href="mi-perfil.html" class="nav-btn activo"><span>👤</span><span>Perfil</span></a><a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a><a href="agenda.html" class="nav-btn"><span>📅</span><span>Agenda</span></a><a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutrición</span></a><a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a><a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a><button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+</nav>
+<script src="js/api.js"></script><script>
+requireAuth(); let resumenActual=null;
+function cambiarTema(){alternarTemaPortal();actualizarSwitchTema()}
+function actualizarSwitchTema(){document.getElementById("theme-switch").classList.toggle("activo",document.documentElement.dataset.tema==="oscuro")}
+function dinero(v){return `S/ ${Number(v||0).toFixed(2)}`}
+async function cargar(){
+ resumenActual=await apiFetch("/portal-alumno/resumen"); const p=resumenActual.perfil; const nombre=`${p.nombre} ${p.apellidos||""}`.trim();
+ const avatar=p.foto_url?`<img src="${urlFoto(p.foto_url)}" alt="Foto de ${nombre}">`:`<div class="avatar-iniciales">${getIniciales(nombre)}</div>`; const plan=resumenActual.plan;
+ const planHtml=plan?`<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo>0?'saldo-pendiente':''}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo>0?(resumenActual.pago_online_url?`<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>`:`<button class="btn-pagar" disabled>Pago en línea próximamente</button>`):""}`:`<div class="vacio-plan">No tienes un plan activo.</div>`;
+ document.getElementById("contenido").innerHTML=`<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<label class="boton-camara" aria-label="Cambiar foto">📷<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label></div><div class="perfil-linea"><strong>${nombre}</strong><span>${p.telefono||"Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
+}
+async function subirFoto(input){const archivo=input.files&&input.files[0];if(!archivo)return;try{await apiUploadFile("/portal-alumno/mi-foto",archivo);await cargar()}catch(e){alert(e.message)}finally{input.value=""}}
+actualizarSwitchTema();cargar();
+</script></body></html>

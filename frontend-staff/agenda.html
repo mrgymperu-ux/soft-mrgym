@@ -89,6 +89,8 @@
         <div class="form-group" id="f-concepto-row" style="display:none;"><label>Concepto de ingreso *</label><select id="f-concepto-ingreso" onchange="onConceptoAgenda()"><option value="">Seleccionar...</option></select></div>
         <div class="form-group" id="f-profesor-row"><label>Profesor *</label><select id="f-profesor"><option value="">Seleccionar...</option></select></div>
         <div class="form-group"><label id="f-nombre-label">Nombre de la clase *</label><input type="text" id="f-nombre-clase" placeholder="Salsa Intermedio"></div>
+        <div class="form-group" id="f-agenda-row"><label>Agenda</label><input type="text" id="f-agenda-nombre" value="Clases" placeholder="Baile, Spinning, Nutrición..."></div>
+        <div class="form-group" id="f-registro-row"><label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-permite-registro" style="width:auto;"> Permitir que los socios se inscriban</label></div>
         <div class="form-group" id="f-responsable-row" style="display:none;"><label>Persona o empresa que alquila</label><input type="text" id="f-responsable" placeholder="Nombre del responsable"></div>
         <div class="form-group"><label>Sala</label><input type="text" id="f-sala" placeholder="Sala A"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -456,6 +458,8 @@
         }
         document.getElementById("f-repetir").checked = false;
         document.getElementById("f-tipo-agenda").value = "clase";
+        document.getElementById("f-agenda-nombre").value = "Clases";
+        document.getElementById("f-permite-registro").checked = false;
         document.getElementById("f-concepto-ingreso").innerHTML = '<option value="">Seleccionar...</option>' + conceptosAgendaCache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join("");
         document.getElementById("f-semanas").value = 4;
         diasSeleccionados = new Set();
@@ -472,6 +476,8 @@
         document.getElementById("f-concepto-row").style.display = alquiler ? "block" : "none";
         document.getElementById("f-responsable-row").style.display = alquiler ? "block" : "none";
         document.getElementById("f-profesor-row").style.display = alquiler ? "none" : "block";
+        document.getElementById("f-agenda-row").style.display = alquiler ? "none" : "block";
+        document.getElementById("f-registro-row").style.display = alquiler ? "none" : "block";
         document.getElementById("f-nombre-label").textContent = alquiler ? "Nombre de la reserva *" : "Nombre de la clase *";
         document.getElementById("f-repetir").closest(".form-group").style.display = alquiler ? "none" : "block";
     }
@@ -517,6 +523,8 @@
             hora_inicio: `${fecha}T${horaInicio}:00`,
             hora_fin: horaFin ? `${fecha}T${horaFin}:00` : null,
             notas: document.getElementById("f-notas-clase").value.trim() || null,
+            agenda_nombre: document.getElementById("f-agenda-nombre").value.trim() || "Clases",
+            permite_registro: document.getElementById("f-permite-registro").checked,
             dias_semana: repetir ? Array.from(diasSeleccionados) : [],
             semanas: repetir ? (parseInt(document.getElementById("f-semanas").value) || 1) : 1,
         };

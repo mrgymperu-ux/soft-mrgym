@@ -374,6 +374,7 @@ class Membresia(Base):
     congelado_no_aparece_pagos = Column(Boolean, default=False)
     no_aparecer_reporte_cruce_medidas = Column(Boolean, default=False)
     incluye_nutricion = Column(Boolean, default=False)  # si True, el cliente puede tener plan de nutricion incluido en esta tarifa
+    incluye_retos = Column(Boolean, default=False)
 
     clientes_con_este_plan = relationship("ClienteMembresia", back_populates="membresia")
 
@@ -643,6 +644,16 @@ class RutinaEjercicio(Base):
     tipo_ejercicio = relationship("TipoEjercicio")
 
 
+class EjercicioCompletadoAlumno(Base):
+    __tablename__ = "ejercicios_completados_alumno"
+    __table_args__ = (UniqueConstraint("cliente_id", "ejercicio_id", "fecha", name="uq_ejercicio_cliente_fecha"),)
+    id = Column(Integer, primary_key=True, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False, index=True)
+    ejercicio_id = Column(Integer, ForeignKey("rutina_ejercicios.id"), nullable=False, index=True)
+    fecha = Column(Date, default=hoy_lima, nullable=False)
+    fecha_registro = Column(DateTime, default=ahora_lima)
+
+
 class PaqueteRutina(Base):
     """Plantilla reutilizable de entrenamiento para un perfil especifico."""
     __tablename__ = "paquetes_rutina"
@@ -835,6 +846,15 @@ class Reto(Base):
     fecha_creacion = Column(DateTime, default=ahora_lima)
 
 
+class RetoCumplidoAlumno(Base):
+    __tablename__ = "retos_cumplidos_alumno"
+    __table_args__ = (UniqueConstraint("reto_id", "cliente_id", "fecha", name="uq_reto_cliente_fecha"),)
+    id = Column(Integer, primary_key=True, index=True)
+    reto_id = Column(Integer, ForeignKey("retos.id"), nullable=False, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False, index=True)
+    fecha = Column(Date, default=hoy_lima, nullable=False)
+
+
 # ==================================================================
 # 11. PERSONAL Y PLANILLA
 # ==================================================================
@@ -977,9 +997,20 @@ class ClaseDictada(Base):
     profesor_reemplazo_id = Column(Integer, ForeignKey("empleados.id"), nullable=True)
 
     notas = Column(Text, nullable=True)
+    agenda_nombre = Column(String, default="Clases")
+    permite_registro = Column(Boolean, default=False)
 
     profesor = relationship("Empleado", foreign_keys=[profesor_id], back_populates="clases_dictadas")
     profesor_reemplazo = relationship("Empleado", foreign_keys=[profesor_reemplazo_id])
+
+
+class InscripcionClaseAlumno(Base):
+    __tablename__ = "inscripciones_clase_alumno"
+    __table_args__ = (UniqueConstraint("clase_id", "cliente_id", name="uq_inscripcion_clase_cliente"),)
+    id = Column(Integer, primary_key=True, index=True)
+    clase_id = Column(Integer, ForeignKey("clases_dictadas.id"), nullable=False, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False, index=True)
+    fecha_registro = Column(DateTime, default=ahora_lima)
 
 
 class ReservaSala(Base):

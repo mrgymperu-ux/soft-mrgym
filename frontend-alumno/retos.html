@@ -14,6 +14,7 @@
     <nav class="nav-bottom">
         <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
         <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+        <a href="agenda.html" class="nav-btn"><span>📅</span><span>Agenda</span></a>
         <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
         <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
         <a href="retos.html" class="nav-btn activo"><span>🏆</span><span>Retos</span></a>
@@ -23,8 +24,12 @@
     <script>
         requireAuth();
         async function cargar() {
-            const retos = await apiFetch("/portal-alumno/retos");
+            const [resumen, retos] = await Promise.all([apiFetch("/portal-alumno/resumen"), apiFetch("/portal-alumno/retos")]);
             const contenedor = document.getElementById("contenido");
+            if (!resumen.plan?.incluye_retos) {
+                contenedor.innerHTML = '<div class="modulo-no-incluido">🏆<strong>Retos no incluidos</strong><span>Consulta en recepción para mejorar tu plan.</span></div>';
+                return;
+            }
             if (!retos || !retos.length) {
                 contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">🏆</div><p>No hay retos activos por ahora.</p></div>';
                 return;
@@ -39,10 +44,13 @@
                             ${r.duracion_dias ? `<span class="badge badge-morado">${r.duracion_dias} dias</span>` : ""}
                             ${r.dificultad ? `<span class="badge badge-verde">${r.dificultad}</span>` : ""}
                         </div>
+                        <div class="reto-avance">${r.dias_cumplidos || 0} de ${r.duracion_dias || 1} días</div>
+                        <button class="btn-agenda ${r.cumplido_hoy ? "inscrito" : ""}" onclick="cumplirReto(${r.id})">${r.cumplido_hoy ? "Cumplido hoy ✓" : "Marcar meta de hoy"}</button>
                     </div>
                 </div>
             `).join("");
         }
+        async function cumplirReto(id) { await apiFetch(`/portal-alumno/retos/${id}/cumplir`, { method:"POST" }); cargar(); }
         cargar();
     </script>
 </body>

@@ -15,6 +15,7 @@
     <nav class="nav-bottom">
         <a href="mi-perfil.html" class="nav-btn"><span>👤</span><span>Perfil</span></a>
         <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+        <a href="agenda.html" class="nav-btn"><span>📅</span><span>Agenda</span></a>
         <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutricion</span></a>
         <a href="mi-progreso.html" class="nav-btn activo"><span>📈</span><span>Progreso</span></a>
         <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
@@ -24,14 +25,15 @@
     <script>
         requireAuth();
         async function cargar() {
-            const progresos = await apiFetch("/portal-alumno/mi-progreso");
+            const [progresos, entrenamiento] = await Promise.all([apiFetch("/portal-alumno/mi-progreso"), apiFetch("/portal-alumno/progreso-entrenamiento")]);
             const contenedor = document.getElementById("contenido");
+            document.getElementById("stats-row").innerHTML = `<div class="stat-row"><div class="stat-mini"><div class="stat-mini-valor">${entrenamiento.dias_entrenados_30_dias}</div><div class="stat-mini-label">Días entrenados</div></div><div class="stat-mini"><div class="stat-mini-valor">${entrenamiento.ejercicios_30_dias}</div><div class="stat-mini-label">Ejercicios cumplidos</div></div></div>`;
             if (!progresos || !progresos.length) {
                 contenedor.innerHTML = '<div style="text-align:center;padding:40px;color:#636E72;"><div style="font-size:2em;">📈</div><p>Aun no hay registros de progreso.</p></div>';
                 return;
             }
             const ultimo = progresos[0];
-            document.getElementById("stats-row").innerHTML = `<div class="stat-row">
+            document.getElementById("stats-row").innerHTML += `<div class="stat-row">
                 <div class="stat-mini"><div class="stat-mini-valor">${ultimo.peso ? ultimo.peso+" kg" : "—"}</div><div class="stat-mini-label">Peso actual</div></div>
                 <div class="stat-mini"><div class="stat-mini-valor">${ultimo.porcentaje_grasa ? ultimo.porcentaje_grasa+"%" : "—"}</div><div class="stat-mini-label">% Grasa</div></div>
                 <div class="stat-mini"><div class="stat-mini-valor">${ultimo.porcentaje_musculo ? ultimo.porcentaje_musculo+"%" : "—"}</div><div class="stat-mini-label">% Musculo</div></div>

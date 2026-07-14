@@ -492,11 +492,14 @@ def _migrar_columnas_nuevas():
             ("congelado_no_aparece_pagos", "BOOLEAN DEFAULT 0"),
             ("no_aparecer_reporte_cruce_medidas", "BOOLEAN DEFAULT 0"),
             ("incluye_nutricion", "BOOLEAN DEFAULT 0"),
+            ("incluye_retos", "BOOLEAN DEFAULT 0"),
             ("gimnasio_id", "INTEGER"),
         ],
         "clases_dictadas": [
             ("serie_id", "VARCHAR"),
             ("profesor_reemplazo_id", "INTEGER"),
+            ("agenda_nombre", "VARCHAR DEFAULT 'Clases'"),
+            ("permite_registro", "BOOLEAN DEFAULT 0"),
             ("gimnasio_id", "INTEGER"),
         ],
         "pagos_planilla": [
@@ -1580,7 +1583,7 @@ def manifest_gimnasio(slug: str, portal: str = "alumno", db: Session = Depends(g
     colores = _COLORES_TEMA.get(gimnasio.tema or "lavanda", _COLORES_TEMA["lavanda"])
 
     portales = {
-        "alumno": {"start": f"/alumno/mi-rutina.html?gym={slug}", "scope": "/alumno/", "sufijo": ""},
+        "alumno": {"start": f"/alumno/mi-perfil.html?gym={slug}", "scope": "/alumno/", "sufijo": ""},
         "profesor": {"start": f"/profesor/agenda.html?gym={slug}", "scope": "/profesor/", "sufijo": " - Profesores"},
         "staff": {"start": f"/principal.html", "scope": "/", "sufijo": " - Admin"},
     }
@@ -5994,6 +5997,8 @@ def agendar_clase(datos: schemas.ClaseDictadaCreate, db: Session = Depends(get_d
             hora_inicio=inicio_clase,
             hora_fin=fin_clase,
             notas=datos.notas,
+            agenda_nombre=(datos.agenda_nombre or "Clases").strip(),
+            permite_registro=datos.permite_registro,
             serie_id=serie_id,
             gimnasio_id=get_gid(usuario),
         )
@@ -7534,6 +7539,28 @@ def mi_perfil(cliente: models.Cliente = Depends(auth.get_cliente_actual)):
     return cliente
 
 
+@app.get("/portal-alumno/resumen", tags=["Portal Alumno"])
+def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    membresia = (db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente.id, models.ClienteMembresia.activo == True)
+        .order_by(models.ClienteMembresia.fecha_inicio.desc()).first())
+    asistencia_hoy = db.query(models.Asistencia.id).filter(
+        models.Asistencia.cliente_id == cliente.id,
+        func.date(models.Asistencia.fecha_hora_entrada) == hoy_lima().isoformat(),
+    ).first() is not None
+    plan = None
+    if membresia:
+        precio = float(membresia.membresia.precio or 0)
+        pagado = float(membresia.monto_pagado or 0)
+        plan = {"nombre": membresia.membresia.nombre, "inicio": membresia.fecha_inicio,
+                "fin": membresia.fecha_fin, "precio": round(precio, 2), "pagado": round(pagado, 2),
+                "saldo": round(max(precio - pagado, 0), 2),
+                "incluye_nutricion": bool(membresia.membresia.incluye_nutricion),
+                "incluye_retos": bool(membresia.membresia.incluye_retos)}
+    return {"perfil": schemas.Cliente.model_validate(cliente).model_dump(mode="json"), "plan": plan,
+            "asistencia_hoy": asistencia_hoy, "pago_online_url": os.getenv("IZIPAY_PAYMENT_URL") or None}
+
+
 @app.put("/portal-alumno/cambiar-password", tags=["Portal Alumno"])
 def cambiar_password_alumno(
     datos: schemas.CambioPasswordAlumnoRequest,
@@ -7555,6 +7582,35 @@ def mi_rutina(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Se
     return db.query(models.Rutina).filter(models.Rutina.cliente_id == cliente.id, models.Rutina.activo == True).all()
 
 
+@app.get("/portal-alumno/ejercicios-completados", tags=["Portal Alumno"])
+def ejercicios_completados_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    ids = db.query(models.EjercicioCompletadoAlumno.ejercicio_id).filter(
+        models.EjercicioCompletadoAlumno.cliente_id == cliente.id,
+        models.EjercicioCompletadoAlumno.fecha == hoy_lima()).all()
+    return {"fecha": hoy_lima(), "ejercicios": [x[0] for x in ids]}
+
+
+@app.post("/portal-alumno/ejercicios/{ejercicio_id}/completar", tags=["Portal Alumno"])
+def alternar_ejercicio_completado(ejercicio_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    asistencia = db.query(models.Asistencia.id).filter(models.Asistencia.cliente_id == cliente.id,
+        func.date(models.Asistencia.fecha_hora_entrada) == hoy_lima().isoformat()).first()
+    if not asistencia:
+        raise HTTPException(status_code=403, detail="Primero debes marcar tu asistencia")
+    ejercicio = (db.query(models.RutinaEjercicio).join(models.RutinaDia).join(models.Rutina)
+        .filter(models.RutinaEjercicio.id == ejercicio_id, models.Rutina.cliente_id == cliente.id,
+                models.Rutina.activo == True).first())
+    if not ejercicio:
+        raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
+    actual = db.query(models.EjercicioCompletadoAlumno).filter_by(
+        cliente_id=cliente.id, ejercicio_id=ejercicio_id, fecha=hoy_lima()).first()
+    if actual:
+        db.delete(actual); completado = False
+    else:
+        db.add(models.EjercicioCompletadoAlumno(cliente_id=cliente.id, ejercicio_id=ejercicio_id)); completado = True
+    db.commit()
+    return {"completado": completado}
+
+
 @app.get("/portal-alumno/mi-nutricion", response_model=List[schemas.PlanNutricion], tags=["Portal Alumno"])
 def mi_nutricion(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
     return (
@@ -7574,9 +7630,74 @@ def mi_progreso(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: 
     )
 
 
-@app.get("/portal-alumno/retos", response_model=List[schemas.Reto], tags=["Portal Alumno"])
+@app.get("/portal-alumno/progreso-entrenamiento", tags=["Portal Alumno"])
+def progreso_entrenamiento(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    desde = hoy_lima() - timedelta(days=29)
+    total = db.query(func.count(models.EjercicioCompletadoAlumno.id)).filter(
+        models.EjercicioCompletadoAlumno.cliente_id == cliente.id,
+        models.EjercicioCompletadoAlumno.fecha >= desde).scalar() or 0
+    dias = db.query(func.count(func.distinct(models.EjercicioCompletadoAlumno.fecha))).filter(
+        models.EjercicioCompletadoAlumno.cliente_id == cliente.id,
+        models.EjercicioCompletadoAlumno.fecha >= desde).scalar() or 0
+    return {"ejercicios_30_dias": total, "dias_entrenados_30_dias": dias}
+
+
+@app.get("/portal-alumno/retos", tags=["Portal Alumno"])
 def retos_disponibles(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
-    return db.query(models.Reto).filter(models.Reto.activo == True, models.Reto.gimnasio_id == cliente.gimnasio_id).all()
+    retos = db.query(models.Reto).filter(models.Reto.activo == True, models.Reto.gimnasio_id == cliente.gimnasio_id).all()
+    resultado = []
+    for reto in retos:
+        fechas = [x[0] for x in db.query(models.RetoCumplidoAlumno.fecha).filter(
+            models.RetoCumplidoAlumno.reto_id == reto.id,
+            models.RetoCumplidoAlumno.cliente_id == cliente.id).order_by(models.RetoCumplidoAlumno.fecha).all()]
+        resultado.append({"id": reto.id, "titulo": reto.titulo, "descripcion": reto.descripcion,
+            "icono": reto.icono, "duracion_dias": reto.duracion_dias, "dificultad": reto.dificultad,
+            "dias_cumplidos": len(fechas), "cumplido_hoy": hoy_lima() in fechas})
+    return resultado
+
+
+@app.post("/portal-alumno/retos/{reto_id}/cumplir", tags=["Portal Alumno"])
+def cumplir_reto_hoy(reto_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    reto = db.query(models.Reto).filter(models.Reto.id == reto_id, models.Reto.gimnasio_id == cliente.gimnasio_id,
+        models.Reto.activo == True).first()
+    if not reto:
+        raise HTTPException(status_code=404, detail="Reto no encontrado")
+    actual = db.query(models.RetoCumplidoAlumno).filter_by(reto_id=reto_id, cliente_id=cliente.id, fecha=hoy_lima()).first()
+    if actual:
+        db.delete(actual); cumplido = False
+    else:
+        db.add(models.RetoCumplidoAlumno(reto_id=reto_id, cliente_id=cliente.id)); cumplido = True
+    db.commit()
+    return {"cumplido": cumplido}
+
+
+@app.get("/portal-alumno/agenda", tags=["Portal Alumno"])
+def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    clases = db.query(models.ClaseDictada).filter(
+        models.ClaseDictada.gimnasio_id == cliente.gimnasio_id,
+        models.ClaseDictada.fecha >= hoy_lima(),
+    ).order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio).limit(200).all()
+    inscritas = {x[0] for x in db.query(models.InscripcionClaseAlumno.clase_id).filter(
+        models.InscripcionClaseAlumno.cliente_id == cliente.id).all()}
+    return [{"id": c.id, "agenda": c.agenda_nombre or "Clases", "nombre": c.nombre_clase,
+             "fecha": c.fecha, "hora_inicio": c.hora_inicio, "hora_fin": c.hora_fin,
+             "sala": c.sala, "profesor": c.profesor.nombre_completo if c.profesor else None,
+             "permite_registro": bool(c.permite_registro), "inscrito": c.id in inscritas} for c in clases]
+
+
+@app.post("/portal-alumno/agenda/{clase_id}/inscripcion", tags=["Portal Alumno"])
+def alternar_inscripcion_clase(clase_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id,
+        models.ClaseDictada.gimnasio_id == cliente.gimnasio_id).first()
+    if not clase or not clase.permite_registro or clase.fecha < hoy_lima():
+        raise HTTPException(status_code=400, detail="Esta clase no admite inscripciones")
+    actual = db.query(models.InscripcionClaseAlumno).filter_by(clase_id=clase_id, cliente_id=cliente.id).first()
+    if actual:
+        db.delete(actual); inscrito = False
+    else:
+        db.add(models.InscripcionClaseAlumno(clase_id=clase_id, cliente_id=cliente.id)); inscrito = True
+    db.commit()
+    return {"inscrito": inscrito}
 
 
 @app.post("/portal-alumno/mi-foto", response_model=schemas.Cliente, tags=["Portal Alumno"])

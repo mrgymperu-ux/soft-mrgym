@@ -73,7 +73,7 @@
             btn.textContent = "Guardando...";
             try {
                 await cambiarPasswordAlumno(nueva);
-                window.location.href = "mi-rutina.html";
+                window.location.href = "mi-perfil.html";
             } catch (err) {
                 alert.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
                 btn.disabled = false;
@@ -83,7 +83,7 @@
 
         if (getToken()) {
             if (debeCambiarPassword()) mostrarCambioPassword();
-            else window.location.href = "mi-rutina.html";
+            else window.location.href = "mi-perfil.html";
         }
 
         /* Personalizar login con nombre del gym si viene ?gym=slug */
@@ -131,7 +131,7 @@
                     btn.textContent = "Ingresar";
                     mostrarCambioPassword();
                 } else {
-                    window.location.href = "mi-rutina.html";
+                    window.location.href = "mi-perfil.html";
                 }
             } catch (err) {
                 document.getElementById("alert-container").innerHTML =

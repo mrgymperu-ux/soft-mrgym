@@ -202,3 +202,18 @@ function formatFecha(iso) {
     if (!iso) return "—";
     return new Date(iso).toLocaleDateString("es-PE");
 }
+
+function aplicarTemaPortal() {
+    const oscuro = localStorage.getItem("alumno_tema") === "oscuro";
+    document.documentElement.dataset.tema = oscuro ? "oscuro" : "claro";
+    return oscuro;
+}
+
+function alternarTemaPortal() {
+    const oscuro = document.documentElement.dataset.tema !== "oscuro";
+    localStorage.setItem("alumno_tema", oscuro ? "oscuro" : "claro");
+    aplicarTemaPortal();
+    return oscuro;
+}
+
+aplicarTemaPortal();

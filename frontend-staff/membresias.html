@@ -97,6 +97,7 @@
         <div class="tarifa-seccion">
             <h4>Nutricion</h4>
             <div class="checkbox-linea"><input type="checkbox" id="f-incluye-nutricion"> <label for="f-incluye-nutricion" style="margin:0;">Esta tarifa incluye plan de nutricion</label></div>
+            <div class="checkbox-linea"><input type="checkbox" id="f-incluye-retos"> <label for="f-incluye-retos" style="margin:0;">Esta tarifa incluye retos</label></div>
             <p class="tarifa-hint" style="margin-top:2px;margin-bottom:0;">Si se activa, a los clientes con esta tarifa vigente se les puede generar un plan de nutricion automatico al registrar sus medidas (peso/estatura + fecha de nacimiento).</p>
         </div>
 
@@ -209,6 +210,7 @@
         document.getElementById("f-congelado-no-pagos").checked = false;
         document.getElementById("f-no-cruce-medidas").checked = false;
         document.getElementById("f-incluye-nutricion").checked = false;
+        document.getElementById("f-incluye-retos").checked = false;
         document.getElementById("f-dias-acceso-periodo").value = "";
         document.getElementById("f-hora-inicio").value = "00:00";
         document.getElementById("f-hora-fin").value = "24:00";
@@ -243,6 +245,7 @@
         document.getElementById("f-congelado-no-pagos").checked = !!m.congelado_no_aparece_pagos;
         document.getElementById("f-no-cruce-medidas").checked = !!m.no_aparecer_reporte_cruce_medidas;
         document.getElementById("f-incluye-nutricion").checked = !!m.incluye_nutricion;
+        document.getElementById("f-incluye-retos").checked = !!m.incluye_retos;
         document.getElementById("f-dias-acceso-periodo").value = m.dias_acceso_periodo ?? "";
         document.getElementById("f-hora-inicio").value = m.hora_inicio_acceso || "00:00";
         document.getElementById("f-hora-fin").value = m.hora_fin_acceso || "24:00";
@@ -300,6 +303,7 @@
             congelado_no_aparece_pagos: document.getElementById("f-congelado-no-pagos").checked,
             no_aparecer_reporte_cruce_medidas: document.getElementById("f-no-cruce-medidas").checked,
             incluye_nutricion: document.getElementById("f-incluye-nutricion").checked,
+            incluye_retos: document.getElementById("f-incluye-retos").checked,
         };
 
         const editId = document.getElementById("modal-membresia").dataset.editId;
