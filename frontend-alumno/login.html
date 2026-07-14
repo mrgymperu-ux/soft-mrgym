@@ -31,18 +31,18 @@
     </div>
     <div id="modal-cambiar-password" class="password-modal" aria-modal="true" role="dialog">
         <div class="password-modal-card">
-            <h2>Crea tu nueva contraseña</h2>
-            <p>La contraseña 1234 es temporal. Cámbiala antes de continuar.</p>
+            <h2>Crear contraseña de 4 a 6 números</h2>
+            <p>La contraseña 1234 es temporal. Crea una nueva para continuar.</p>
             <div id="password-alert"></div>
             <div class="form-group">
-                <label>Nueva contraseña</label>
+                <label>Crea tu contraseña</label>
                 <input type="password" id="nueva-password" inputmode="numeric" maxlength="6" placeholder="4 a 6 números">
             </div>
             <div class="form-group">
-                <label>Confirmar contraseña</label>
+                <label>Repite la contraseña</label>
                 <input type="password" id="confirmar-password" inputmode="numeric" maxlength="6" placeholder="Repite la contraseña">
             </div>
-            <button type="button" class="btn-login" id="btn-cambiar-password" onclick="confirmarCambioPassword()">Guardar contraseña</button>
+            <button type="button" class="btn-login" id="btn-cambiar-password" onclick="confirmarCambioPassword()">Guardar e ingresar</button>
         </div>
     </div>
     <script src="js/api.js"></script>
@@ -77,7 +77,7 @@
             } catch (err) {
                 alert.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
                 btn.disabled = false;
-                btn.textContent = "Guardar contraseña";
+                btn.textContent = "Guardar e ingresar";
             }
         }
 
