@@ -94,7 +94,7 @@
         document.getElementById("f-hasta").value = isoFecha(d2);
     }
 
-    function isoFecha(d) { return d.toISOString().split("T")[0]; }
+    function isoFecha(d) { return fechaLocalISO(d); }
 
     function onCheckHoy() {
         const chk = document.getElementById("chk-hoy").checked;

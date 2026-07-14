@@ -41,7 +41,7 @@ function _fcInyectarModales() {
             <div class="form-row"><label>Celular</label><input type="text" id="fc-telefono" placeholder="987654321"></div>
             <div class="form-row"><label>Email</label><input type="email" id="fc-email" placeholder="juan@email.com"></div>
             <div class="form-row"><label>Fecha de Nacimiento</label><input type="date" id="fc-nacimiento"></div>
-            <div class="form-row"><label>Codigo acceso portal</label><input type="text" id="fc-codigo" placeholder="1234" maxlength="6"></div>
+            <div class="form-row"><label>Contraseña portal</label><input type="password" id="fc-codigo" value="1234" inputmode="numeric" maxlength="6"></div>
             <div class="form-row arriba">
                 <label>Foto</label>
                 <div style="display:flex;align-items:center;gap:10px;flex:1;">
@@ -137,6 +137,7 @@ function abrirModalClienteNuevo(onTerminar) {
         const el = document.getElementById(`fc-${f}`);
         if (el) el.value = "";
     });
+    document.getElementById("fc-codigo").value = "1234";
     document.getElementById("fc-foto").value = "";
     document.getElementById("fc-foto-preview").innerHTML = "";
     document.getElementById("fc-foto-nombre").textContent = "";
@@ -165,7 +166,7 @@ function abrirModalClienteCompletar(cliente, onTerminar) {
     document.getElementById("fc-telefono").value = cliente.telefono || "";
     document.getElementById("fc-email").value = cliente.email || "";
     document.getElementById("fc-nacimiento").value = cliente.fecha_nacimiento || "";
-    document.getElementById("fc-codigo").value = cliente.codigo_acceso || "";
+    document.getElementById("fc-codigo").value = "";
     document.getElementById("fc-foto").value = "";
     document.getElementById("fc-foto-preview").innerHTML = cliente.foto_url
         ? avatarHtml(`${cliente.nombre} ${cliente.apellidos || ""}`, cliente.foto_url, "width:40px;height:40px;")
@@ -183,9 +184,10 @@ async function _fcGuardarClienteYMembresia() {
         email: document.getElementById("fc-email").value.trim() || null,
         fecha_nacimiento: document.getElementById("fc-nacimiento").value || null,
         direccion: document.getElementById("fc-direccion").value.trim() || null,
-        codigo_acceso: document.getElementById("fc-codigo").value.trim() || null,
         genero: document.getElementById("fc-genero").value || null,
     };
+    const passwordPortal = document.getElementById("fc-codigo").value.trim();
+    if (passwordPortal) datos.codigo_acceso = passwordPortal;
     if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
     const editandoId = _fcClienteEditandoId;
     try {
@@ -223,7 +225,7 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
     document.getElementById("fc-am-monto-total").value = "";
     document.getElementById("fc-am-congelamiento").value = "";
     document.getElementById("fc-am-condicion").value = "";
-    document.getElementById("fc-am-inicio").value = new Date().toISOString().split("T")[0];
+    document.getElementById("fc-am-inicio").value = fechaLocalISO();
     document.getElementById("fc-am-fin").value = "";
     document.getElementById("fc-am-monto-ahora").value = "";
     document.getElementById("fc-am-saldo-row").style.display = "none";
@@ -261,7 +263,7 @@ function _fcRecalcularFin() {
     if (!plan || !inicio) return;
     const fecha = new Date(inicio + "T00:00:00");
     fecha.setDate(fecha.getDate() + (plan.duracion_dias || 0));
-    document.getElementById("fc-am-fin").value = fecha.toISOString().split("T")[0];
+    document.getElementById("fc-am-fin").value = fechaLocalISO(fecha);
 }
 
 function _fcRecalcularSaldo() {

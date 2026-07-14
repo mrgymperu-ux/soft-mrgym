@@ -239,6 +239,14 @@ function formatHora(isoString) {
     return new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
 }
 
+function fechaLocalISO(fecha = new Date()) {
+    const d = fecha instanceof Date ? fecha : new Date(fecha);
+    const anio = d.getFullYear();
+    const mes = String(d.getMonth() + 1).padStart(2, "0");
+    const dia = String(d.getDate()).padStart(2, "0");
+    return `${anio}-${mes}-${dia}`;
+}
+
 function formatFecha(fecha) {
     if (!fecha) return "-";
     // Formato pedido: dd-mm-aa (dia-mes-anio de 2 digitos).

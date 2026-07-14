@@ -428,8 +428,8 @@
         const empleados = await apiFetch("/empleados/");
         profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
         const hoy = new Date();
-        document.getElementById("pr-desde").value = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split("T")[0];
-        document.getElementById("pr-hasta").value = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split("T")[0];
+        document.getElementById("pr-desde").value = fechaLocalISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+        document.getElementById("pr-hasta").value = fechaLocalISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0));
     }
 
     function filtrarEmpleadoProfesor(limpiarSeleccion = true) {

@@ -98,6 +98,7 @@ class TokenResponse(BaseModel):
     zonas_permitidas: Optional[str] = None
     gimnasio_id: Optional[int] = None
     gimnasio_slug: Optional[str] = None
+    debe_cambiar_password: bool = False
 
 
 # ==================================================================
@@ -277,6 +278,10 @@ class ClienteUpdate(BaseModel):
     fecha_renovacion: Optional[date] = None
     fecha_vencimiento: Optional[date] = None
     membresia_texto: Optional[str] = None
+
+
+class CambioPasswordAlumnoRequest(BaseModel):
+    nueva_password: str = Field(min_length=4, max_length=6)
 
 
 class Cliente(ClienteBase):

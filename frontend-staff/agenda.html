@@ -215,8 +215,8 @@
         const fin = new Date(inicio);
         fin.setDate(fin.getDate() + 6); // domingo
 
-        const desde = inicio.toISOString().split("T")[0];
-        const hasta = fin.toISOString().split("T")[0];
+        const desde = fechaLocalISO(inicio);
+        const hasta = fechaLocalISO(fin);
 
         document.getElementById("rango-semana").textContent =
             `${inicio.toLocaleDateString("es-PE",{day:"2-digit",month:"long"})} – ${fin.toLocaleDateString("es-PE",{day:"2-digit",month:"long",year:"numeric"})}`;
@@ -237,10 +237,10 @@
     }
 
     function renderGrilla(inicio) {
-        const hoy = new Date().toISOString().split("T")[0];
+        const hoy = fechaLocalISO();
         const grilla = document.getElementById("grilla");
         const fechas = Array.from({length:7}, (_,i) => {
-            const d = new Date(inicio); d.setDate(d.getDate() + i); return d.toISOString().split("T")[0];
+            const d = new Date(inicio); d.setDate(d.getDate() + i); return fechaLocalISO(d);
         });
         const eventosDia = fechas.map(fecha => [
             ...clasesSemana.filter(c => c.fecha === fecha),
@@ -273,7 +273,7 @@
         for (let i = 0; i < 7; i++) {
             const fechaDia = new Date(inicio);
             fechaDia.setDate(fechaDia.getDate() + i);
-            const fechaStr = fechaDia.toISOString().split("T")[0];
+            const fechaStr = fechaLocalISO(fechaDia);
             const esHoy = fechaStr === hoy;
             html += `<div class="grilla-header-dia ${esHoy ? "hoy" : ""}" title="${eventosDia[i].length ? eventosDia[i].length + ' evento(s)' : 'Día vacío: ancho reducido'}">${DIAS_NOMBRE[i]}<span class="num">${fechaDia.getDate()}</span></div>`;
         }
@@ -290,7 +290,7 @@
         for (let i = 0; i < 7; i++) {
             const fechaDia = new Date(inicio);
             fechaDia.setDate(fechaDia.getDate() + i);
-            const fechaStr = fechaDia.toISOString().split("T")[0];
+            const fechaStr = fechaLocalISO(fechaDia);
             const clasesDelDia = clasesSemana.filter(c => c.fecha === fechaStr);
 
             let eventosHtml = altosHora.map((alto, indice) => {
@@ -444,7 +444,7 @@
         sel.innerHTML = '<option value="">Seleccionar...</option>' +
             profesoresCache.map(p => `<option value="${p.id}">${p.nombre_completo}</option>`).join("");
 
-        document.getElementById("f-fecha-clase").value = fechaPreseleccionada || new Date().toISOString().split("T")[0];
+        document.getElementById("f-fecha-clase").value = fechaPreseleccionada || fechaLocalISO();
         ["nombre-clase","responsable","sala","hora-inicio","hora-fin","notas-clase"].forEach(f => {
             const el = document.getElementById(`f-${f}`);
             if (el) el.value = "";

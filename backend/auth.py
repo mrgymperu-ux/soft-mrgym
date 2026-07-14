@@ -40,6 +40,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from . import models
+from .time_utils import hoy_lima
 from .database import get_db
 
 load_dotenv()
@@ -134,7 +135,7 @@ def _suscripcion_permite_acceso(db: Session, gimnasio_id: Optional[int]) -> bool
         return True
     if suscripcion.estado in {"suspendida", "cancelada"}:
         return False
-    hoy = date.today()
+    hoy = hoy_lima()
     if hoy <= suscripcion.fecha_fin_periodo:
         return True
     return bool(suscripcion.fecha_fin_gracia and hoy <= suscripcion.fecha_fin_gracia)

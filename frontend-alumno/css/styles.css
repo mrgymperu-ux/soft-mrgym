@@ -100,6 +100,12 @@ body {
 .alert { padding: 10px 14px; border-radius: 8px; font-size: 0.88em; margin-bottom: 14px; }
 .alert-error { background: #FBEDE9; color: #A85B47; }
 
+.password-modal { position:fixed; inset:0; z-index:10000; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(22,18,35,.72); }
+.password-modal.active { display:flex; }
+.password-modal-card { width:100%; max-width:360px; padding:26px 22px; border-radius:16px; background:#fff; box-shadow:0 20px 60px rgba(0,0,0,.25); }
+.password-modal-card h2 { font-size:1.2em; margin-bottom:6px; }
+.password-modal-card > p { color:var(--secundario); font-size:.86em; margin-bottom:18px; }
+
 .dias-nav { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
 .dia-pill { background: #fff; border: 1px solid var(--borde); border-radius: 20px; padding: 6px 14px; cursor: pointer; font-size: 0.82em; white-space: nowrap; border: none; font-family: inherit; }
 .dia-pill.activo { background: var(--primario); color: #fff; }

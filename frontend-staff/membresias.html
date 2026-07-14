@@ -257,7 +257,7 @@
         const [clientes, membresias] = await Promise.all([apiFetch("/clientes/?limit=200"), apiFetch("/membresias/")]);
         document.getElementById("f-cliente").innerHTML = '<option value="">Seleccionar...</option>' + clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos||""}</option>`).join("");
         document.getElementById("f-plan").innerHTML = '<option value="">Seleccionar...</option>' + membresias.map(m => `<option value="${m.id}" data-precio="${m.precio}">${m.nombre} — ${formatCurrency(m.precio,moneda)}</option>`).join("");
-        document.getElementById("f-inicio").value = new Date().toISOString().split("T")[0];
+        document.getElementById("f-inicio").value = fechaLocalISO();
         document.getElementById("f-monto-pagado").value = "";
         document.getElementById("modal-asignar").classList.add("active");
     }

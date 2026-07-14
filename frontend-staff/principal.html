@@ -409,7 +409,7 @@
                     // Info de saldo a la derecha (solo si hay deuda)
                     let saldoHtml = '';
                     if (saldo > 0) {
-                        const hoy = new Date().toISOString().split('T')[0];
+                        const hoy = fechaLocalISO();
                         const fechaPago = c.fecha_pago_saldo;
                         const vencido = fechaPago && fechaPago <= hoy;
                         let fechaHtml = '';
@@ -578,7 +578,7 @@
                     </div>`;
 
                 if (m.fecha_pago_saldo && saldo > 0) {
-                    const hoy = new Date().toISOString().split("T")[0];
+                    const hoy = fechaLocalISO();
                     const vencido = m.fecha_pago_saldo <= hoy;
                     proxPagoHtml = `<div class="ficha-prox-pago ${vencido ? 'vencido' : ''}">` +
                         (vencido ? '⚠️ Pago vencío el ' : '📅 Próximo pago: ') +
@@ -995,7 +995,7 @@
 
     async function cargarOtrosIngresos() {
         try {
-            const hoy = new Date().toISOString().split("T")[0];
+            const hoy = fechaLocalISO();
             const ingresos = await apiFetch(`/otros-ingresos/?desde=${hoy}&hasta=${hoy}&limit=30`);
             const cont = document.getElementById("oi-lista");
             if (!ingresos.length) { cont.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">Sin otros ingresos hoy</p>'; return; }
@@ -1051,7 +1051,7 @@
     async function abrirOtroIngreso() {
         await cargarConceptosIngreso();
         if (!conceptosIngresoCache.length) { showInfo("Primero crea un concepto de ingreso"); return abrirConceptosIngreso(); }
-        document.getElementById("oi-fecha").value = new Date().toISOString().split("T")[0];
+        document.getElementById("oi-fecha").value = fechaLocalISO();
         document.getElementById("oi-concepto").innerHTML = '<option value="">Seleccionar...</option>' + conceptosIngresoCache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join("");
         document.getElementById("oi-monto").value = ""; document.getElementById("oi-metodo").value = "efectivo"; document.getElementById("oi-descripcion").value = "";
         document.getElementById("modal-otro-ingreso").classList.add("active");

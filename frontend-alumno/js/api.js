@@ -8,11 +8,13 @@ function getSlug() {
 
 function getToken() { return sessionStorage.getItem("alumno_token"); }
 function getNombre() { return sessionStorage.getItem("alumno_nombre"); }
+function debeCambiarPassword() { return sessionStorage.getItem("alumno_cambiar_password") === "1"; }
 
-function guardarSesion(token, nombre, gimnasioId) {
+function guardarSesion(token, nombre, gimnasioId, cambiarPassword = false) {
     sessionStorage.setItem("alumno_token", token);
     sessionStorage.setItem("alumno_nombre", nombre);
     if (gimnasioId != null) sessionStorage.setItem("alumno_gimnasio_id", gimnasioId);
+    sessionStorage.setItem("alumno_cambiar_password", cambiarPassword ? "1" : "0");
     const slug = getSlug();
     if (slug) sessionStorage.setItem("alumno_slug", slug);
 }
@@ -168,7 +170,16 @@ async function loginAlumno(dni, codigo) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "DNI o codigo incorrecto");
-    guardarSesion(data.access_token, data.nombre, data.gimnasio_id);
+    guardarSesion(data.access_token, data.nombre, data.gimnasio_id, data.debe_cambiar_password);
+    return data;
+}
+
+async function cambiarPasswordAlumno(nuevaPassword) {
+    const data = await apiFetch("/portal-alumno/cambiar-password", {
+        method: "PUT",
+        body: JSON.stringify({ nueva_password: nuevaPassword }),
+    });
+    sessionStorage.setItem("alumno_cambiar_password", "0");
     return data;
 }
 

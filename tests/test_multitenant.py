@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import date, datetime, timedelta
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -27,6 +28,8 @@ from backend.main import (
     crear_venta,
     eliminar_pago_membresia,
     registrar_compra,
+    registrar_entrada,
+    registrar_salida,
     registrar_otro_ingreso,
     recomendar_paquetes_rutina_cliente,
     renovar_suscripcion_saas,
@@ -124,6 +127,25 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(antigua.fecha_hora_salida, antigua.fecha_hora_entrada + timedelta(hours=3))
         self.assertIsNone(reciente.fecha_hora_salida)
         self.assertIsNone(otro_gym.fecha_hora_salida)
+
+    def test_entrada_y_salida_guardan_hora_operativa_de_lima(self):
+        entrada_lima = datetime(2026, 7, 13, 22, 15)
+        salida_lima = datetime(2026, 7, 13, 23, 5)
+        with patch("backend.main.ahora_lima", return_value=entrada_lima):
+            asistencia = registrar_entrada(
+                schemas.AsistenciaCreate(cliente_id=self.cliente1.id),
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(asistencia.fecha_hora_entrada, entrada_lima)
+
+        with patch("backend.main.ahora_lima", return_value=salida_lima):
+            actualizada = registrar_salida(
+                schemas.RegistrarSalidaRequest(asistencia_id=asistencia.id),
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(actualizada.fecha_hora_salida, salida_lima)
 
     def test_porciones_nutricion_son_faciles_para_el_cliente(self):
         casos = [

@@ -161,7 +161,7 @@
                             <tr><td><strong>Fecha de renovacion</strong></td><td id="d-renovacion"></td></tr>
                             <tr><td><strong>Fecha de vencimiento</strong></td><td id="d-vencimiento"></td></tr>
                             <tr><td><strong>Asistencia</strong></td><td id="d-asistencias"></td></tr>
-                            <tr><td><strong>Codigo portal alumno</strong></td><td id="d-codigo"></td></tr>
+                            <tr><td><strong>Contraseña portal alumno</strong></td><td><span id="d-codigo"></span> <button type="button" class="btn btn-secondary btn-sm" onclick="resetPasswordCliente()" style="margin-left:8px;">Restablecer a 1234</button></td></tr>
                         </tbody></table>
                     </div>
                 </div>
@@ -196,7 +196,7 @@
         <div class="form-row"><label>Celular</label><input type="text" id="f-telefono" placeholder="987654321"></div>
         <div class="form-row"><label>Email</label><input type="email" id="f-email" placeholder="juan@email.com"></div>
         <div class="form-row"><label>Fecha de Nacimiento</label><input type="date" id="f-nacimiento"></div>
-        <div class="form-row"><label>Código acceso portal</label><input type="text" id="f-codigo" placeholder="1234" maxlength="6"></div>
+        <div class="form-row"><label>Contraseña portal</label><input type="password" id="f-codigo" placeholder="Dejar en blanco para conservar" inputmode="numeric" maxlength="6"></div>
         <div class="form-row foto-row">
             <label>Foto</label>
             <div style="display:flex;align-items:center;gap:12px;flex:1;">
@@ -459,7 +459,7 @@
         document.getElementById("d-renovacion").textContent = clienteActual.fecha_renovacion ? formatFecha(clienteActual.fecha_renovacion) : "—";
         document.getElementById("d-vencimiento").textContent = clienteActual.fecha_vencimiento ? formatFecha(clienteActual.fecha_vencimiento) : "—";
         document.getElementById("d-asistencias").textContent = (clienteActual.porcentaje_asistencia !== null && clienteActual.porcentaje_asistencia !== undefined) ? `${clienteActual.porcentaje_asistencia}% (dias asistidos / dias del ultimo plan)` : "Sin plan asignado aún";
-        document.getElementById("d-codigo").textContent = clienteActual.codigo_acceso || "Sin codigo";
+        document.getElementById("d-codigo").textContent = "Configurada";
         document.getElementById("btn-eliminar-ficha").style.display = puedeEliminar() ? "inline-block" : "none";
         showTab("datos", document.querySelector(".tab"));
     }
@@ -1271,7 +1271,7 @@
         const html = `
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
                 <strong style="font-size:0.88em;">${existente ? "Editar toma" : "Nueva toma"}</strong>
-                <input type="date" id="mt-fecha" value="${existente ? existente.fecha : new Date().toISOString().split('T')[0]}" style="padding:4px 6px;font-size:0.78em;border:1px solid var(--color-borde);border-radius:6px;">
+                <input type="date" id="mt-fecha" value="${existente ? existente.fecha : fechaLocalISO()}" style="padding:4px 6px;font-size:0.78em;border:1px solid var(--color-borde);border-radius:6px;">
             </div>
             ${Object.entries(grupos).map(([grupo, campos]) => `
                 <div class="medidas-grupo-titulo">${grupo}</div>
@@ -1354,7 +1354,7 @@
         document.getElementById("f-email").value = clienteActual.email || "";
         document.getElementById("f-nacimiento").value = clienteActual.fecha_nacimiento || "";
         document.getElementById("f-direccion").value = clienteActual.direccion || "";
-        document.getElementById("f-codigo").value = clienteActual.codigo_acceso || "";
+        document.getElementById("f-codigo").value = "";
         document.getElementById("f-genero").value = clienteActual.genero || "";
         document.getElementById("f-foto").value = "";
         document.getElementById("f-foto-nombre").textContent = "";
@@ -1374,9 +1374,10 @@
             email: document.getElementById("f-email").value.trim() || null,
             fecha_nacimiento: document.getElementById("f-nacimiento").value || null,
             direccion: document.getElementById("f-direccion").value.trim() || null,
-            codigo_acceso: document.getElementById("f-codigo").value.trim() || null,
             genero: document.getElementById("f-genero").value || null,
         };
+        const passwordPortal = document.getElementById("f-codigo").value.trim();
+        if (passwordPortal) datos.codigo_acceso = passwordPortal;
         if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
         try {
             await apiFetch(`/clientes/${clienteActual.id}`, { method: "PUT", body: JSON.stringify(datos) });
@@ -1393,6 +1394,15 @@
         if (!(await confirmDialog("¿Eliminar este cliente?"))) return;
         try { await apiFetch(`/clientes/${id}`, { method: "DELETE" }); showSuccess("Cliente eliminado"); cargarClientes(); }
         catch (e) { showError(e.message); }
+    }
+
+    async function resetPasswordCliente() {
+        if (!clienteActual) return;
+        if (!(await confirmDialog("¿Restablecer la contraseña del socio a 1234?"))) return;
+        try {
+            await apiFetch(`/clientes/${clienteActual.id}/reset-password`, { method: "POST" });
+            showSuccess("Contraseña restablecida a 1234");
+        } catch (e) { showError(e.message); }
     }
 
     async function eliminarClienteActual() {

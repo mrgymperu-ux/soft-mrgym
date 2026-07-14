@@ -172,8 +172,8 @@
 
     function setFechasPorDefecto() {
         const hoy = new Date();
-        document.getElementById("f-desde").value = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split("T")[0];
-        document.getElementById("f-hasta").value = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split("T")[0];
+        document.getElementById("f-desde").value = fechaLocalISO(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+        document.getElementById("f-hasta").value = fechaLocalISO(new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0));
     }
 
     async function cargarEmpleados() {

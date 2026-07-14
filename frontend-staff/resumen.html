@@ -209,7 +209,7 @@
         otros_ingresos: id => `/otros-ingresos/${id}`,
     };
 
-    function isoFecha(d) { return d.toISOString().split("T")[0]; }
+    function isoFecha(d) { return fechaLocalISO(d); }
 
     function initFechas() {
         const hoy = new Date();

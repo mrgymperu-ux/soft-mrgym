@@ -35,6 +35,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 import enum
 
+from .time_utils import ahora_lima, hoy_lima
+
 from .database import Base
 
 
@@ -79,7 +81,7 @@ class Gimnasio(Base):
     slug = Column(String, unique=True, index=True, nullable=False)  # URL-friendly, ej. "mrgym-fitness"
     plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=True)
     activo = Column(Boolean, default=True)
-    fecha_registro = Column(DateTime, default=datetime.now)
+    fecha_registro = Column(DateTime, default=ahora_lima)
 
     # --- Contacto ---
     email_contacto = Column(String, nullable=True)
@@ -138,15 +140,15 @@ class SuscripcionSaas(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
     plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=True)
     estado = Column(String, nullable=False, default="prueba")
-    fecha_inicio = Column(Date, nullable=False, default=date.today)
+    fecha_inicio = Column(Date, nullable=False, default=hoy_lima)
     fecha_fin_periodo = Column(Date, nullable=False)
     fecha_fin_gracia = Column(Date, nullable=True)
     dias_gracia = Column(Integer, nullable=False, default=5)
     auto_renovacion = Column(Boolean, nullable=False, default=False)
     fecha_suspension = Column(DateTime, nullable=True)
     notas = Column(Text, nullable=True)
-    creado_en = Column(DateTime, nullable=False, default=datetime.now)
-    actualizado_en = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+    actualizado_en = Column(DateTime, nullable=False, default=ahora_lima, onupdate=ahora_lima)
 
     gimnasio = relationship("Gimnasio", back_populates="suscripcion_saas")
     plan = relationship("PlanSaas", back_populates="suscripciones")
@@ -165,7 +167,7 @@ class PagoSaas(Base):
     moneda = Column(String, nullable=False, default="S/")
     metodo_pago = Column(String, nullable=False, default="manual")
     referencia = Column(String, nullable=True)
-    fecha_pago = Column(DateTime, nullable=False, default=datetime.now)
+    fecha_pago = Column(DateTime, nullable=False, default=ahora_lima)
     periodo_inicio = Column(Date, nullable=False)
     periodo_fin = Column(Date, nullable=False)
     registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
@@ -205,7 +207,7 @@ class Usuario(Base):
     password_hash = Column(String, nullable=False)
     rol = Column(Enum(RolUsuario), nullable=False)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
     # --- Permisos finos para staff (no aplica a rol PROFESOR) ---
     # es_administrador=True => acceso total, ignora zonas_permitidas.
@@ -263,7 +265,7 @@ class Cliente(Base):
     membresia_texto = Column(String, nullable=True)  # nombre del plan tal como se conoce (texto libre, no FK)
     asistencias_legado = Column(Integer, nullable=True, default=0)
 
-    fecha_registro = Column(DateTime, default=datetime.now)
+    fecha_registro = Column(DateTime, default=ahora_lima)
     activo = Column(Boolean, default=True)
 
     asistencias = relationship("Asistencia", back_populates="cliente")
@@ -318,7 +320,7 @@ class ClienteHistorico(Base):
     migrado = Column(Boolean, default=False)  # True cuando ya se creo un Cliente activo a partir de este registro
     cliente_nuevo_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
 
-    fecha_importacion = Column(DateTime, default=datetime.now)
+    fecha_importacion = Column(DateTime, default=ahora_lima)
 
 
 # ==================================================================
@@ -387,7 +389,7 @@ class ClienteMembresia(Base):
     id = Column(Integer, primary_key=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
     membresia_id = Column(Integer, ForeignKey("membresias.id"), nullable=False)
-    fecha_inicio = Column(Date, default=date.today)
+    fecha_inicio = Column(Date, default=hoy_lima)
     fecha_fin = Column(Date, nullable=True)
     monto_pagado = Column(Float, default=0.0)
     # Si queda saldo (monto_pagado < precio del plan), fecha en la
@@ -423,7 +425,7 @@ class PagoMembresia(Base):
     cliente_membresia_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=False, index=True)
     monto = Column(Float, nullable=False)
     metodo_pago = Column(String, default="efectivo")
-    fecha_pago = Column(DateTime, default=datetime.now)
+    fecha_pago = Column(DateTime, default=ahora_lima)
     registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(String, nullable=True)
 
@@ -450,7 +452,7 @@ class Producto(Base):
     icono = Column(String, nullable=True)  # emoji o nombre de icono para venta rapida
     foto_url = Column(String, nullable=True)  # ruta relativa servida por /uploads/... (opcional, tiene prioridad sobre icono)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
     detalles_venta = relationship("DetalleVenta", back_populates="producto")
 
@@ -471,7 +473,7 @@ class Venta(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
-    fecha_venta = Column(DateTime, default=datetime.now)
+    fecha_venta = Column(DateTime, default=ahora_lima)
     total = Column(Float, nullable=False)
     metodo_pago = Column(Enum(MetodoPago), nullable=False)
     es_venta_rapida = Column(Boolean, default=False)
@@ -512,7 +514,7 @@ class Compra(Base):
     cantidad = Column(Integer, nullable=False)
     costo_unitario = Column(Float, nullable=False)
     costo_total = Column(Float, nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=ahora_lima)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(Text, nullable=True)
     metodo_pago = Column(String, default="efectivo")  # efectivo | cuenta
@@ -536,7 +538,7 @@ class Asistencia(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
-    fecha_hora_entrada = Column(DateTime, default=datetime.now)
+    fecha_hora_entrada = Column(DateTime, default=ahora_lima)
     fecha_hora_salida = Column(DateTime, nullable=True)
 
     cliente = relationship("Cliente", back_populates="asistencias")
@@ -552,7 +554,7 @@ class Progreso(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=ahora_lima)
     peso = Column(Float, nullable=True)
     altura = Column(Float, nullable=True)
     porcentaje_grasa = Column(Float, nullable=True)
@@ -583,7 +585,7 @@ class TipoEjercicio(Base):
     imagen_url = Column(String, nullable=True)
     video_url = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
     # Campos para sugerencia automatica segun perfil del alumno
     categoria = Column(String, nullable=True)  # calentamiento|fuerza|cardio|estiramiento|funcional
     equipamiento = Column(String, nullable=True)  # sin_equipo|step|pelota|cuerda|mancuernas|barra|maquina|banda|colchoneta
@@ -602,7 +604,7 @@ class Rutina(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
     nombre = Column(String, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
     activo = Column(Boolean, default=True)
 
     cliente = relationship("Cliente", back_populates="rutinas")
@@ -657,7 +659,7 @@ class PaqueteRutina(Base):
     edad_max = Column(Integer, nullable=True)
     duracion_semanas = Column(Integer, default=4)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
     dias = relationship("PaqueteRutinaDia", back_populates="paquete", cascade="all, delete-orphan", order_by="PaqueteRutinaDia.orden")
 
@@ -705,7 +707,7 @@ class PlanNutricion(Base):
     calorias_objetivo = Column(Integer, nullable=True)
     origen = Column(String, default="membresia")  # "membresia" (incluido en la tarifa) o "pago_separado" (venta aparte)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
     cliente = relationship("Cliente", back_populates="planes_nutricion")
     comidas = relationship("ComidaPlan", back_populates="plan", cascade="all, delete-orphan")
@@ -796,7 +798,7 @@ class PaqueteNutricion(Base):
     proposito = Column(Enum(PropositoNutricion), nullable=False)
     notas = Column(Text, nullable=True)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
     items = relationship("PaqueteAlimento", back_populates="paquete", cascade="all, delete-orphan")
 
@@ -830,7 +832,7 @@ class Reto(Base):
     duracion_dias = Column(Integer, nullable=True)
     dificultad = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
 
 # ==================================================================
@@ -903,7 +905,7 @@ class Empleado(Base):
     tarifa_reducida = Column(Float, nullable=True)  # si no llega al minimo
 
     activo = Column(Boolean, default=True)
-    fecha_ingreso = Column(Date, default=date.today)
+    fecha_ingreso = Column(Date, default=hoy_lima)
 
     usuario = relationship("Usuario", back_populates="empleado", uselist=False)
     clases_dictadas = relationship("ClaseDictada", back_populates="profesor", foreign_keys="ClaseDictada.profesor_id")
@@ -920,7 +922,7 @@ class AsistenciaEmpleado(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     empleado_id = Column(Integer, ForeignKey("empleados.id"), nullable=False)
-    fecha_hora_entrada = Column(DateTime, default=datetime.now)
+    fecha_hora_entrada = Column(DateTime, default=ahora_lima)
     fecha_hora_salida = Column(DateTime, nullable=True)
 
     empleado = relationship("Empleado", back_populates="asistencias_empleado")
@@ -1034,7 +1036,7 @@ class PagoPlanilla(Base):
     monto_clases = Column(Float, default=0.0)
 
     monto_total = Column(Float, nullable=False)  # lo efectivamente pagado en ESTE registro (permite pagos parciales)
-    fecha_pago = Column(DateTime, default=datetime.now)
+    fecha_pago = Column(DateTime, default=ahora_lima)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # quien registro el pago
     metodo_pago = Column(String, default="efectivo")  # efectivo | cuenta
@@ -1091,7 +1093,7 @@ class CargoServicio(Base):
     anio = Column(Integer, nullable=False)
     mes = Column(Integer, nullable=False)  # 1-12, periodo al que corresponde el cargo
     fecha_vencimiento = Column(Date, nullable=True)
-    fecha_registro = Column(DateTime, default=datetime.now)
+    fecha_registro = Column(DateTime, default=ahora_lima)
     notas = Column(Text, nullable=True)
     # --- Recurrencia (opcional): si se crea marcado como recurrente,
     # el backend genera de una vez varios CargoServicio a futuro
@@ -1113,7 +1115,7 @@ class PagoServicio(Base):
     id = Column(Integer, primary_key=True, index=True)
     cargo_id = Column(Integer, ForeignKey("cargos_servicio.id"), nullable=False)
     monto = Column(Float, nullable=False)
-    fecha_pago = Column(DateTime, default=datetime.now)
+    fecha_pago = Column(DateTime, default=ahora_lima)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     # Origen de fondos del gimnasio: caja fisica o cuenta bancaria/digital.
@@ -1183,7 +1185,7 @@ class ConceptoOtroIngreso(Base):
     mostrar_agenda = Column(Boolean, default=False)
     sala_sugerida = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
-    fecha_creacion = Column(DateTime, default=datetime.now)
+    fecha_creacion = Column(DateTime, default=ahora_lima)
 
 
 class OtroIngreso(Base):
@@ -1193,7 +1195,7 @@ class OtroIngreso(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
     concepto_id = Column(Integer, ForeignKey("conceptos_otro_ingreso.id"), nullable=False)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=ahora_lima)
     monto = Column(Float, nullable=False)
     metodo_pago = Column(String, default="efectivo")
     descripcion = Column(Text, nullable=True)
@@ -1213,7 +1215,7 @@ class Gasto(Base):
 
     id             = Column(Integer, primary_key=True, index=True)
     gimnasio_id    = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
-    fecha          = Column(DateTime, default=datetime.now)
+    fecha          = Column(DateTime, default=ahora_lima)
     categoria      = Column(Enum(CategoriaGasto), nullable=False)
     monto          = Column(Float, nullable=False)
     descripcion    = Column(Text, nullable=True)
@@ -1281,7 +1283,7 @@ class Medida(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False, index=True)
-    fecha = Column(Date, default=date.today, nullable=False)
+    fecha = Column(Date, default=hoy_lima, nullable=False)
     notas = Column(Text, nullable=True)
 
     # --- Datos base ---

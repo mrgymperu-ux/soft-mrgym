@@ -33,10 +33,13 @@ from sqlalchemy.orm import Session
 
 from . import models, schemas, auth, pdf_generator
 from .database import get_db, engine, SessionLocal, SQLALCHEMY_DATABASE_URL
+from .time_utils import ahora_lima, hoy_lima
 
 logger = logging.getLogger("soft-mrgym")
 
 app = FastAPI(title="Soft-Gym API")
+
+PASSWORD_INICIAL_ALUMNO = "1234"
 
 # ==================================================================
 # KEEP-ALIVE INTELIGENTE (anti-sleep Render free tier)
@@ -49,13 +52,9 @@ _INTERVALO_CHECK_SEG = 60           # revisa cada 60 segundos
 _UMBRAL_INACTIVIDAD_SEG = 13 * 60   # 13 min (Render duerme a los 15)
 _HORA_INICIO = 6    # 6 AM Lima
 _HORA_FIN = 23       # 11 PM Lima
-_ZONA_LIMA_OFFSET = -5  # UTC-5 (Peru no tiene horario de verano)
-
-
 def _hora_lima_actual() -> tuple:
     """Retorna (hora, dia_semana) en Lima. dia_semana: 0=lunes, 6=domingo."""
-    utc_now = datetime.utcnow()
-    lima_now = utc_now + timedelta(hours=_ZONA_LIMA_OFFSET)
+    lima_now = ahora_lima()
     return lima_now.hour, lima_now.weekday()
 
 
@@ -202,7 +201,7 @@ def _estado_suscripcion(suscripcion: Optional[models.SuscripcionSaas]) -> str:
         return "sin_configurar"
     if suscripcion.estado in {"suspendida", "cancelada"}:
         return suscripcion.estado
-    hoy = date.today()
+    hoy = hoy_lima()
     if hoy <= suscripcion.fecha_fin_periodo:
         return "prueba" if suscripcion.estado == "prueba" else "activa"
     if suscripcion.fecha_fin_gracia and hoy <= suscripcion.fecha_fin_gracia:
@@ -212,7 +211,7 @@ def _estado_suscripcion(suscripcion: Optional[models.SuscripcionSaas]) -> str:
 
 def _crear_prueba_saas(db: Session, gimnasio: models.Gimnasio, dias: int = 14):
     """Crea la prueba inicial; no se usa para tenants legacy ya existentes."""
-    hoy = date.today()
+    hoy = hoy_lima()
     suscripcion = models.SuscripcionSaas(
         gimnasio_id=gimnasio.id,
         plan_id=gimnasio.plan_id,
@@ -237,7 +236,7 @@ def _serializar_suscripcion(gimnasio: models.Gimnasio, incluir_pagos: bool = Tru
         }
     estado = _estado_suscripcion(suscripcion)
     limite = suscripcion.fecha_fin_gracia or suscripcion.fecha_fin_periodo
-    dias_restantes = (limite - date.today()).days
+    dias_restantes = (limite - hoy_lima()).days
     return {
         "id": suscripcion.id,
         "gimnasio_id": gimnasio.id,
@@ -385,7 +384,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.getenv(
         "CORS_ORIGINS",
-        "http://localhost:3000,http://localhost:3001,http://localhost:3002",
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002",
     ).split(",") if o.strip()],
     # La autenticacion usa Bearer JWT, no cookies cross-origin.
     allow_credentials=False,
@@ -668,6 +668,10 @@ def _sembrar_gimnasio_default():
                     ))
                 except Exception:
                     pass  # tabla puede no existir aun en una BD nueva
+            conn.execute(text(
+                "UPDATE clientes SET codigo_acceso = :password "
+                "WHERE codigo_acceso IS NULL OR TRIM(codigo_acceso) = ''"
+            ), {"password": PASSWORD_INICIAL_ALUMNO})
             conn.commit()
 
         # 4. Marcar al primer admin como superadmin (idempotente)
@@ -1729,7 +1733,13 @@ def login_alumno(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
     token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
-    return schemas.TokenResponse(access_token=token, rol="alumno", nombre=cliente.nombre, gimnasio_id=cliente.gimnasio_id)
+    return schemas.TokenResponse(
+        access_token=token,
+        rol="alumno",
+        nombre=cliente.nombre,
+        gimnasio_id=cliente.gimnasio_id,
+        debe_cambiar_password=cliente.codigo_acceso == PASSWORD_INICIAL_ALUMNO,
+    )
 
 
 @app.post("/auth/login-profesor", response_model=schemas.TokenResponse, tags=["Auth"])
@@ -1934,7 +1944,7 @@ def registrar_otro_ingreso(datos: schemas.OtroIngresoCreate, db: Session = Depen
     if not concepto or not concepto.activo:
         raise HTTPException(status_code=404, detail="Concepto de ingreso no encontrado")
     valores = datos.model_dump()
-    valores["fecha"] = datos.fecha or datetime.now()
+    valores["fecha"] = datos.fecha or ahora_lima()
     ingreso = models.OtroIngreso(**valores, gimnasio_id=get_gid(usuario), usuario_id=usuario.id)
     db.add(ingreso); db.commit(); db.refresh(ingreso)
     return ingreso
@@ -1957,7 +1967,7 @@ def listar_ingresos(
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
-    hoy = date.today()
+    hoy = hoy_lima()
     if solo_hoy:
         desde = hasta = hoy
     if not desde:
@@ -2049,7 +2059,7 @@ def listar_egresos(
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
-    hoy = date.today()
+    hoy = hoy_lima()
     if solo_hoy:
         desde = hasta = hoy
     if not desde:
@@ -2179,7 +2189,7 @@ def crear_gasto(
     if datos.monto <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
     g = models.Gasto(
-        fecha=datos.fecha or datetime.now(),
+        fecha=datos.fecha or ahora_lima(),
         categoria=datos.categoria,
         monto=datos.monto,
         descripcion=datos.descripcion,
@@ -2221,7 +2231,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         .count()
     )
 
-    inicio_mes = date.today().replace(day=1)
+    inicio_mes = hoy_lima().replace(day=1)
     ingresos_mes = (
         db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
         .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid)
@@ -2242,7 +2252,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         .count()
     )
 
-    hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    hoy = ahora_lima().replace(hour=0, minute=0, second=0, microsecond=0)
     asistencias_hoy_query = db.query(models.Asistencia).filter(
         models.Asistencia.fecha_hora_entrada >= hoy,
         models.Asistencia.gimnasio_id == gid,
@@ -2251,21 +2261,21 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     presentes_ahora = asistencias_hoy_query.filter(models.Asistencia.fecha_hora_salida.is_(None)).count()
 
     config = _configuracion_del_gym(db, usuario)
-    limite_aviso = date.today() + timedelta(days=config.dias_aviso_vencimiento or 7)
+    limite_aviso = hoy_lima() + timedelta(days=config.dias_aviso_vencimiento or 7)
     membresias_por_vencer = (
         db.query(models.ClienteMembresia)
         .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
         .filter(
             models.ClienteMembresia.activo == True,
             models.ClienteMembresia.fecha_fin.isnot(None),
-            models.ClienteMembresia.fecha_fin >= date.today(),
+            models.ClienteMembresia.fecha_fin >= hoy_lima(),
             models.ClienteMembresia.fecha_fin <= limite_aviso,
             models.Cliente.gimnasio_id == gid,
         )
         .count()
     )
 
-    hoy_fecha = date.today()
+    hoy_fecha = hoy_lima()
     clientes_activos = (
         db.query(models.Cliente)
         .join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
@@ -2368,7 +2378,7 @@ def listado_completo_clientes(
     db: Session = Depends(get_db),
     _=Depends(auth.requiere_staff_o_profesor),
 ):
-    hoy = date.today()
+    hoy = hoy_lima()
     query = db.query(models.Cliente).filter(models.Cliente.gimnasio_id == get_gid(_))
 
     if filtro == "activos":
@@ -2482,7 +2492,7 @@ def listar_clientes(
     query = db.query(models.Cliente).filter(models.Cliente.activo == True, models.Cliente.gimnasio_id == get_gid(usuario))
 
     if solo_con_membresia_activa:
-        hoy = date.today()
+        hoy = hoy_lima()
         query = (
             query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
             .filter(
@@ -2533,7 +2543,9 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db),
     _validar_limite_plan(db, usuario, "clientes")
     if cliente.dni and q(db, models.Cliente, usuario).filter(models.Cliente.dni == cliente.dni).first():
         raise HTTPException(status_code=400, detail="Ya existe un cliente con ese DNI en este gimnasio")
-    db_cliente = models.Cliente(**cliente.model_dump(), gimnasio_id=get_gid(usuario))
+    valores = cliente.model_dump()
+    valores["codigo_acceso"] = (valores.get("codigo_acceso") or PASSWORD_INICIAL_ALUMNO).strip()
+    db_cliente = models.Cliente(**valores, gimnasio_id=get_gid(usuario))
     db.add(db_cliente)
     db.commit()
     db.refresh(db_cliente)
@@ -2552,7 +2564,7 @@ def _calcular_porcentaje_asistencia(db: Session, cliente_id: int) -> Optional[fl
     if not ultimo_plan or not ultimo_plan.fecha_inicio or not ultimo_plan.fecha_fin:
         return None
 
-    hoy = date.today()
+    hoy = hoy_lima()
     fecha_limite = min(ultimo_plan.fecha_fin, hoy)
     if fecha_limite < ultimo_plan.fecha_inicio:
         return 0.0
@@ -2693,7 +2705,7 @@ async def importar_clientes(
                 apellidos=(fila.get("apellidos") or "").strip() or None,
                 direccion=(fila.get("direccion") or "").strip() or None,
                 dni=dni,
-                fecha_registro=datetime.combine(fecha_reg, datetime.min.time()) if fecha_reg else datetime.now(),
+                fecha_registro=datetime.combine(fecha_reg, datetime.min.time()) if fecha_reg else ahora_lima(),
                 genero=_mapear_sexo_a_genero(fila.get("sexo")),
                 telefono=(fila.get("celular") or "").strip() or None,
                 email=email_raw if "@" in email_raw else None,
@@ -2741,7 +2753,6 @@ def actualizar_cliente(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     datos_dict = datos.model_dump(exclude_unset=True)
-    monto_anterior = round(cm.monto_pagado or 0.0, 2)
     if datos_dict.get("dni"):
         duplicado = q(db, models.Cliente, usuario).filter(
             models.Cliente.dni == datos_dict["dni"],
@@ -2755,6 +2766,20 @@ def actualizar_cliente(
     db.commit()
     db.refresh(cliente)
     return cliente
+
+
+@app.post("/clientes/{cliente_id}/reset-password", tags=["Clientes"])
+def reset_password_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    cliente = q(db, models.Cliente, usuario).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cliente.codigo_acceso = PASSWORD_INICIAL_ALUMNO
+    db.commit()
+    return {"message": "Contraseña restablecida", "password_temporal": PASSWORD_INICIAL_ALUMNO}
 
 
 @app.delete("/clientes/{cliente_id}", tags=["Clientes"])
@@ -2853,7 +2878,7 @@ def _query_reporte_clientes(
     if filtro == "activos":
         query = query.filter(models.Cliente.activo == True)
     elif filtro == "por_vencer":
-        hoy = date.today()
+        hoy = hoy_lima()
         limite = hoy + timedelta(days=max(dias_vencimiento, 0))
         query = (
             query.join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
@@ -3056,7 +3081,7 @@ def mi_agenda_profesor(
     db: Session = Depends(get_db),
 ):
     """Las clases propias del profesor, de hoy en adelante."""
-    hoy = date.today()
+    hoy = hoy_lima()
     return (
         db.query(models.ClaseDictada)
         .filter(
@@ -3133,7 +3158,7 @@ def ocupado_salas(
     profesor) en los proximos N dias, para que un profesor sepa que
     horarios/salas ya estan tomados antes de coordinar los suyos.
     """
-    hoy = date.today()
+    hoy = hoy_lima()
     limite = hoy + timedelta(days=dias)
     filas = (
         db.query(models.ClaseDictada)
@@ -3404,7 +3429,7 @@ def membresias_por_vencer(
     """
     config = _configuracion_del_gym(db, usuario)
     dias_efectivos = dias if dias is not None else (config.dias_aviso_vencimiento or 7)
-    hoy = date.today()
+    hoy = hoy_lima()
     limite = hoy + timedelta(days=dias_efectivos)
 
     filas = (
@@ -3587,7 +3612,7 @@ def asignar_membresia_a_cliente(
     if datos.cliente_id != cliente_id:
         raise HTTPException(status_code=400, detail="El cliente del cuerpo no coincide con la URL")
 
-    fecha_inicio = datos.fecha_inicio or date.today()
+    fecha_inicio = datos.fecha_inicio or hoy_lima()
     fecha_fin = datos.fecha_fin or (fecha_inicio + timedelta(days=membresia.duracion_dias))
     if fecha_fin < fecha_inicio:
         raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
@@ -3885,7 +3910,7 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    hoy = date.today()
+    hoy = hoy_lima()
     cm_activa = (
         db.query(models.ClienteMembresia)
         .filter(models.ClienteMembresia.cliente_id == cliente_id, models.ClienteMembresia.activo == True)
@@ -3909,7 +3934,7 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
             fecha_pago_saldo=cm_activa.fecha_pago_saldo,
         )
 
-    desde_30_dias = datetime.now() - timedelta(days=30)
+    desde_30_dias = ahora_lima() - timedelta(days=30)
     dias_con_ingreso = (
         db.query(func.count(func.distinct(func.date(models.Asistencia.fecha_hora_entrada))))
         .filter(models.Asistencia.cliente_id == cliente_id, models.Asistencia.fecha_hora_entrada >= desde_30_dias)
@@ -4479,7 +4504,7 @@ DURACION_MAXIMA_ASISTENCIA = timedelta(hours=3)
 
 def _cerrar_asistencias_vencidas(db: Session, gimnasio_id: int, ahora: Optional[datetime] = None) -> int:
     """Cierra entradas abiertas al cumplir tres horas, sin alterar otros gimnasios."""
-    momento = ahora or datetime.now()
+    momento = ahora or ahora_lima()
     limite = momento - DURACION_MAXIMA_ASISTENCIA
     vencidas = db.query(models.Asistencia).filter(
         models.Asistencia.gimnasio_id == gimnasio_id,
@@ -4521,7 +4546,7 @@ def listar_asistencias(
 @app.get("/asistencias/hoy", response_model=List[schemas.Asistencia], tags=["Asistencias"])
 def asistencias_de_hoy(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
     _cerrar_asistencias_vencidas(db, get_gid(usuario))
-    hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    hoy = ahora_lima().replace(hour=0, minute=0, second=0, microsecond=0)
     return (
         q(db, models.Asistencia, usuario)
         .filter(models.Asistencia.fecha_hora_entrada >= hoy)
@@ -4537,7 +4562,11 @@ def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    db_asistencia = models.Asistencia(cliente_id=datos.cliente_id, gimnasio_id=get_gid(usuario))
+    db_asistencia = models.Asistencia(
+        cliente_id=datos.cliente_id,
+        gimnasio_id=get_gid(usuario),
+        fecha_hora_entrada=ahora_lima(),
+    )
     db.add(db_asistencia)
     db.commit()
     db.refresh(db_asistencia)
@@ -4549,7 +4578,7 @@ def registrar_salida(datos: schemas.RegistrarSalidaRequest, db: Session = Depend
     asistencia = _del_gym(db, models.Asistencia, datos.asistencia_id, usuario)
     if not asistencia:
         raise HTTPException(status_code=404, detail="Asistencia no encontrada")
-    asistencia.fecha_hora_salida = datetime.now()
+    asistencia.fecha_hora_salida = ahora_lima()
     db.commit()
     db.refresh(asistencia)
     return asistencia
@@ -4589,7 +4618,10 @@ def registrar_entrada_empleado(
     if not empleado:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
 
-    db_asistencia = models.AsistenciaEmpleado(empleado_id=datos.empleado_id)
+    db_asistencia = models.AsistenciaEmpleado(
+        empleado_id=datos.empleado_id,
+        fecha_hora_entrada=ahora_lima(),
+    )
     db.add(db_asistencia)
     db.commit()
     db.refresh(db_asistencia)
@@ -4606,7 +4638,7 @@ def registrar_salida_empleado(asistencia_id: int, db: Session = Depends(get_db),
     )
     if not asistencia:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
-    asistencia.fecha_hora_salida = datetime.now()
+    asistencia.fecha_hora_salida = ahora_lima()
     db.commit()
     db.refresh(asistencia)
     return asistencia
@@ -4805,7 +4837,7 @@ def recomendar_paquetes_rutina_cliente(
     genero = "femenino" if genero_crudo.startswith("fem") else "masculino" if genero_crudo.startswith("mas") else "todos"
     edad = None
     if cliente.fecha_nacimiento:
-        hoy = date.today()
+        hoy = hoy_lima()
         edad = hoy.year - cliente.fecha_nacimiento.year - (
             (hoy.month, hoy.day) < (cliente.fecha_nacimiento.month, cliente.fecha_nacimiento.day)
         )
@@ -5463,7 +5495,7 @@ def actualizar_plan_nutricion(plan_id: int, datos: schemas.PlanNutricionUpdate, 
 
 def _cliente_tiene_nutricion_incluida(db: Session, cliente_id: int) -> bool:
     """True si el cliente tiene una membresia activa y vigente cuyo plan incluye nutricion (Membresia.incluye_nutricion)."""
-    hoy = date.today()
+    hoy = hoy_lima()
     cm = (
         db.query(models.ClienteMembresia)
         .join(models.Membresia, models.ClienteMembresia.membresia_id == models.Membresia.id)
@@ -5496,7 +5528,7 @@ def _computar_perfil_nutricional(cliente: models.Cliente, medida: Optional[model
     if not cliente.fecha_nacimiento:
         return None
 
-    hoy = date.today()
+    hoy = hoy_lima()
     edad = hoy.year - cliente.fecha_nacimiento.year - ((hoy.month, hoy.day) < (cliente.fecha_nacimiento.month, cliente.fecha_nacimiento.day))
     if edad <= 0 or edad > 110:
         return None
@@ -5691,7 +5723,7 @@ def generar_planes_automaticos_masivo(db: Session = Depends(get_db), usuario: mo
     vez que se activa esta funcionalidad (los clientes nuevos despues
     se actualizan solos al registrarles una toma de medidas).
     """
-    hoy = date.today()
+    hoy = hoy_lima()
     clientes_elegibles = (
         db.query(models.Cliente)
         .join(models.ClienteMembresia, models.ClienteMembresia.cliente_id == models.Cliente.id)
@@ -6758,7 +6790,7 @@ def registrar_medida(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     datos_dict = datos.model_dump()
     if not datos_dict.get("fecha"):
-        datos_dict["fecha"] = date.today()
+        datos_dict["fecha"] = hoy_lima()
     db_medida = models.Medida(**datos_dict, gimnasio_id=get_gid(usuario))
     db.add(db_medida)
     db.commit()
@@ -7226,7 +7258,7 @@ def listar_gimnasios(db: Session = Depends(get_db), _: models.Usuario = Depends(
             estado_suscripcion=estado_suscripcion,
             fecha_fin_periodo=suscripcion.fecha_fin_periodo if suscripcion else None,
             fecha_fin_gracia=suscripcion.fecha_fin_gracia if suscripcion else None,
-            dias_restantes=max((limite - date.today()).days, 0) if limite else None,
+            dias_restantes=max((limite - hoy_lima()).days, 0) if limite else None,
         ))
     return resultado
 
@@ -7336,9 +7368,9 @@ def actualizar_suscripcion_saas(
             gimnasio_id=gimnasio.id,
             plan_id=gimnasio.plan_id,
             estado="activa",
-            fecha_inicio=date.today(),
-            fecha_fin_periodo=date.today(),
-            fecha_fin_gracia=date.today() + timedelta(days=5),
+            fecha_inicio=hoy_lima(),
+            fecha_fin_periodo=hoy_lima(),
+            fecha_fin_gracia=hoy_lima() + timedelta(days=5),
             dias_gracia=5,
         )
         db.add(suscripcion)
@@ -7358,7 +7390,7 @@ def actualizar_suscripcion_saas(
     if "plan_id" in cambios:
         suscripcion.plan_id = cambios["plan_id"]
     if "estado" in cambios:
-        suscripcion.fecha_suspension = datetime.now() if cambios["estado"] in {"suspendida", "cancelada"} else None
+        suscripcion.fecha_suspension = ahora_lima() if cambios["estado"] in {"suspendida", "cancelada"} else None
     if "fecha_fin_periodo" in cambios or "dias_gracia" in cambios:
         suscripcion.fecha_fin_gracia = suscripcion.fecha_fin_periodo + timedelta(days=suscripcion.dias_gracia)
     db.commit()
@@ -7384,7 +7416,7 @@ def renovar_suscripcion_saas(
         raise HTTPException(status_code=400, detail="Selecciona un plan SaaS activo")
 
     suscripcion = gimnasio.suscripcion_saas
-    hoy = date.today()
+    hoy = hoy_lima()
     if suscripcion and suscripcion.fecha_fin_periodo >= hoy and _estado_suscripcion(suscripcion) not in {"cancelada"}:
         periodo_inicio = suscripcion.fecha_fin_periodo + timedelta(days=1)
     else:
@@ -7419,7 +7451,7 @@ def renovar_suscripcion_saas(
         moneda=datos.moneda,
         metodo_pago=datos.metodo_pago,
         referencia=datos.referencia,
-        fecha_pago=datos.fecha_pago or datetime.now(),
+        fecha_pago=datos.fecha_pago or ahora_lima(),
         periodo_inicio=periodo_inicio,
         periodo_fin=periodo_fin,
         registrado_por_id=usuario.id,
@@ -7480,8 +7512,8 @@ def dashboard_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(au
         estados[_estado_suscripcion(suscripcion)] += 1
     estados["sin_configurar"] = max(total_gimnasios - len(suscripciones), 0)
     ingresos_mes = db.query(func.sum(models.PagoSaas.monto)).filter(
-        func.extract("month", models.PagoSaas.fecha_pago) == date.today().month,
-        func.extract("year", models.PagoSaas.fecha_pago) == date.today().year,
+        func.extract("month", models.PagoSaas.fecha_pago) == hoy_lima().month,
+        func.extract("year", models.PagoSaas.fecha_pago) == hoy_lima().year,
     ).scalar() or 0.0
     return {
         "total_gimnasios": total_gimnasios,
@@ -7500,6 +7532,22 @@ def dashboard_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(au
 @app.get("/portal-alumno/mi-perfil", response_model=schemas.Cliente, tags=["Portal Alumno"])
 def mi_perfil(cliente: models.Cliente = Depends(auth.get_cliente_actual)):
     return cliente
+
+
+@app.put("/portal-alumno/cambiar-password", tags=["Portal Alumno"])
+def cambiar_password_alumno(
+    datos: schemas.CambioPasswordAlumnoRequest,
+    cliente: models.Cliente = Depends(auth.get_cliente_actual),
+    db: Session = Depends(get_db),
+):
+    nueva = datos.nueva_password.strip()
+    if not nueva.isdigit():
+        raise HTTPException(status_code=400, detail="La contraseña debe contener solo números")
+    if nueva == PASSWORD_INICIAL_ALUMNO:
+        raise HTTPException(status_code=400, detail="Elige una contraseña diferente de 1234")
+    cliente.codigo_acceso = nueva
+    db.commit()
+    return {"message": "Contraseña actualizada correctamente"}
 
 
 @app.get("/portal-alumno/mi-rutina", response_model=List[schemas.Rutina], tags=["Portal Alumno"])
