@@ -554,6 +554,16 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 - La carpeta local de asistencia `.continue/` queda excluida del repositorio y no forma parte de la aplicación
 - Validación previa: backend compilado e importado correctamente, JavaScript externo válido, revisión de diferencias sin errores y 17/17 pruebas automáticas aprobadas
 
+### ✅ Migración de MrGym a Supabase (2026-07-13)
+- El gimnasio principal local fue migrado a producción reutilizando el tenant técnico vacío `id=1`, ahora llamado `MrGym`; conserva el slug técnico `mi-gimnasio`
+- El gimnasio `prueba gym` (`id=4`) y todos sus conteos permanecieron intactos
+- Se migraron 1,665 clientes (1,662 activos y 3 inactivos), 4 usuarios, 5 empleados, membresías, pagos, productos, ventas, asistencias, rutinas, nutrición, agenda, servicios, planilla, metas y medidas
+- Todos los IDs y llaves foráneas se reasignaron dentro de una sola transacción PostgreSQL; la validación posterior confirmó los mismos conteos que SQLite en cada tabla migrada
+- El usuario y contraseña administrativos configurados localmente fueron probados contra `https://soft-mrgym.onrender.com/auth/login`: acceso correcto al gimnasio `MrGym` y al Dashboard
+- Antes de modificar Supabase se creó el respaldo local comprimido `backups/supabase-antes-mrgym-20260713-222833.json.gz`; `backups/` está excluido de Git
+- La herramienta reutilizable y protegida quedó en `scripts/migrate_gym_to_production.py`; aborta ante colisiones o datos operativos inesperados y nunca borra otros gimnasios
+- Las 10 imágenes locales de clientes, productos y logo no se copiaron a Render para no publicar datos personales en GitHub; siguen pendientes de Supabase Storage o Cloudflare R2
+
 ### 🔲 Pendiente (próxima sesión)
 - Reconciliar manualmente el descuadre histórico de S/ 89 de la base SQLite antes de usar el libro de pagos como fuente contable definitiva
 - Bloquear secciones del menú según plan (frontend)

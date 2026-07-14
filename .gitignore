@@ -18,6 +18,7 @@ _obsoletos/
 .idea/
 .vscode/
 .continue/
+backups/
 *.swp
 *.swo
 d
