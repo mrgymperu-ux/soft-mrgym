@@ -446,6 +446,7 @@ class PagoMembresiaOut(BaseModel):
     monto: float
     metodo_pago: str = "efectivo"
     fecha_pago: datetime
+    fecha_proximo_pago: Optional[date] = None
     registrado_por_id: Optional[int] = None
     notas: Optional[str] = None
 

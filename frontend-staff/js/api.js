@@ -264,13 +264,13 @@ function getIniciales(nombreCompleto) {
 
 function formatFechaHora(isoString) {
     if (!isoString) return "-";
-    const horaMin = new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+    const horaMin = new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
     return `${formatFecha(isoString)} ${horaMin}`;
 }
 
 function formatHora(isoString) {
     if (!isoString) return "-";
-    return new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+    return new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 }
 
 function fechaLocalISO(fecha = new Date()) {

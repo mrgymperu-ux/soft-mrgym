@@ -311,7 +311,7 @@
     // ============================================================
     function actualizarHora() {
         document.getElementById("hora-actual").textContent =
-            new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
     }
     actualizarHora();
     setInterval(actualizarHora, 1000);
@@ -670,7 +670,7 @@
             contenedor.innerHTML = `
                 <div class="ficha-asistencia">
                     <div style="font-size:0.85em;font-weight:600;margin-bottom:8px;">☀️ Paquete por día · ${nombre}</div>
-                    <div style="font-size:0.72em;color:#636E72;margin-bottom:8px;">Son las ${new Date().toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"})}: se sugiere el turno ${esManana ? "MA\u00d1ANA" : "TARDE"}.</div>
+                    <div style="font-size:0.72em;color:#636E72;margin-bottom:8px;">Son las ${new Date().toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}: se sugiere el turno ${esManana ? "MA\u00d1ANA" : "TARDE"}.</div>
                     <div class="form-group" style="margin-bottom:8px;">
                         <select id="cd-paquete" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.82em;">
                             ${paquetes.map((m) => `<option value="${m.id}" data-precio="${m.precio}" ${m.id === preferido.id ? "selected" : ""}>${m.nombre} · ${formatCurrency(m.precio)}</option>`).join("")}

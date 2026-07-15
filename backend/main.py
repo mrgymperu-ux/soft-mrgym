@@ -29,7 +29,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -360,7 +360,7 @@ EXTENSIONES_IMAGEN_PERMITIDAS = {"image/jpeg": ".jpg", "image/png": ".png", "ima
 TAMANO_MAXIMO_FOTO_BYTES = 20 * 1024 * 1024  # admite fotos originales de camara; se comprimen al guardar
 
 
-def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str, optimizar: bool = False) -> str:
+def _validar_y_optimizar_foto(contenido: bytes, content_type: str, optimizar: bool = False):
     if content_type not in EXTENSIONES_IMAGEN_PERMITIDAS:
         raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPEG, PNG o WEBP")
     if len(contenido) > TAMANO_MAXIMO_FOTO_BYTES:
@@ -382,6 +382,11 @@ def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str
             content_type = "image/webp"
         except (UnidentifiedImageError, OSError, ValueError):
             raise HTTPException(status_code=400, detail="La foto no es una imagen valida")
+    return contenido, content_type
+
+
+def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str, optimizar: bool = False) -> str:
+    contenido, content_type = _validar_y_optimizar_foto(contenido, content_type, optimizar)
     extension = EXTENSIONES_IMAGEN_PERMITIDAS[content_type]
     nombre_archivo = f"{uuid.uuid4().hex}{extension}"
     ruta_destino = os.path.join(directorio, nombre_archivo)
@@ -459,6 +464,8 @@ def _migrar_columnas_nuevas():
             return f"{tipo_base} DEFAULT {val}" if val else tipo_base
         if "DATE" in d:
             return "DATE"
+        if "BLOB" in d:
+            return "BYTEA"
         return definicion_sql
 
     columnas_esperadas = {
@@ -478,7 +485,8 @@ def _migrar_columnas_nuevas():
             ("asistencias_legado", "INTEGER DEFAULT 0"),
             ("gimnasio_id", "INTEGER"),
         ],
-        "productos": [("foto_url", "VARCHAR"), ("gimnasio_id", "INTEGER")],
+        "productos": [("foto_url", "VARCHAR"), ("foto_datos", "BLOB"), ("foto_tipo", "VARCHAR"), ("gimnasio_id", "INTEGER")],
+        "pagos_membresia": [("fecha_proximo_pago", "DATE")],
         "planes_nutricion": [("origen", "VARCHAR DEFAULT 'membresia'"), ("gimnasio_id", "INTEGER")],
         "ventas": [("usuario_id", "INTEGER"), ("costo_comision_gym", "FLOAT DEFAULT 0.0"), ("gimnasio_id", "INTEGER")],
         "empleados": [
@@ -3682,6 +3690,7 @@ def asignar_membresia_a_cliente(
             cliente_membresia_id=None,  # se asigna tras flush
             monto=db_cm.monto_pagado,
             metodo_pago=db_cm.metodo_pago or "efectivo",
+            fecha_proximo_pago=datos.fecha_pago_saldo,
             registrado_por_id=usuario_actual.id,
             notas="Pago inicial al asignar membresía",
         )
@@ -3799,6 +3808,7 @@ def editar_cliente_membresia(
                 cliente_membresia_id=cm.id,
                 monto=ajuste,
                 metodo_pago=metodo or "efectivo",
+                fecha_proximo_pago=cm.fecha_pago_saldo,
                 registrado_por_id=usuario.id,
                 notas="Ajuste administrativo de pago",
             ))
@@ -3849,6 +3859,7 @@ def pagar_saldo_membresia(
         cliente_membresia_id=cm.id,
         monto=datos.monto,
         metodo_pago=metodo_pago or "efectivo",
+        fecha_proximo_pago=datos.fecha_proximo_pago,
         registrado_por_id=usuario.id,
     )
     db.add(pago)
@@ -4076,6 +4087,8 @@ def actualizar_producto(
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     for campo, valor in datos.model_dump(exclude_unset=True).items():
+        if campo == "foto_url" and valor is None:
+            continue
         setattr(producto, campo, valor)
     db.commit()
     db.refresh(producto)
@@ -4092,6 +4105,19 @@ def eliminar_producto(producto_id: int, db: Session = Depends(get_db), usuario: 
     return {"message": "Producto desactivado correctamente"}
 
 
+@app.get("/productos/{producto_id}/foto-contenido", tags=["Productos"])
+def contenido_foto_producto(producto_id: int, db: Session = Depends(get_db)):
+    """Sirve la foto persistente del producto desde la base de datos."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id, models.Producto.activo == True).first()
+    if not producto or not producto.foto_datos:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    return Response(
+        content=producto.foto_datos,
+        media_type=producto.foto_tipo or "image/webp",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 @app.post("/productos/{producto_id}/foto", response_model=schemas.Producto, tags=["Productos"])
 async def subir_foto_producto(
     producto_id: int,
@@ -4105,10 +4131,14 @@ async def subir_foto_producto(
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     contenido = await foto.read()
-    _eliminar_foto_anterior(producto.foto_url)
-    producto.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_PRODUCTOS_DIR)
+    contenido, content_type = _validar_y_optimizar_foto(contenido, foto.content_type, optimizar=True)
+    foto_anterior = producto.foto_url
+    producto.foto_datos = contenido
+    producto.foto_tipo = content_type
+    producto.foto_url = f"/productos/{producto.id}/foto-contenido?v={uuid.uuid4().hex[:12]}"
     db.commit()
     db.refresh(producto)
+    _eliminar_foto_anterior(foto_anterior)
     return producto
 
 

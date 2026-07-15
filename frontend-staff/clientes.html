@@ -990,13 +990,14 @@
 
                 if (pagos.length) {
                     let saldoProgresivo = precio;
-                    pagos.forEach(p => {
+                    pagos.forEach((p, indicePago) => {
                         saldoProgresivo = Math.max(saldoProgresivo - (p.monto || 0), 0);
                         html += `<tr>`;
                         html += `<td>${formatFechaHora ? formatFechaHora(p.fecha_pago) : formatFecha(p.fecha_pago)}</td>`;
                         html += `<td style="text-align:right;font-weight:600;color:var(--color-exito);">${fmtNum(p.monto)}</td>`;
                         html += `<td style="text-align:right;${saldoProgresivo > 0 ? 'color:var(--color-error);font-weight:600;' : ''}">${fmtNum(saldoProgresivo)}</td>`;
-                        html += `<td>${p.fecha_proximo_pago ? formatFecha(p.fecha_proximo_pago) : '\u2014'}</td>`;
+                        const fechaProximoPago = p.fecha_proximo_pago || (indicePago === 0 ? cm.fecha_pago_saldo : null);
+                        html += `<td>${fechaProximoPago ? formatFecha(fechaProximoPago) : '\u2014'}</td>`;
                         html += `<td>${p.metodo_pago || '\u2014'}</td>`;
                         html += `<td style="font-size:0.82em;color:var(--color-texto-secundario);">${p.notas || ''}</td>`;
                         html += `</tr>`;

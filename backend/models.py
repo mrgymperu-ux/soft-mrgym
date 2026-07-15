@@ -28,11 +28,12 @@ from sqlalchemy import (
     DateTime,
     Date,
     Text,
+    LargeBinary,
     ForeignKey,
     Enum,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 import enum
 
 from .time_utils import ahora_lima, hoy_lima
@@ -431,6 +432,7 @@ class PagoMembresia(Base):
     monto = Column(Float, nullable=False)
     metodo_pago = Column(String, default="efectivo")
     fecha_pago = Column(DateTime, default=ahora_lima)
+    fecha_proximo_pago = Column(Date, nullable=True)
     registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(String, nullable=True)
 
@@ -456,6 +458,8 @@ class Producto(Base):
     stock_minimo = Column(Integer, default=5)
     icono = Column(String, nullable=True)  # emoji o nombre de icono para venta rapida
     foto_url = Column(String, nullable=True)  # ruta relativa servida por /uploads/... (opcional, tiene prioridad sobre icono)
+    foto_datos = deferred(Column(LargeBinary, nullable=True))
+    foto_tipo = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=ahora_lima)
 
