@@ -78,12 +78,13 @@ function dinero(valor) {
 }
 
 async function cargar() {
-  resumenActual = await apiFetch("/portal-alumno/resumen");
+  resumenActual = await _apiFetchRed("/portal-alumno/resumen", { cache: "no-store", _silencioso: true });
+  _guardarCachePortal("/portal-alumno/resumen", resumenActual, false);
   const perfil = resumenActual.perfil;
   const nombre = `${perfil.nombre} ${perfil.apellidos || ""}`.trim();
   const avatar = perfil.foto_url
-    ? `<img src="${urlFoto(perfil.foto_url)}" alt="Foto de ${nombre}">`
-    : `<div class="avatar-iniciales">${getIniciales(nombre)}</div>`;
+    ? `<img src="${urlFoto(perfil.foto_url)}" alt="Foto de ${nombre}" onerror="this.onerror=null;this.src='alumno-generico.svg'">`
+    : `<img src="alumno-generico.svg" alt="Imagen genérica de alumno">`;
   const plan = resumenActual.plan;
   const planHtml = plan
     ? `<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo > 0 ? "saldo-pendiente" : ""}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo > 0 ? (resumenActual.pago_online_url ? `<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>` : `<button class="btn-pagar" disabled>Pago en línea próximamente</button>`) : ""}`

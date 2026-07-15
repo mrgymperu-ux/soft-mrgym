@@ -152,9 +152,9 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 function avatarHtml(nombre, fotoUrl, extraStyle = "") {
     const url = urlFoto(fotoUrl);
     if (url) {
-        return `<div class="resultado-avatar" style="padding:0;overflow:hidden;${extraStyle}"><img src="${url}" alt="${nombre}" style="width:100%;height:100%;object-fit:cover;"></div>`;
+        return `<div class="resultado-avatar" style="padding:0;overflow:hidden;${extraStyle}"><img src="${url}" alt="${nombre}" onerror="this.onerror=null;this.src='/alumno-generico.svg'" style="width:100%;height:100%;object-fit:cover;"></div>`;
     }
-    return `<div class="resultado-avatar" style="${extraStyle}">${getIniciales(nombre)}</div>`;
+    return `<div class="resultado-avatar" style="padding:0;overflow:hidden;${extraStyle}"><img src="/alumno-generico.svg" alt="Imagen genérica de alumno" style="width:100%;height:100%;object-fit:cover;"></div>`;
 }
 
 async function login(username, password) {

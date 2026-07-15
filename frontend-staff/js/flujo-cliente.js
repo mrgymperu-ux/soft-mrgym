@@ -198,11 +198,11 @@ async function _fcGuardarClienteYMembresia() {
     if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
     const editandoId = _fcClienteEditandoId;
     try {
-        const cliente = editandoId
+        let cliente = editandoId
             ? await apiFetch(`/clientes/${editandoId}`, { method: "PUT", body: JSON.stringify(datos) })
             : await apiFetch("/clientes/", { method: "POST", body: JSON.stringify(datos) });
         if (_fcFotoSeleccionada) {
-            await apiUploadFile(`/clientes/${cliente.id}/foto`, _fcFotoSeleccionada);
+            cliente = await apiUploadFile(`/clientes/${cliente.id}/foto`, _fcFotoSeleccionada);
         }
         _fcClienteCreado = cliente;
         _fcClienteEditandoId = null;

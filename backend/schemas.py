@@ -594,6 +594,12 @@ class AsistenciaCreate(BaseModel):
     cliente_id: int
 
 
+class AsistenciaAlumnoUbicacion(BaseModel):
+    latitud: float = Field(ge=-90, le=90)
+    longitud: float = Field(ge=-180, le=180)
+    precision_metros: Optional[float] = Field(default=None, ge=0, le=5000)
+
+
 class Asistencia(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -1431,6 +1437,9 @@ class ConfiguracionBase(BaseModel):
     telefono: Optional[str] = None
     email: Optional[str] = None
     direccion: Optional[str] = None
+    latitud: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitud: Optional[float] = Field(default=None, ge=-180, le=180)
+    radio_asistencia_metros: float = Field(default=150.0, ge=20, le=2000)
     comision_tarjeta: float = 3.5
     comision_qr: float = 2.0
     dias_aviso_vencimiento: int = 7

@@ -50,6 +50,21 @@
                 <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
             </div>
 
+            <div class="config-section">
+                <h3>📍 Ubicación para asistencias</h3>
+                <p style="font-size:0.82em;color:var(--color-texto-secundario);margin:0 0 14px;">Ubícate dentro del gimnasio y guarda este punto. Los alumnos solo podrán marcar asistencia desde el radio permitido.</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div class="form-group"><label>Latitud</label><input type="number" id="c-latitud" step="any" readonly></div>
+                    <div class="form-group"><label>Longitud</label><input type="number" id="c-longitud" step="any" readonly></div>
+                </div>
+                <div class="form-group"><label>Radio permitido (metros)</label><input type="number" id="c-radio-asistencia" min="20" max="2000" step="10" value="150"></div>
+                <div id="estado-ubicacion" style="font-size:.8em;color:var(--color-texto-secundario);margin-bottom:12px;">Ubicación pendiente de configurar.</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary" type="button" onclick="obtenerUbicacionGimnasio()">Usar mi ubicación actual</button>
+                    <button class="btn btn-primary" type="button" onclick="guardarUbicacionGimnasio()">Guardar ubicación</button>
+                </div>
+            </div>
+
             <!-- Suscripcion que paga el gimnasio por usar Soft-Gym -->
             <div class="config-section" id="seccion-suscripcion" style="display:none;">
                 <h3>💳 Mi suscripcion Soft-Gym</h3>
@@ -169,6 +184,12 @@
         document.getElementById("c-telefono").value = config.telefono || "";
         document.getElementById("c-email").value = config.email || "";
         document.getElementById("c-direccion").value = config.direccion || "";
+        document.getElementById("c-latitud").value = config.latitud ?? "";
+        document.getElementById("c-longitud").value = config.longitud ?? "";
+        document.getElementById("c-radio-asistencia").value = config.radio_asistencia_metros || 150;
+        document.getElementById("estado-ubicacion").textContent = config.latitud != null && config.longitud != null
+            ? "Ubicación configurada. Puedes actualizarla cuando lo necesites."
+            : "Ubicación pendiente de configurar.";
         document.getElementById("c-moneda").value = config.moneda || "S/";
         document.getElementById("c-tarjeta").value = config.comision_tarjeta || "";
         document.getElementById("c-qr").value = config.comision_qr || "";
@@ -313,6 +334,33 @@
             await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify(datos) });
             configuracionCache = null; // limpiar cache para que se recargue
             showSuccess("Configuracion guardada correctamente");
+        } catch (e) { showError(e.message); }
+    }
+
+    function obtenerUbicacionGimnasio() {
+        const estado = document.getElementById("estado-ubicacion");
+        if (!navigator.geolocation) { showError("Este dispositivo no permite obtener la ubicación"); return; }
+        estado.textContent = "Obteniendo ubicación exacta...";
+        navigator.geolocation.getCurrentPosition(posicion => {
+            document.getElementById("c-latitud").value = posicion.coords.latitude.toFixed(7);
+            document.getElementById("c-longitud").value = posicion.coords.longitude.toFixed(7);
+            estado.textContent = `Ubicación encontrada con precisión aproximada de ${Math.round(posicion.coords.accuracy)} metros. Pulsa Guardar ubicación.`;
+        }, error => {
+            estado.textContent = "No se pudo obtener la ubicación.";
+            showError(error.code === 1 ? "Permite el acceso a la ubicación en el navegador" : "No se pudo obtener una ubicación precisa");
+        }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    }
+
+    async function guardarUbicacionGimnasio() {
+        const latitud = parseFloat(document.getElementById("c-latitud").value);
+        const longitud = parseFloat(document.getElementById("c-longitud").value);
+        const radio = parseFloat(document.getElementById("c-radio-asistencia").value) || 150;
+        if (!Number.isFinite(latitud) || !Number.isFinite(longitud)) { showError("Primero obtén la ubicación del gimnasio"); return; }
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ latitud, longitud, radio_asistencia_metros: radio }) });
+            configuracionCache = null;
+            document.getElementById("estado-ubicacion").textContent = "Ubicación guardada correctamente.";
+            showSuccess("Ubicación para asistencias guardada");
         } catch (e) { showError(e.message); }
     }
 

@@ -14,6 +14,7 @@ Convencion de permisos:
 from datetime import datetime, date, timedelta
 from typing import List, Optional
 import calendar
+import math
 import os
 import uuid
 import csv
@@ -461,7 +462,12 @@ def _migrar_columnas_nuevas():
         return definicion_sql
 
     columnas_esperadas = {
-        "gimnasios": [("logo_oscuro_url", "VARCHAR")],
+        "gimnasios": [
+            ("logo_oscuro_url", "VARCHAR"),
+            ("latitud", "FLOAT"),
+            ("longitud", "FLOAT"),
+            ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
+        ],
         "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
         "clientes": [
             ("foto_url", "VARCHAR"),
@@ -7677,8 +7683,69 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
     return {"perfil": schemas.Cliente.model_validate(cliente).model_dump(mode="json"), "plan": plan,
             "asistencia_hoy": asistencia_hoy, "pago_online_url": os.getenv("IZIPAY_PAYMENT_URL") or None,
+            "asistencia_ubicacion_configurada": bool(gimnasio and gimnasio.latitud is not None and gimnasio.longitud is not None),
             "gimnasio": {"nombre": gimnasio.nombre, "logo_url": gimnasio.logo_url,
                           "logo_oscuro_url": gimnasio.logo_oscuro_url} if gimnasio else None}
+
+
+def _distancia_metros(latitud_1: float, longitud_1: float, latitud_2: float, longitud_2: float) -> float:
+    """Distancia Haversine entre dos coordenadas, en metros."""
+    radio_tierra = 6371000.0
+    lat_1, lat_2 = math.radians(latitud_1), math.radians(latitud_2)
+    delta_lat = math.radians(latitud_2 - latitud_1)
+    delta_lon = math.radians(longitud_2 - longitud_1)
+    a = math.sin(delta_lat / 2) ** 2 + math.cos(lat_1) * math.cos(lat_2) * math.sin(delta_lon / 2) ** 2
+    a = min(1.0, max(0.0, a))
+    return radio_tierra * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+@app.post("/portal-alumno/marcar-asistencia", tags=["Portal Alumno"])
+def marcar_asistencia_desde_portal(
+    datos: schemas.AsistenciaAlumnoUbicacion,
+    cliente: models.Cliente = Depends(auth.get_cliente_actual),
+    db: Session = Depends(get_db),
+):
+    """Registra la entrada solo si el alumno esta dentro de la geocerca configurada."""
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
+    if not gimnasio or gimnasio.latitud is None or gimnasio.longitud is None:
+        raise HTTPException(status_code=409, detail="El gimnasio aun no configuro la ubicacion para marcar asistencia")
+    if datos.precision_metros is not None and datos.precision_metros > 250:
+        raise HTTPException(status_code=400, detail="La ubicacion del celular es poco precisa. Activa la ubicacion exacta e intenta nuevamente")
+
+    hoy = hoy_lima()
+    membresia = db.query(models.ClienteMembresia).filter(
+        models.ClienteMembresia.cliente_id == cliente.id,
+        models.ClienteMembresia.activo == True,
+        models.ClienteMembresia.fecha_inicio <= hoy,
+        models.ClienteMembresia.fecha_fin >= hoy,
+    ).first()
+    if not membresia:
+        raise HTTPException(status_code=403, detail="Necesitas una membresia vigente para marcar asistencia")
+
+    existente = db.query(models.Asistencia).filter(
+        models.Asistencia.cliente_id == cliente.id,
+        func.date(models.Asistencia.fecha_hora_entrada) == hoy.isoformat(),
+    ).first()
+    if existente:
+        return {"registrada": True, "ya_registrada": True, "mensaje": "Tu asistencia de hoy ya estaba registrada"}
+
+    distancia = _distancia_metros(datos.latitud, datos.longitud, gimnasio.latitud, gimnasio.longitud)
+    radio_permitido = float(gimnasio.radio_asistencia_metros or 150.0)
+    if distancia > radio_permitido:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Debes estar en el gimnasio para marcar asistencia. Estas aproximadamente a {int(round(distancia))} metros",
+        )
+
+    asistencia = models.Asistencia(
+        cliente_id=cliente.id,
+        gimnasio_id=cliente.gimnasio_id,
+        fecha_hora_entrada=ahora_lima(),
+    )
+    db.add(asistencia)
+    db.commit()
+    db.refresh(asistencia)
+    return {"registrada": True, "ya_registrada": False, "mensaje": "Asistencia registrada", "distancia_metros": round(distancia, 1)}
 
 
 @app.put("/portal-alumno/cambiar-password", tags=["Portal Alumno"])

@@ -89,6 +89,9 @@ class Gimnasio(Base):
     direccion = Column(String, nullable=True)
     logo_url = Column(String, nullable=True)
     logo_oscuro_url = Column(String, nullable=True)
+    latitud = Column(Float, nullable=True)
+    longitud = Column(Float, nullable=True)
+    radio_asistencia_metros = Column(Float, default=150.0)
 
     # --- Configuracion (antes en tabla Configuracion) ---
     moneda = Column(String, default="S/")
