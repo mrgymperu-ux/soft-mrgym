@@ -14,6 +14,10 @@
         .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
         .filtros-bar select { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
         .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+        .filtros-toggle { display:none; width:100%; padding:8px 12px; border:0; border-bottom:1px solid var(--color-borde); background:var(--color-blanco); color:var(--color-texto); text-align:left; font:inherit; font-size:.82em; font-weight:650; }
+        .orden-cabecera { display:inline-flex; align-items:center; gap:5px; padding:0; border:0; background:transparent; color:inherit; font:inherit; font-size:inherit; text-transform:inherit; letter-spacing:inherit; cursor:pointer; white-space:nowrap; }
+        .orden-flecha { opacity:.5; font-size:.85em; }
+        .orden-cabecera.activo .orden-flecha { opacity:1; }
 
         .chips-filtro { display:flex; gap:6px; flex-wrap:wrap; }
         .chip-filtro { padding:5px 12px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.78em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; }
@@ -81,13 +85,41 @@
         .rutina-recomendada-meta { display:flex; gap:5px; flex-wrap:wrap; font-size:.72em; }
         .rutina-recomendada-meta span { background:var(--color-fondo); border-radius:12px; padding:3px 7px; }
         .rutina-recomendada-motivos { color:var(--color-texto-secundario); font-size:.76em; line-height:1.4; }
+        @media (max-width:640px) {
+            .clientes-header { display:none; }
+            .main-content { padding-top:6px; padding-left:6px; padding-right:6px; }
+            .main-content > .card { border-radius:8px; margin:0; }
+            .search-bar { padding:7px; }
+            .search-bar input { padding:8px 10px; font-size:.82em; }
+            .filtros-toggle { display:block; }
+            .filtros-bar { display:none; padding:8px; gap:7px; }
+            .filtros-bar.abiertos { display:grid; grid-template-columns:1fr 1fr; align-items:center; }
+            .filtros-bar .chips-filtro { grid-column:1/-1; display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+            .filtros-bar .chip-filtro { padding:5px 4px; text-align:center; }
+            .filtros-bar label { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+            .filtros-bar label input { width:100%; min-width:0; }
+            #wrap-dias-vencer { grid-column:1/-1; flex-direction:row; align-items:center; }
+            #wrap-dias-vencer input { width:52px !important; }
+            .tabla-clientes-listado { table-layout:fixed; }
+            .tabla-clientes-listado .col-secundaria { display:none; }
+            .tabla-clientes-listado th,.tabla-clientes-listado td { padding:8px 4px; font-size:.68em; overflow:hidden; }
+            .tabla-clientes-listado th:nth-child(2) { width:38%; }
+            .tabla-clientes-listado th:nth-child(3) { width:25%; }
+            .tabla-clientes-listado th:nth-child(7) { width:20%; }
+            .tabla-clientes-listado th:nth-child(8) { width:17%; }
+            .tabla-clientes-listado td:nth-child(2) { white-space:normal; overflow-wrap:anywhere; }
+            .tabla-clientes-listado td:nth-child(3),.tabla-clientes-listado td:nth-child(7),.tabla-clientes-listado td:nth-child(8) { white-space:nowrap; }
+            .tabla-clientes-listado .venc-fecha { display:none; }
+            .orden-cabecera { gap:2px; white-space:normal; line-height:1.1; }
+            #info-total { padding:8px 10px !important; }
+        }
     </style>
 </head>
 <body>
 <div class="app-layout">
     <div id="sidebar-container"></div>
     <main class="main-content">
-        <div class="header">
+        <div class="header clientes-header">
             <div><h1 class="header-title">Clientes</h1><p class="header-subtitle">Base de alumnos</p></div>
             <div style="display:flex;gap:8px;">
                 <button class="btn btn-primary" onclick="abrirModalClienteNuevo(_clientesFcTerminado)">+ Nuevo Cliente</button>
@@ -95,8 +127,9 @@
         </div>
         <div class="card">
             <div class="search-bar">
-                <input type="text" id="buscador" placeholder="Buscar por nombre o DNI..." oninput="debouncarBusqueda(this.value)">
+                <input type="search" id="buscador" name="busqueda_clientes" value="" autocomplete="off" placeholder="Buscar por nombre o DNI..." oninput="debouncarBusqueda(this.value)">
             </div>
+            <button id="filtros-toggle" class="filtros-toggle" type="button" onclick="alternarFiltrosMovil()">Filtros ▾</button>
             <div class="filtros-bar">
                 <div class="chips-filtro" id="chips-filtro">
                     <span class="chip-filtro" data-filtro="todos" onclick="onChipFiltro(this)">Todos</span>
@@ -106,17 +139,10 @@
                 <label id="wrap-dias-vencer" style="display:none;">Dentro de <input type="number" id="f-dias-vencer" value="30" min="1" style="width:60px;padding:6px;border:1px solid var(--color-borde);border-radius:8px;background:var(--color-fondo);color:var(--color-texto);" onchange="cargarClientes()"> días</label>
                 <label>Registrados desde <input type="date" id="f-desde" onchange="cargarClientes()"></label>
                 <label>hasta <input type="date" id="f-hasta" onchange="cargarClientes()"></label>
-                <label style="margin-left:auto;">Ordenar por
-                    <select id="f-orden" onchange="cargarClientes()">
-                        <option value="">Nombre</option>
-                        <option value="vencer">Vencer [días]</option>
-                        <option value="deuda">Con deuda</option>
-                    </select>
-                </label>
             </div>
             <div class="table-container">
-                <table class="table">
-                    <thead><tr><th>#</th><th>Nombre</th><th>Vencimiento</th><th>Último plan</th><th style="text-align:right;" id="th-costo">Costo</th><th style="text-align:right;" id="th-pagado">Pagado</th><th style="text-align:right;" id="th-saldo">Saldo</th><th style="text-align:right;">% Asist.</th><th></th></tr></thead>
+                <table class="table tabla-clientes-listado">
+                    <thead><tr><th class="col-secundaria">#</th><th><button class="orden-cabecera activo" data-orden="nombre" onclick="cambiarOrdenClientes('nombre')">Nombre <span class="orden-flecha">▲</span></button></th><th><button class="orden-cabecera" data-orden="vencimiento" onclick="cambiarOrdenClientes('vencimiento')">Vencimiento <span class="orden-flecha">↕</span></button></th><th class="col-secundaria">Último plan</th><th class="col-secundaria" style="text-align:right;" id="th-costo">Costo</th><th class="col-secundaria" style="text-align:right;" id="th-pagado">Pagado</th><th style="text-align:right;" id="th-saldo"><button class="orden-cabecera" data-orden="saldo" onclick="cambiarOrdenClientes('saldo')">Saldo <span class="orden-flecha">↕</span></button></th><th style="text-align:right;"><button class="orden-cabecera" data-orden="asistencia" onclick="cambiarOrdenClientes('asistencia')">Asist. % <span class="orden-flecha">↕</span></button></th><th class="col-secundaria"></th></tr></thead>
                     <tbody id="tabla-clientes"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
                 </table>
             </div>
@@ -349,6 +375,48 @@
 <script src="js/medidas-catalogo.js"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
+    let clientesListadoCache = [], configuracionListadoCache = null, ordenClientesCampo = "nombre", ordenClientesAsc = true;
+
+    function alternarFiltrosMovil() {
+        const filtros = document.querySelector(".filtros-bar");
+        const abiertos = filtros.classList.toggle("abiertos");
+        document.getElementById("filtros-toggle").textContent = abiertos ? "Filtros ▴" : "Filtros ▾";
+    }
+
+    function _valorOrdenCliente(cliente, campo) {
+        if (campo === "nombre") return (cliente.nombre_completo || "").toLocaleLowerCase("es");
+        if (campo === "vencimiento") return cliente.dias_para_vencer;
+        if (campo === "saldo") return cliente.saldo;
+        if (campo === "asistencia") return cliente.porcentaje_asistencia;
+        return null;
+    }
+
+    function _ordenarClientesLocal(clientes) {
+        return [...clientes].sort((a, b) => {
+            const valorA = _valorOrdenCliente(a, ordenClientesCampo);
+            const valorB = _valorOrdenCliente(b, ordenClientesCampo);
+            if ((valorA === null || valorA === undefined) && (valorB === null || valorB === undefined)) return 0;
+            if (valorA === null || valorA === undefined) return 1;
+            if (valorB === null || valorB === undefined) return -1;
+            const comparacion = typeof valorA === "string" ? valorA.localeCompare(valorB, "es", { sensitivity:"base" }) : valorA - valorB;
+            return comparacion * (ordenClientesAsc ? 1 : -1);
+        });
+    }
+
+    function _actualizarFlechasOrden() {
+        document.querySelectorAll(".orden-cabecera").forEach(boton => {
+            const activo = boton.dataset.orden === ordenClientesCampo;
+            boton.classList.toggle("activo", activo);
+            boton.querySelector(".orden-flecha").textContent = activo ? (ordenClientesAsc ? "▲" : "▼") : "↕";
+        });
+    }
+
+    function cambiarOrdenClientes(campo) {
+        if (ordenClientesCampo === campo) ordenClientesAsc = !ordenClientesAsc;
+        else { ordenClientesCampo = campo; ordenClientesAsc = true; }
+        _actualizarFlechasOrden();
+        cargarClientes(true);
+    }
 
     // Formatea un numero sin simbolo de moneda (la moneda va solo en la cabecera)
     function fmtNum(v) {
@@ -377,7 +445,7 @@
         return `${dias}d`;
     }
 
-    async function cargarClientes() {
+    async function cargarClientes(soloOrdenar = false) {
         const params = new URLSearchParams();
         params.set("filtro", filtroActual);
         if (filtroActual === "por_vencer") params.set("dias_vencimiento", document.getElementById("f-dias-vencer").value || "30");
@@ -385,12 +453,21 @@
         const hasta = document.getElementById("f-hasta").value;
         if (desde) params.set("desde", desde);
         if (hasta) params.set("hasta", hasta);
-        const orden = document.getElementById("f-orden").value;
-        if (orden) params.set("orden", orden);
         if (busquedaActual) params.set("buscar", busquedaActual);
 
-        const clientes = await apiFetch(`/clientes/listado-completo?${params.toString()}`);
-        const cfg = await getConfiguracion();
+        let clientes, cfg;
+        if (soloOrdenar && configuracionListadoCache) {
+            clientes = clientesListadoCache;
+            cfg = configuracionListadoCache;
+        } else {
+            [clientes, cfg] = await Promise.all([
+                apiFetch(`/clientes/listado-completo?${params.toString()}`),
+                getConfiguracion(),
+            ]);
+            clientesListadoCache = Array.isArray(clientes) ? clientes : [];
+            configuracionListadoCache = cfg;
+        }
+        clientes = _ordenarClientesLocal(clientesListadoCache);
         const tbody = document.getElementById("tabla-clientes");
         const puedeBorrar = puedeEliminar();
 
@@ -402,15 +479,15 @@
         tbody.innerHTML = !clientes.length
             ? '<tr class="empty-row"><td colspan="9">No se encontraron clientes</td></tr>'
             : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" onclick="verCliente(${c.id})">
-                <td style="color:var(--color-texto-secundario);">${c.id}</td>
+                <td class="col-secundaria" style="color:var(--color-texto-secundario);">${c.id}</td>
                 <td><strong>${c.nombre_completo}</strong>${!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : ""}</td>
-                <td>${c.fecha_vencimiento ? `${formatFecha(c.fecha_vencimiento)} · ${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
-                <td>${c.ultimo_plan || "—"}</td>
-                <td style="text-align:right;">${fmtNum(c.costo)}</td>
-                <td style="text-align:right;">${fmtNum(c.pagado)}</td>
+                <td>${c.fecha_vencimiento ? `<span class="venc-fecha">${formatFecha(c.fecha_vencimiento)} · </span>${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
+                <td class="col-secundaria">${c.ultimo_plan || "—"}</td>
+                <td class="col-secundaria" style="text-align:right;">${fmtNum(c.costo)}</td>
+                <td class="col-secundaria" style="text-align:right;">${fmtNum(c.pagado)}</td>
                 <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${fmtNum(c.saldo)}</td>
                 <td style="text-align:right;">${c.porcentaje_asistencia !== null ? c.porcentaje_asistencia + "%" : "—"}</td>
-                <td onclick="event.stopPropagation();">
+                <td class="col-secundaria" onclick="event.stopPropagation();">
                     ${puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : ""}
                 </td>
             </tr>`).join("");
@@ -1429,9 +1506,20 @@
         const diasUrl = params.get("dias");
         if (diasUrl) document.getElementById("f-dias-vencer").value = diasUrl;
         const ordenUrl = params.get("orden");
-        if (ordenUrl) document.getElementById("f-orden").value = ordenUrl;
+        if (ordenUrl === "vencer") { ordenClientesCampo = "vencimiento"; ordenClientesAsc = true; }
+        if (ordenUrl === "deuda") { ordenClientesCampo = "saldo"; ordenClientesAsc = false; }
+        _actualizarFlechasOrden();
     })();
 
+    document.getElementById("buscador").value = "";
+    setTimeout(() => { if (!busquedaActual) document.getElementById("buscador").value = ""; }, 150);
+    window.addEventListener("pageshow", () => {
+        busquedaActual = "";
+        document.getElementById("buscador").value = "";
+    });
+    window.addEventListener("mrgym:datos-actualizados", () => {
+        if (!clienteActual && !document.querySelector(".modal.active")) cargarClientes();
+    });
     cargarClientes();
 
     const clienteVerUrl = new URLSearchParams(window.location.search).get("ver");
