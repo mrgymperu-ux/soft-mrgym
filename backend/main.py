@@ -44,13 +44,13 @@ PASSWORD_INICIAL_ALUMNO = "1234"
 
 # ==================================================================
 # KEEP-ALIVE INTELIGENTE (anti-sleep Render free tier)
-# - Solo se auto-pinga si NO hubo trafico en los ultimos 13 min
-# - Solo entre 6:00 AM y 11:00 PM hora Lima (UTC-5)
+# - Solo se auto-pinga si NO hubo trafico en los ultimos 14 min
+# - Lun-Sab 6:00 AM-11:00 PM; domingo 6:00 AM-3:00 PM (Lima)
 # - Fuera de ese horario deja dormir al contenedor (ahorra horas)
 # ==================================================================
 _ultimo_request_ts = time.time()
-_INTERVALO_CHECK_SEG = 60           # revisa cada 60 segundos
-_UMBRAL_INACTIVIDAD_SEG = 13 * 60   # 13 min (Render duerme a los 15)
+_INTERVALO_CHECK_SEG = 30           # evita superar los 15 min por desfase del contador
+_UMBRAL_INACTIVIDAD_SEG = 14 * 60   # Render duerme tras 15 min sin trafico
 _HORA_INICIO = 6    # 6 AM Lima
 _HORA_FIN = 23       # 11 PM Lima
 def _hora_lima_actual() -> tuple:
@@ -61,10 +61,10 @@ def _hora_lima_actual() -> tuple:
 
 def _en_horario_activo() -> bool:
     """True si estamos en horario donde el keep-alive debe funcionar.
-    Lun-Sab: 6am - 11pm | Dom: 6am - 1pm"""
+    Lun-Sab: 6am - 11pm | Dom: 6am - 3pm"""
     hora, dia = _hora_lima_actual()
     if dia == 6:  # domingo
-        return _HORA_INICIO <= hora < 13
+        return _HORA_INICIO <= hora < 15
     return _HORA_INICIO <= hora < _HORA_FIN
 
 
