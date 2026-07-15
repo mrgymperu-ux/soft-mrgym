@@ -1,28 +1,197 @@
 <!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Portal del Socio</title><link rel="stylesheet" href="css/styles.css"></head>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Portal del Socio</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
 <body>
 <div class="page perfil-page">
-  <div class="portal-topbar"><div id="logo-gimnasio" class="logo-gimnasio"></div><button id="theme-switch" class="theme-switch" type="button" aria-label="Cambiar tema" onclick="cambiarTema()"><span></span></button></div>
+  <div class="portal-topbar">
+    <div id="logo-gimnasio" class="logo-gimnasio"></div>
+    <button id="theme-switch" class="theme-switch" type="button" aria-label="Cambiar tema" onclick="cambiarTema()"><span></span></button>
+  </div>
   <div id="contenido"><p class="estado-cargando">Cargando...</p></div>
 </div>
+
+<div id="modal-camara" class="camara-modal" role="dialog" aria-modal="true" aria-labelledby="titulo-camara">
+  <div class="camara-card" onclick="event.stopPropagation()">
+    <div class="camara-header">
+      <strong id="titulo-camara">Tomar foto</strong>
+      <button type="button" aria-label="Cerrar cámara" onclick="cerrarCamara()">✕</button>
+    </div>
+    <div class="camara-vista">
+      <video id="video-camara" autoplay muted playsinline></video>
+      <p id="camara-estado">Abriendo cámara...</p>
+    </div>
+    <button id="boton-capturar" class="camara-capturar" type="button" onclick="capturarFoto()" disabled><span></span><b>Tomar foto</b></button>
+  </div>
+</div>
+
 <nav class="nav-bottom">
-  <a href="mi-perfil.html" class="nav-btn activo"><span>👤</span><span>Perfil</span></a><a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a><a href="agenda.html" class="nav-btn"><span>📅</span><span>Agenda</span></a><a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutrición</span></a><a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a><a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a><button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
+  <a href="mi-perfil.html" class="nav-btn activo"><span>👤</span><span>Perfil</span></a>
+  <a href="mi-rutina.html" class="nav-btn"><span>💪</span><span>Rutina</span></a>
+  <a href="agenda.html" class="nav-btn"><span>📅</span><span>Agenda</span></a>
+  <a href="mi-nutricion.html" class="nav-btn"><span>🥗</span><span>Nutrición</span></a>
+  <a href="mi-progreso.html" class="nav-btn"><span>📈</span><span>Progreso</span></a>
+  <a href="retos.html" class="nav-btn"><span>🏆</span><span>Retos</span></a>
+  <button class="nav-btn" onclick="cerrarSesion()"><span>🚪</span><span>Salir</span></button>
 </nav>
-<script src="js/api.js"></script><script>
-requireAuth(); let resumenActual=null;
-function cambiarTema(){alternarTemaPortal();actualizarSwitchTema();actualizarLogoTema()}
-function actualizarSwitchTema(){document.getElementById("theme-switch").classList.toggle("activo",document.documentElement.dataset.tema==="oscuro")}
-function actualizarLogoTema(){if(!resumenActual?.gimnasio)return;const g=resumenActual.gimnasio;const ruta=document.documentElement.dataset.tema==="oscuro"?(g.logo_oscuro_url||g.logo_url):g.logo_url;document.getElementById('logo-gimnasio').innerHTML=ruta?`<img src="${urlFoto(ruta)}" alt="${g.nombre}">`:`<strong>${g.nombre}</strong>`}
-function dinero(v){return `S/ ${Number(v||0).toFixed(2)}`}
-async function cargar(){
- resumenActual=await apiFetch("/portal-alumno/resumen"); const p=resumenActual.perfil; const nombre=`${p.nombre} ${p.apellidos||""}`.trim();
- const avatar=p.foto_url?`<img src="${urlFoto(p.foto_url)}" alt="Foto de ${nombre}">`:`<div class="avatar-iniciales">${getIniciales(nombre)}</div>`; const plan=resumenActual.plan;
- const planHtml=plan?`<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo>0?'saldo-pendiente':''}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo>0?(resumenActual.pago_online_url?`<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>`:`<button class="btn-pagar" disabled>Pago en línea próximamente</button>`):""}`:`<div class="vacio-plan">No tienes un plan activo.</div>`;
- actualizarLogoTema();
- document.getElementById("contenido").innerHTML=`<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<button class="boton-camara" aria-label="Cambiar foto" onclick="alternarMenuFoto(event)">📷</button><div class="menu-foto" id="menu-foto"><label>Galería<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label><label>Tomar foto<input type="file" accept="image/*" capture="environment" style="display:none" onchange="subirFoto(this)"></label></div></div><div class="perfil-linea"><strong>${nombre}</strong><span>${p.telefono||"Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
+
+<script src="js/api.js"></script>
+<script>
+requireAuth();
+let resumenActual = null;
+let flujoCamara = null;
+
+function cambiarTema() {
+  alternarTemaPortal();
+  actualizarSwitchTema();
+  actualizarLogoTema();
 }
-function alternarMenuFoto(event){event.stopPropagation();document.getElementById('menu-foto').classList.toggle('activo')}
-document.addEventListener('click',()=>document.getElementById('menu-foto')?.classList.remove('activo'));
-async function subirFoto(input){const archivo=input.files&&input.files[0];if(!archivo)return;try{await apiUploadFile("/portal-alumno/mi-foto",archivo);await cargar()}catch(e){alert(e.message)}finally{input.value=""}}
-actualizarSwitchTema();cargar();
-</script></body></html>
+
+function actualizarSwitchTema() {
+  document.getElementById("theme-switch").classList.toggle("activo", document.documentElement.dataset.tema === "oscuro");
+}
+
+function actualizarLogoTema() {
+  if (!resumenActual?.gimnasio) return;
+  const g = resumenActual.gimnasio;
+  const ruta = document.documentElement.dataset.tema === "oscuro" ? (g.logo_oscuro_url || g.logo_url) : g.logo_url;
+  document.getElementById("logo-gimnasio").innerHTML = ruta ? `<img src="${urlFoto(ruta)}" alt="${g.nombre}">` : `<strong>${g.nombre}</strong>`;
+}
+
+function dinero(valor) {
+  return `S/ ${Number(valor || 0).toFixed(2)}`;
+}
+
+async function cargar() {
+  resumenActual = await apiFetch("/portal-alumno/resumen");
+  const perfil = resumenActual.perfil;
+  const nombre = `${perfil.nombre} ${perfil.apellidos || ""}`.trim();
+  const avatar = perfil.foto_url
+    ? `<img src="${urlFoto(perfil.foto_url)}" alt="Foto de ${nombre}">`
+    : `<div class="avatar-iniciales">${getIniciales(nombre)}</div>`;
+  const plan = resumenActual.plan;
+  const planHtml = plan
+    ? `<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo > 0 ? "saldo-pendiente" : ""}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo > 0 ? (resumenActual.pago_online_url ? `<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>` : `<button class="btn-pagar" disabled>Pago en línea próximamente</button>`) : ""}`
+    : `<div class="vacio-plan">No tienes un plan activo.</div>`;
+
+  actualizarLogoTema();
+  document.getElementById("contenido").innerHTML = `<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<button class="boton-camara" aria-label="Cambiar foto" onclick="alternarMenuFoto(event)">📷</button><div class="menu-foto" id="menu-foto"><label>Galería<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label><button type="button" onclick="abrirCamara(event)">Tomar foto</button></div></div><div class="perfil-linea"><strong>${nombre}</strong><span>${perfil.telefono || "Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
+}
+
+function alternarMenuFoto(event) {
+  event.stopPropagation();
+  document.getElementById("menu-foto").classList.toggle("activo");
+}
+
+document.addEventListener("click", () => document.getElementById("menu-foto")?.classList.remove("activo"));
+
+async function subirFoto(input) {
+  const archivo = input.files && input.files[0];
+  if (!archivo) return;
+  try {
+    await apiUploadFile("/portal-alumno/mi-foto", archivo);
+    await cargar();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function abrirCamara(event) {
+  event?.stopPropagation();
+  document.getElementById("menu-foto")?.classList.remove("activo");
+  const modal = document.getElementById("modal-camara");
+  const video = document.getElementById("video-camara");
+  const estado = document.getElementById("camara-estado");
+  const boton = document.getElementById("boton-capturar");
+  modal.classList.add("activo");
+  estado.textContent = "Abriendo cámara...";
+  estado.style.display = "block";
+  boton.disabled = true;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    estado.textContent = "Este navegador no permite abrir la cámara. Usa la opción Galería.";
+    return;
+  }
+
+  try {
+    flujoCamara = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 960, max: 1280 },
+      },
+    });
+    video.srcObject = flujoCamara;
+    await video.play();
+    estado.style.display = "none";
+    boton.disabled = false;
+  } catch (error) {
+    estado.textContent = error?.name === "NotAllowedError"
+      ? "Activa el permiso de cámara para tomar la foto."
+      : "No se pudo abrir la cámara. Usa la opción Galería.";
+  }
+}
+
+function liberarCamara() {
+  if (flujoCamara) {
+    flujoCamara.getTracks().forEach(track => track.stop());
+    flujoCamara = null;
+  }
+  const video = document.getElementById("video-camara");
+  if (video) video.srcObject = null;
+}
+
+function cerrarCamara() {
+  liberarCamara();
+  document.getElementById("modal-camara").classList.remove("activo");
+}
+
+async function capturarFoto() {
+  const video = document.getElementById("video-camara");
+  const boton = document.getElementById("boton-capturar");
+  const textoBoton = boton.querySelector("b");
+  if (!video.videoWidth || !video.videoHeight) return;
+  boton.disabled = true;
+  textoBoton.textContent = "Guardando...";
+
+  try {
+    const maximo = 960;
+    const escala = Math.min(1, maximo / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * escala));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * escala));
+    canvas.getContext("2d", { alpha: false }).drawImage(video, 0, 0, canvas.width, canvas.height);
+    liberarCamara();
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.72));
+    canvas.width = canvas.height = 1;
+    if (!blob) throw new Error("No se pudo procesar la foto");
+
+    const extension = blob.type === "image/webp" ? "webp" : "jpg";
+    const archivo = new File([blob], `foto-camara.${extension}`, { type: blob.type || "image/jpeg" });
+    await apiUploadFile("/portal-alumno/mi-foto", archivo);
+    cerrarCamara();
+    await cargar();
+  } catch (error) {
+    alert(error.message || "No se pudo guardar la foto");
+    cerrarCamara();
+  } finally {
+    textoBoton.textContent = "Tomar foto";
+    boton.disabled = false;
+  }
+}
+
+document.getElementById("modal-camara").addEventListener("click", cerrarCamara);
+window.addEventListener("pagehide", liberarCamara);
+actualizarSwitchTema();
+cargar();
+</script>
+</body>
+</html>
