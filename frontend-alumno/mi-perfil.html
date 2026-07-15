@@ -19,7 +19,10 @@
   <div class="camara-card" onclick="event.stopPropagation()">
     <div class="camara-header">
       <strong id="titulo-camara">Tomar foto</strong>
-      <button type="button" aria-label="Cerrar cámara" onclick="cerrarCamara()">✕</button>
+      <div class="camara-acciones">
+        <button id="boton-cambiar-camara" class="camara-cambiar" type="button" onclick="cambiarCamara(event)">Cámara frontal</button>
+        <button type="button" aria-label="Cerrar cámara" onclick="cerrarCamara()">✕</button>
+      </div>
     </div>
     <div class="camara-vista">
       <video id="video-camara" autoplay muted playsinline></video>
@@ -44,6 +47,7 @@
 requireAuth();
 let resumenActual = null;
 let flujoCamara = null;
+let modoCamara = "environment";
 
 function cambiarTema() {
   alternarTemaPortal();
@@ -119,11 +123,25 @@ async function abrirCamara(event) {
     return;
   }
 
+  await iniciarCamara();
+}
+
+async function iniciarCamara() {
+  const video = document.getElementById("video-camara");
+  const estado = document.getElementById("camara-estado");
+  const boton = document.getElementById("boton-capturar");
+  const cambiar = document.getElementById("boton-cambiar-camara");
+  liberarCamara();
+  estado.textContent = "Abriendo cámara...";
+  estado.style.display = "block";
+  boton.disabled = true;
+  cambiar.disabled = true;
+
   try {
     flujoCamara = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
-        facingMode: { ideal: "environment" },
+        facingMode: { ideal: modoCamara },
         width: { ideal: 960, max: 1280 },
         height: { ideal: 960, max: 1280 },
       },
@@ -132,11 +150,20 @@ async function abrirCamara(event) {
     await video.play();
     estado.style.display = "none";
     boton.disabled = false;
+    cambiar.disabled = false;
+    cambiar.textContent = modoCamara === "environment" ? "Cámara frontal" : "Cámara trasera";
   } catch (error) {
     estado.textContent = error?.name === "NotAllowedError"
       ? "Activa el permiso de cámara para tomar la foto."
       : "No se pudo abrir la cámara. Usa la opción Galería.";
+    cambiar.disabled = false;
   }
+}
+
+async function cambiarCamara(event) {
+  event?.stopPropagation();
+  modoCamara = modoCamara === "environment" ? "user" : "environment";
+  await iniciarCamara();
 }
 
 function liberarCamara() {
@@ -163,11 +190,13 @@ async function capturarFoto() {
 
   try {
     const maximo = 960;
-    const escala = Math.min(1, maximo / Math.max(video.videoWidth, video.videoHeight));
+    const ladoOrigen = Math.min(video.videoWidth, video.videoHeight);
+    const inicioX = (video.videoWidth - ladoOrigen) / 2;
+    const inicioY = (video.videoHeight - ladoOrigen) / 2;
+    const ladoDestino = Math.min(maximo, ladoOrigen);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(video.videoWidth * escala));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * escala));
-    canvas.getContext("2d", { alpha: false }).drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.width = canvas.height = Math.max(1, Math.round(ladoDestino));
+    canvas.getContext("2d", { alpha: false }).drawImage(video, inicioX, inicioY, ladoOrigen, ladoOrigen, 0, 0, canvas.width, canvas.height);
     liberarCamara();
 
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.72));
