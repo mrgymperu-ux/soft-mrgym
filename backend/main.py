@@ -5912,8 +5912,13 @@ def listar_salas(db: Session = Depends(get_db), usuario=Depends(auth.requiere_st
             db.add(models.SalaGimnasio(gimnasio_id=gid, nombre=nombre))
     if nombres:
         db.commit()
-    return db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == gid,
+    activas = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == gid,
         models.SalaGimnasio.activo == True).order_by(models.SalaGimnasio.nombre).all()
+    if not activas:
+        principal = models.SalaGimnasio(gimnasio_id=gid, nombre="Agenda principal")
+        db.add(principal); db.commit(); db.refresh(principal)
+        activas = [principal]
+    return activas
 
 
 @app.post("/salas/", response_model=schemas.SalaGimnasio, tags=["Agenda"])
@@ -5938,9 +5943,35 @@ def eliminar_sala(sala_id: int, db: Session = Depends(get_db), usuario=Depends(a
         models.SalaGimnasio.gimnasio_id == get_gid(usuario)).first()
     if not sala:
         raise HTTPException(status_code=404, detail="Sala no encontrada")
+    total_activas = db.query(func.count(models.SalaGimnasio.id)).filter(
+        models.SalaGimnasio.gimnasio_id == get_gid(usuario), models.SalaGimnasio.activo == True).scalar() or 0
+    if total_activas <= 1:
+        raise HTTPException(status_code=400, detail="Debe existir al menos una agenda")
     sala.activo = False
     db.commit()
     return {"ok": True}
+
+
+@app.put("/salas/{sala_id}", response_model=schemas.SalaGimnasio, tags=["Agenda"])
+def renombrar_sala(sala_id: int, datos: schemas.SalaGimnasioCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    sala = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.id == sala_id,
+        models.SalaGimnasio.gimnasio_id == get_gid(usuario), models.SalaGimnasio.activo == True).first()
+    if not sala:
+        raise HTTPException(status_code=404, detail="Agenda no encontrada")
+    nombre_nuevo = datos.nombre.strip()
+    duplicada = db.query(models.SalaGimnasio.id).filter(models.SalaGimnasio.gimnasio_id == get_gid(usuario),
+        func.lower(models.SalaGimnasio.nombre) == nombre_nuevo.lower(), models.SalaGimnasio.id != sala_id,
+        models.SalaGimnasio.activo == True).first()
+    if duplicada:
+        raise HTTPException(status_code=400, detail="Ya existe una agenda con ese nombre")
+    nombre_anterior = sala.nombre
+    sala.nombre = nombre_nuevo
+    db.query(models.ClaseDictada).filter(models.ClaseDictada.gimnasio_id == get_gid(usuario),
+        models.ClaseDictada.sala == nombre_anterior).update({models.ClaseDictada.sala: nombre_nuevo}, synchronize_session=False)
+    db.query(models.ReservaSala).filter(models.ReservaSala.gimnasio_id == get_gid(usuario),
+        models.ReservaSala.sala == nombre_anterior).update({models.ReservaSala.sala: nombre_nuevo}, synchronize_session=False)
+    db.commit(); db.refresh(sala)
+    return sala
 
 def _validar_sala_disponible(db: Session, gid: int, sala: Optional[str], fecha_evento: date, inicio: datetime, fin: Optional[datetime]):
     """Evita superponer clases y alquileres en una misma sala."""
@@ -7760,6 +7791,10 @@ def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db
 def salas_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
     salas = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == cliente.gimnasio_id,
         models.SalaGimnasio.activo == True).order_by(models.SalaGimnasio.nombre).all()
+    if not salas:
+        principal = models.SalaGimnasio(gimnasio_id=cliente.gimnasio_id, nombre="Agenda principal")
+        db.add(principal); db.commit(); db.refresh(principal)
+        salas = [principal]
     return [{"id": s.id, "nombre": s.nombre} for s in salas]
 
 

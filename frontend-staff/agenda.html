@@ -60,7 +60,7 @@
                 <h1 class="header-title">Agenda</h1>
                 <p class="header-subtitle">Clases programadas de la semana (lunes a domingo)</p>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;"><select id="filtro-sala-agenda" onchange="cambiarSalaAgenda(this.value)" style="min-width:150px;"></select><button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar</button></div>
+            <div style="display:flex;gap:8px;align-items:center;"><select id="filtro-sala-agenda" onchange="cambiarSalaAgenda(this.value)" style="min-width:150px;"></select><button class="btn btn-secondary" onclick="abrirModalSalas()">Administrar agendas</button><button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar</button></div>
         </div>
 
         <div class="semana-nav">
@@ -122,8 +122,9 @@
 
 <div id="modal-salas" class="modal">
     <div class="modal-content" style="max-width:440px;">
-        <div class="modal-header"><h3 class="modal-title">Salas del gimnasio</h3><button class="modal-close" onclick="cerrarModalSalas()">✕</button></div>
-        <div style="display:flex;gap:8px;margin-bottom:14px;"><input type="text" id="nueva-sala" placeholder="Ej. Spinning" style="flex:1;"><button class="btn btn-primary" onclick="crearSalaAgenda()">Crear</button></div>
+        <div class="modal-header"><h3 class="modal-title">Administrar agendas</h3><button class="modal-close" onclick="cerrarModalSalas()">✕</button></div>
+        <p style="font-size:.82em;color:var(--color-texto-secundario);margin:-4px 0 12px;">Cada agenda corresponde a una sala o espacio del gimnasio.</p>
+        <div style="display:flex;gap:8px;margin-bottom:14px;"><input type="text" id="nueva-sala" placeholder="Ej. Spinning" style="flex:1;"><button class="btn btn-primary" onclick="crearSalaAgenda()">Agregar</button></div>
         <div id="lista-salas"></div>
     </div>
 </div>
@@ -457,7 +458,8 @@
     let diasSeleccionados = new Set();
 
     async function abrirModalClase(fechaPreseleccionada=null, horaPreseleccionada=null) {
-        await cargarSalasAgenda();
+        try { await cargarSalasAgenda(); }
+        catch (e) { showError("No se pudo cargar las agendas, pero puedes continuar: " + e.message); }
         if (!profesoresCache.length) {
             const empleados = await apiFetch("/empleados/");
             profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
@@ -519,7 +521,7 @@
     function renderSalasAgenda() {
         const lista = document.getElementById("lista-salas");
         if (!lista) return;
-        lista.innerHTML = salasCache.length ? salasCache.map(s => `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--color-borde);"><strong>${s.nombre}</strong><button class="btn btn-danger btn-sm" onclick="eliminarSalaAgenda(${s.id})">Eliminar</button></div>`).join("") : '<p style="color:var(--color-texto-secundario);">Aún no hay salas.</p>';
+        lista.innerHTML = salasCache.length ? salasCache.map(s => `<div style="display:flex;align-items:center;gap:7px;padding:10px 4px;border-bottom:1px solid var(--color-borde);"><input id="nombre-sala-${s.id}" value="${s.nombre}" style="flex:1;"><button class="btn btn-secondary btn-sm" onclick="renombrarSalaAgenda(${s.id})">Guardar</button><button class="btn btn-danger btn-sm" onclick="eliminarSalaAgenda(${s.id})">Eliminar</button></div>`).join("") : '<p style="color:var(--color-texto-secundario);">Creando Agenda principal...</p>';
     }
 
     async function abrirModalSalas() {
@@ -538,6 +540,16 @@
         if (!(await confirmDialog("¿Eliminar esta sala de las opciones? Las clases históricas se conservarán."))) return;
         try { await apiFetch(`/salas/${id}`, { method:"DELETE" }); await cargarSalasAgenda(); showSuccess("Sala eliminada"); }
         catch (e) { showError(e.message); }
+    }
+    async function renombrarSalaAgenda(id) {
+        const nombre = document.getElementById(`nombre-sala-${id}`).value.trim();
+        if (!nombre) { showError("El nombre no puede quedar vacío"); return; }
+        try {
+            const anterior = salasCache.find(s => s.id === id)?.nombre;
+            await apiFetch(`/salas/${id}`, { method:"PUT", body:JSON.stringify({ nombre }) });
+            if (salaAgendaActual === anterior) salaAgendaActual = nombre;
+            await cargarSalasAgenda(nombre); await cargarSemana(); showSuccess("Agenda renombrada");
+        } catch (e) { showError(e.message); }
     }
 
     function toggleRepetir() {
