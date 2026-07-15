@@ -255,6 +255,8 @@ class Cliente(Base):
     fecha_nacimiento = Column(Date, nullable=True)
     direccion = Column(String, nullable=True)
     foto_url = Column(String, nullable=True)  # ruta relativa servida por /uploads/...
+    foto_datos = deferred(Column(LargeBinary, nullable=True))
+    foto_tipo = Column(String, nullable=True)
 
     # Acceso al portal del alumno: codigo corto, no password
     # tradicional, pensado para que sea rapido de usar.

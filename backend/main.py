@@ -478,6 +478,8 @@ def _migrar_columnas_nuevas():
         "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
         "clientes": [
             ("foto_url", "VARCHAR"),
+            ("foto_datos", "BLOB"),
+            ("foto_tipo", "VARCHAR"),
             ("genero", "VARCHAR"),
             ("fecha_renovacion", "DATE"),
             ("fecha_vencimiento", "DATE"),
@@ -2813,6 +2815,8 @@ def actualizar_cliente(
         if duplicado:
             raise HTTPException(status_code=400, detail="Ya existe un cliente con ese DNI en este gimnasio")
     for campo, valor in datos_dict.items():
+        if campo == "foto_url" and valor is None:
+            continue
         setattr(cliente, campo, valor)
 
     db.commit()
@@ -2844,6 +2848,31 @@ def eliminar_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: mo
     return {"message": "Cliente desactivado correctamente"}
 
 
+@app.get("/clientes/{cliente_id}/foto-contenido", tags=["Clientes"])
+def contenido_foto_cliente(cliente_id: int, db: Session = Depends(get_db)):
+    """Sirve la foto persistente del alumno desde la base de datos."""
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.activo == True).first()
+    if not cliente or not cliente.foto_datos:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    return Response(
+        content=cliente.foto_datos,
+        media_type=cliente.foto_tipo or "image/webp",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+def _guardar_foto_cliente_persistente(db: Session, cliente: models.Cliente, contenido: bytes, content_type: str):
+    contenido, content_type = _validar_y_optimizar_foto(contenido, content_type, optimizar=True)
+    foto_anterior = cliente.foto_url
+    cliente.foto_datos = contenido
+    cliente.foto_tipo = content_type
+    cliente.foto_url = f"/clientes/{cliente.id}/foto-contenido?v={uuid.uuid4().hex[:12]}"
+    db.commit()
+    db.refresh(cliente)
+    _eliminar_foto_anterior(foto_anterior)
+    return cliente
+
+
 @app.post("/clientes/{cliente_id}/foto", response_model=schemas.Cliente, tags=["Clientes"])
 async def subir_foto_cliente(
     cliente_id: int,
@@ -2860,12 +2889,7 @@ async def subir_foto_cliente(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     contenido = await foto.read()
-    foto_anterior = cliente.foto_url
-    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR, optimizar=True)
-    db.commit()
-    db.refresh(cliente)
-    _eliminar_foto_anterior(foto_anterior)
-    return cliente
+    return _guardar_foto_cliente_persistente(db, cliente, contenido, foto.content_type)
 
 
 # ==================================================================
@@ -7991,9 +8015,4 @@ async def actualizar_mi_foto(
         raise HTTPException(status_code=403, detail="Tu cuenta esta inactiva. Acercate a recepcion.")
 
     contenido = await foto.read()
-    foto_anterior = cliente.foto_url
-    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR, optimizar=True)
-    db.commit()
-    db.refresh(cliente)
-    _eliminar_foto_anterior(foto_anterior)
-    return cliente
+    return _guardar_foto_cliente_persistente(db, cliente, contenido, foto.content_type)
