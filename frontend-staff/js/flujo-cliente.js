@@ -72,6 +72,13 @@ function _fcInyectarModales() {
             <div class="form-row"><label>Fecha de inicio</label><input type="date" id="fc-am-inicio" onchange="_fcRecalcularFin()"></div>
             <div class="form-row"><label>Fecha de fin</label><input type="date" id="fc-am-fin"></div>
             <div class="form-row"><label>Monto a pagar ahora *</label><input type="number" id="fc-am-monto-ahora" step="0.01" min="0" oninput="_fcRecalcularSaldo()"></div>
+            <div class="form-row"><label>Forma de pago *</label>
+                <select id="fc-am-metodo">
+                    <option value="efectivo">Efectivo</option>
+                    <option value="tarjeta">Tarjeta</option>
+                    <option value="qr">Yape / Plin / QR</option>
+                </select>
+            </div>
             <div class="form-row" id="fc-am-saldo-row" style="display:none;"><label>Saldo pendiente</label><input type="text" id="fc-am-saldo" disabled></div>
             <div class="form-row" id="fc-am-fecha-saldo-row" style="display:none;"><label>Fecha de pago del saldo</label><input type="date" id="fc-am-fecha-saldo"></div>
             <div class="form-actions">
@@ -228,6 +235,7 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
     document.getElementById("fc-am-inicio").value = fechaLocalISO();
     document.getElementById("fc-am-fin").value = "";
     document.getElementById("fc-am-monto-ahora").value = "";
+    document.getElementById("fc-am-metodo").value = "efectivo";
     document.getElementById("fc-am-saldo-row").style.display = "none";
     document.getElementById("fc-am-fecha-saldo-row").style.display = "none";
 
@@ -302,6 +310,7 @@ async function _fcAsignarMembresia() {
                 fecha_inicio: document.getElementById("fc-am-inicio").value || null,
                 fecha_fin: document.getElementById("fc-am-fin").value || null,
                 monto_pagado: montoAhora,
+                metodo_pago: document.getElementById("fc-am-metodo").value,
                 fecha_pago_saldo: fechaSaldo,
             }),
         });
@@ -315,10 +324,12 @@ async function _fcAsignarMembresia() {
 function _fcAbrirCobro() {
     const plan = _fcPlanesCache.find((p) => p.id === _fcUltimoCm.membresia_id);
     const saldo = Math.max((plan ? plan.precio : 0) - (_fcUltimoCm.monto_pagado || 0), 0);
+    const metodoPago = { efectivo: "Efectivo", tarjeta: "Tarjeta", qr: "Yape / Plin / QR" }[_fcUltimoCm.metodo_pago] || "Efectivo";
     document.getElementById("fc-cobro-resumen").innerHTML = `
         <p style="margin:0 0 6px;"><strong>Cliente:</strong> ${_fcClienteActivo.nombre}</p>
         <p style="margin:0 0 6px;"><strong>Plan:</strong> ${plan ? plan.nombre : "—"}</p>
         <p style="margin:0 0 6px;"><strong>Pagado ahora:</strong> ${formatCurrency(_fcUltimoCm.monto_pagado, _fcMoneda)}</p>
+        <p style="margin:0 0 6px;"><strong>Forma de pago:</strong> ${metodoPago}</p>
         ${saldo > 0.009 ? `<p style="margin:0;color:var(--color-error);"><strong>Saldo pendiente:</strong> ${formatCurrency(saldo, _fcMoneda)}${_fcUltimoCm.fecha_pago_saldo ? " · a cobrar el " + formatFecha(_fcUltimoCm.fecha_pago_saldo) : ""}</p>` : ""}
     `;
     document.getElementById("modal-fc-cobro").classList.add("active");
