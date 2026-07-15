@@ -135,3 +135,4 @@ body {
 .dias-nav { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
 .dia-pill { background: var(--superficie); color:var(--texto); border: 1px solid var(--borde); border-radius: 20px; padding: 6px 14px; cursor: pointer; font-size: 0.82em; white-space: nowrap; font-family: inherit; }
 .dia-pill.activo { background: var(--primario); color: #fff; }
+.agenda-page{position:relative}.agenda-selector{display:flex;flex-direction:column;gap:3px;position:absolute;left:16px;top:18px;z-index:4}.agenda-selector label{font-size:.68em;color:var(--secundario);font-weight:600}.agenda-selector select{max-width:150px;padding:7px 28px 7px 9px;border:1px solid var(--borde);border-radius:8px;background:var(--superficie);color:var(--texto);font:inherit;font-size:.8em}

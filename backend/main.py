@@ -5879,6 +5879,51 @@ def actualizar_empleado(
 
 # ---- Agenda / Clases dictadas ----
 
+@app.get("/salas/", response_model=List[schemas.SalaGimnasio], tags=["Agenda"])
+def listar_salas(db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    gid = get_gid(usuario)
+    # Conserva como opciones las salas históricas creadas antes del catálogo.
+    existentes = {s.nombre.strip().lower() for s in db.query(models.SalaGimnasio).filter(
+        models.SalaGimnasio.gimnasio_id == gid).all()}
+    nombres = {x[0].strip() for x in db.query(models.ClaseDictada.sala).filter(
+        models.ClaseDictada.gimnasio_id == gid, models.ClaseDictada.sala.isnot(None)).distinct().all() if x[0] and x[0].strip()}
+    nombres |= {x[0].strip() for x in db.query(models.ReservaSala.sala).filter(
+        models.ReservaSala.gimnasio_id == gid, models.ReservaSala.sala.isnot(None)).distinct().all() if x[0] and x[0].strip()}
+    for nombre in nombres:
+        if nombre.lower() not in existentes:
+            db.add(models.SalaGimnasio(gimnasio_id=gid, nombre=nombre))
+    if nombres:
+        db.commit()
+    return db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == gid,
+        models.SalaGimnasio.activo == True).order_by(models.SalaGimnasio.nombre).all()
+
+
+@app.post("/salas/", response_model=schemas.SalaGimnasio, tags=["Agenda"])
+def crear_sala(datos: schemas.SalaGimnasioCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    nombre = datos.nombre.strip()
+    sala = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == get_gid(usuario),
+        func.lower(models.SalaGimnasio.nombre) == nombre.lower()).first()
+    if sala:
+        if sala.activo:
+            raise HTTPException(status_code=400, detail="La sala ya existe")
+        sala.activo = True
+    else:
+        sala = models.SalaGimnasio(gimnasio_id=get_gid(usuario), nombre=nombre)
+        db.add(sala)
+    db.commit(); db.refresh(sala)
+    return sala
+
+
+@app.delete("/salas/{sala_id}", tags=["Agenda"])
+def eliminar_sala(sala_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    sala = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.id == sala_id,
+        models.SalaGimnasio.gimnasio_id == get_gid(usuario)).first()
+    if not sala:
+        raise HTTPException(status_code=404, detail="Sala no encontrada")
+    sala.activo = False
+    db.commit()
+    return {"ok": True}
+
 def _validar_sala_disponible(db: Session, gid: int, sala: Optional[str], fecha_evento: date, inicio: datetime, fin: Optional[datetime]):
     """Evita superponer clases y alquileres en una misma sala."""
     if not sala or not sala.strip():
@@ -7687,10 +7732,17 @@ def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db
     ).order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio).limit(200).all()
     inscritas = {x[0] for x in db.query(models.InscripcionClaseAlumno.clase_id).filter(
         models.InscripcionClaseAlumno.cliente_id == cliente.id).all()}
-    return [{"id": c.id, "agenda": c.agenda_nombre or "Clases", "nombre": c.nombre_clase,
+    return [{"id": c.id, "agenda": c.sala or "General", "nombre": c.nombre_clase,
              "fecha": c.fecha, "hora_inicio": c.hora_inicio, "hora_fin": c.hora_fin,
              "sala": c.sala, "profesor": c.profesor.nombre_completo if c.profesor else None,
              "permite_registro": bool(c.permite_registro), "inscrito": c.id in inscritas} for c in clases]
+
+
+@app.get("/portal-alumno/salas", tags=["Portal Alumno"])
+def salas_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    salas = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == cliente.gimnasio_id,
+        models.SalaGimnasio.activo == True).order_by(models.SalaGimnasio.nombre).all()
+    return [{"id": s.id, "nombre": s.nombre} for s in salas]
 
 
 @app.post("/portal-alumno/agenda/{clase_id}/inscripcion", tags=["Portal Alumno"])

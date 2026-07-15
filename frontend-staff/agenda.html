@@ -60,7 +60,7 @@
                 <h1 class="header-title">Agenda</h1>
                 <p class="header-subtitle">Clases programadas de la semana (lunes a domingo)</p>
             </div>
-            <button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar</button>
+            <div style="display:flex;gap:8px;align-items:center;"><select id="filtro-sala-agenda" onchange="cambiarSalaAgenda(this.value)" style="min-width:150px;"></select><button class="btn btn-primary" onclick="abrirModalClase()">+ Agendar</button></div>
         </div>
 
         <div class="semana-nav">
@@ -89,10 +89,9 @@
         <div class="form-group" id="f-concepto-row" style="display:none;"><label>Concepto de ingreso *</label><select id="f-concepto-ingreso" onchange="onConceptoAgenda()"><option value="">Seleccionar...</option></select></div>
         <div class="form-group" id="f-profesor-row"><label>Profesor *</label><select id="f-profesor"><option value="">Seleccionar...</option></select></div>
         <div class="form-group"><label id="f-nombre-label">Nombre de la clase *</label><input type="text" id="f-nombre-clase" placeholder="Salsa Intermedio"></div>
-        <div class="form-group" id="f-agenda-row"><label>Agenda</label><input type="text" id="f-agenda-nombre" value="Clases" placeholder="Baile, Spinning, Nutrición..."></div>
         <div class="form-group" id="f-registro-row"><label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="f-permite-registro" style="width:auto;"> Permitir que los socios se inscriban</label></div>
         <div class="form-group" id="f-responsable-row" style="display:none;"><label>Persona o empresa que alquila</label><input type="text" id="f-responsable" placeholder="Nombre del responsable"></div>
-        <div class="form-group"><label>Sala</label><input type="text" id="f-sala" placeholder="Sala A"></div>
+        <div class="form-group"><label>Sala</label><div style="display:flex;gap:8px;"><select id="f-sala" style="flex:1;"><option value="">Sin sala</option></select><button type="button" class="btn btn-secondary btn-sm" onclick="abrirModalSalas()">Crear sala</button></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
             <div class="form-group"><label>Fecha *</label><input type="date" id="f-fecha-clase"></div>
             <div class="form-group"><label>Hora inicio *</label><input type="time" id="f-hora-inicio"></div>
@@ -118,6 +117,14 @@
             <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
             <button class="btn btn-primary" onclick="guardarClase()">Guardar</button>
         </div>
+    </div>
+</div>
+
+<div id="modal-salas" class="modal">
+    <div class="modal-content" style="max-width:440px;">
+        <div class="modal-header"><h3 class="modal-title">Salas del gimnasio</h3><button class="modal-close" onclick="cerrarModalSalas()">✕</button></div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;"><input type="text" id="nueva-sala" placeholder="Ej. Spinning" style="flex:1;"><button class="btn btn-primary" onclick="crearSalaAgenda()">Crear</button></div>
+        <div id="lista-salas"></div>
     </div>
 </div>
 
@@ -173,6 +180,8 @@
     let reservasSemana = [];
     let conceptosAgendaCache = [];
     let reservaSeleccionada = null;
+    let salasCache = [];
+    let salaAgendaActual = "";
 
     function formatMonedaSinDecimales(monto) {
         return `${moneda} ${Math.round(monto || 0)}`;
@@ -228,8 +237,18 @@
             apiFetch(`/reservas-sala/?desde=${desde}&hasta=${hasta}`),
             apiFetch("/conceptos-ingreso/?para_agenda=true"),
         ]);
+        await cargarSalasAgenda();
+        if (!salaAgendaActual && salasCache.length) salaAgendaActual = salasCache[0].nombre;
+        const filtroSala = document.getElementById("filtro-sala-agenda");
+        filtroSala.innerHTML = salasCache.length ? salasCache.map(s => `<option value="${s.nombre}" ${s.nombre === salaAgendaActual ? "selected" : ""}>${s.nombre}</option>`).join("") : '<option value="">Sin salas</option>';
+        if (salaAgendaActual) {
+            clasesSemana = clasesSemana.filter(c => (c.sala || "") === salaAgendaActual);
+            reservasSemana = reservasSemana.filter(r => (r.sala || "") === salaAgendaActual);
+        }
         renderGrilla(inicio);
     }
+
+    function cambiarSalaAgenda(nombre) { salaAgendaActual = nombre; cargarSemana(); }
 
     function renderLeyenda() {
         const cont = document.getElementById("leyenda");
@@ -438,6 +457,7 @@
     let diasSeleccionados = new Set();
 
     async function abrirModalClase(fechaPreseleccionada=null, horaPreseleccionada=null) {
+        await cargarSalasAgenda();
         if (!profesoresCache.length) {
             const empleados = await apiFetch("/empleados/");
             profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
@@ -458,7 +478,6 @@
         }
         document.getElementById("f-repetir").checked = false;
         document.getElementById("f-tipo-agenda").value = "clase";
-        document.getElementById("f-agenda-nombre").value = "Clases";
         document.getElementById("f-permite-registro").checked = false;
         document.getElementById("f-concepto-ingreso").innerHTML = '<option value="">Seleccionar...</option>' + conceptosAgendaCache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join("");
         document.getElementById("f-semanas").value = 4;
@@ -476,7 +495,6 @@
         document.getElementById("f-concepto-row").style.display = alquiler ? "block" : "none";
         document.getElementById("f-responsable-row").style.display = alquiler ? "block" : "none";
         document.getElementById("f-profesor-row").style.display = alquiler ? "none" : "block";
-        document.getElementById("f-agenda-row").style.display = alquiler ? "none" : "block";
         document.getElementById("f-registro-row").style.display = alquiler ? "none" : "block";
         document.getElementById("f-nombre-label").textContent = alquiler ? "Nombre de la reserva *" : "Nombre de la clase *";
         document.getElementById("f-repetir").closest(".form-group").style.display = alquiler ? "none" : "block";
@@ -487,6 +505,39 @@
         if (!concepto) return;
         document.getElementById("f-nombre-clase").value = concepto.nombre;
         if (concepto.sala_sugerida) document.getElementById("f-sala").value = concepto.sala_sugerida;
+    }
+
+    async function cargarSalasAgenda(seleccionar = null) {
+        salasCache = await apiFetch("/salas/");
+        const select = document.getElementById("f-sala");
+        const actual = seleccionar !== null ? seleccionar : select.value;
+        select.innerHTML = '<option value="">Sin sala</option>' + salasCache.map(s => `<option value="${s.nombre}">${s.nombre}</option>`).join("");
+        if (actual && salasCache.some(s => s.nombre === actual)) select.value = actual;
+        renderSalasAgenda();
+    }
+
+    function renderSalasAgenda() {
+        const lista = document.getElementById("lista-salas");
+        if (!lista) return;
+        lista.innerHTML = salasCache.length ? salasCache.map(s => `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--color-borde);"><strong>${s.nombre}</strong><button class="btn btn-danger btn-sm" onclick="eliminarSalaAgenda(${s.id})">Eliminar</button></div>`).join("") : '<p style="color:var(--color-texto-secundario);">Aún no hay salas.</p>';
+    }
+
+    async function abrirModalSalas() {
+        await cargarSalasAgenda();
+        document.getElementById("nueva-sala").value = "";
+        document.getElementById("modal-salas").classList.add("active");
+    }
+    function cerrarModalSalas() { document.getElementById("modal-salas").classList.remove("active"); }
+    async function crearSalaAgenda() {
+        const nombre = document.getElementById("nueva-sala").value.trim();
+        if (!nombre) { showError("Escribe el nombre de la sala"); return; }
+        try { await apiFetch("/salas/", { method:"POST", body:JSON.stringify({ nombre }) }); await cargarSalasAgenda(nombre); document.getElementById("nueva-sala").value = ""; showSuccess("Sala creada"); }
+        catch (e) { showError(e.message); }
+    }
+    async function eliminarSalaAgenda(id) {
+        if (!(await confirmDialog("¿Eliminar esta sala de las opciones? Las clases históricas se conservarán."))) return;
+        try { await apiFetch(`/salas/${id}`, { method:"DELETE" }); await cargarSalasAgenda(); showSuccess("Sala eliminada"); }
+        catch (e) { showError(e.message); }
     }
 
     function toggleRepetir() {
@@ -523,7 +574,6 @@
             hora_inicio: `${fecha}T${horaInicio}:00`,
             hora_fin: horaFin ? `${fecha}T${horaFin}:00` : null,
             notas: document.getElementById("f-notas-clase").value.trim() || null,
-            agenda_nombre: document.getElementById("f-agenda-nombre").value.trim() || "Clases",
             permite_registro: document.getElementById("f-permite-registro").checked,
             dias_semana: repetir ? Array.from(diasSeleccionados) : [],
             semanas: repetir ? (parseInt(document.getElementById("f-semanas").value) || 1) : 1,

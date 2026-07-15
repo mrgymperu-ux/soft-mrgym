@@ -1005,6 +1005,15 @@ class ClaseDictada(Base):
     profesor_reemplazo = relationship("Empleado", foreign_keys=[profesor_reemplazo_id])
 
 
+class SalaGimnasio(Base):
+    __tablename__ = "salas_gimnasio"
+    __table_args__ = (UniqueConstraint("gimnasio_id", "nombre", name="uq_sala_gimnasio_nombre"),)
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    nombre = Column(String, nullable=False)
+    activo = Column(Boolean, default=True)
+
+
 class InscripcionClaseAlumno(Base):
     __tablename__ = "inscripciones_clase_alumno"
     __table_args__ = (UniqueConstraint("clase_id", "cliente_id", name="uq_inscripcion_clase_cliente"),)
