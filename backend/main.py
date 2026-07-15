@@ -7692,6 +7692,21 @@ def mi_perfil(cliente: models.Cliente = Depends(auth.get_cliente_actual)):
     return cliente
 
 
+def _cliente_tiene_pago_vencido(db: Session, cliente_id: int) -> bool:
+    membresia = (db.query(models.ClienteMembresia)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id, models.ClienteMembresia.activo == True)
+        .order_by(models.ClienteMembresia.fecha_inicio.desc()).first())
+    if not membresia or not membresia.fecha_pago_saldo or membresia.fecha_pago_saldo >= hoy_lima():
+        return False
+    precio = float(membresia.membresia.precio or 0) if membresia.membresia else 0
+    return max(precio - float(membresia.monto_pagado or 0), 0) > 0.009
+
+
+def _validar_acceso_modulos_alumno(db: Session, cliente: models.Cliente):
+    if _cliente_tiene_pago_vencido(db, cliente.id):
+        raise HTTPException(status_code=403, detail="Tienes un pago vencido. Regulariza tu saldo para acceder a este modulo")
+
+
 @app.get("/portal-alumno/resumen", tags=["Portal Alumno"])
 def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
     membresia = (db.query(models.ClienteMembresia)
@@ -7702,17 +7717,23 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
         func.date(models.Asistencia.fecha_hora_entrada) == hoy_lima().isoformat(),
     ).first() is not None
     plan = None
+    pago_vencido = False
+    sin_pagos_pendientes = False
     if membresia:
         precio = float(membresia.membresia.precio or 0)
         pagado = float(membresia.monto_pagado or 0)
+        saldo = round(max(precio - pagado, 0), 2)
+        pago_vencido = bool(saldo > 0.009 and membresia.fecha_pago_saldo and membresia.fecha_pago_saldo < hoy_lima())
+        sin_pagos_pendientes = saldo <= 0.009
         plan = {"nombre": membresia.membresia.nombre, "inicio": membresia.fecha_inicio,
                 "fin": membresia.fecha_fin, "precio": round(precio, 2), "pagado": round(pagado, 2),
-                "saldo": round(max(precio - pagado, 0), 2),
+                "saldo": saldo, "fecha_proximo_pago": membresia.fecha_pago_saldo,
                 "incluye_nutricion": bool(membresia.membresia.incluye_nutricion),
                 "incluye_retos": bool(membresia.membresia.incluye_retos)}
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
     return {"perfil": schemas.Cliente.model_validate(cliente).model_dump(mode="json"), "plan": plan,
             "asistencia_hoy": asistencia_hoy, "pago_online_url": os.getenv("IZIPAY_PAYMENT_URL") or None,
+            "pago_vencido": pago_vencido, "sin_pagos_pendientes": sin_pagos_pendientes,
             "asistencia_ubicacion_configurada": bool(gimnasio and gimnasio.latitud is not None and gimnasio.longitud is not None),
             "gimnasio": {"nombre": gimnasio.nombre, "logo_url": gimnasio.logo_url,
                           "logo_oscuro_url": gimnasio.logo_oscuro_url} if gimnasio else None}
@@ -7736,6 +7757,7 @@ def marcar_asistencia_desde_portal(
     db: Session = Depends(get_db),
 ):
     """Registra la entrada solo si el alumno esta dentro de la geocerca configurada."""
+    _validar_acceso_modulos_alumno(db, cliente)
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
     if not gimnasio or gimnasio.latitud is None or gimnasio.longitud is None:
         raise HTTPException(status_code=409, detail="El gimnasio aun no configuro la ubicacion para marcar asistencia")
@@ -7796,11 +7818,13 @@ def cambiar_password_alumno(
 
 @app.get("/portal-alumno/mi-rutina", response_model=List[schemas.Rutina], tags=["Portal Alumno"])
 def mi_rutina(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     return db.query(models.Rutina).filter(models.Rutina.cliente_id == cliente.id, models.Rutina.activo == True).all()
 
 
 @app.get("/portal-alumno/ejercicios-completados", tags=["Portal Alumno"])
 def ejercicios_completados_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     ids = db.query(models.EjercicioCompletadoAlumno.ejercicio_id).filter(
         models.EjercicioCompletadoAlumno.cliente_id == cliente.id,
         models.EjercicioCompletadoAlumno.fecha == hoy_lima()).all()
@@ -7809,6 +7833,7 @@ def ejercicios_completados_alumno(cliente: models.Cliente = Depends(auth.get_cli
 
 @app.post("/portal-alumno/ejercicios/{ejercicio_id}/completar", tags=["Portal Alumno"])
 def alternar_ejercicio_completado(ejercicio_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     asistencia = db.query(models.Asistencia.id).filter(models.Asistencia.cliente_id == cliente.id,
         func.date(models.Asistencia.fecha_hora_entrada) == hoy_lima().isoformat()).first()
     if not asistencia:
@@ -7830,6 +7855,7 @@ def alternar_ejercicio_completado(ejercicio_id: int, cliente: models.Cliente = D
 
 @app.get("/portal-alumno/mi-nutricion", response_model=List[schemas.PlanNutricion], tags=["Portal Alumno"])
 def mi_nutricion(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     return (
         db.query(models.PlanNutricion)
         .filter(models.PlanNutricion.cliente_id == cliente.id, models.PlanNutricion.activo == True)
@@ -7839,6 +7865,7 @@ def mi_nutricion(cliente: models.Cliente = Depends(auth.get_cliente_actual), db:
 
 @app.get("/portal-alumno/mi-progreso", response_model=List[schemas.Progreso], tags=["Portal Alumno"])
 def mi_progreso(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     return (
         db.query(models.Progreso)
         .filter(models.Progreso.cliente_id == cliente.id)
@@ -7849,6 +7876,7 @@ def mi_progreso(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: 
 
 @app.get("/portal-alumno/progreso-entrenamiento", tags=["Portal Alumno"])
 def progreso_entrenamiento(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     desde = hoy_lima() - timedelta(days=29)
     total = db.query(func.count(models.EjercicioCompletadoAlumno.id)).filter(
         models.EjercicioCompletadoAlumno.cliente_id == cliente.id,
@@ -7861,6 +7889,7 @@ def progreso_entrenamiento(cliente: models.Cliente = Depends(auth.get_cliente_ac
 
 @app.get("/portal-alumno/retos", tags=["Portal Alumno"])
 def retos_disponibles(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     retos = db.query(models.Reto).filter(models.Reto.activo == True, models.Reto.gimnasio_id == cliente.gimnasio_id).all()
     resultado = []
     for reto in retos:
@@ -7875,6 +7904,7 @@ def retos_disponibles(cliente: models.Cliente = Depends(auth.get_cliente_actual)
 
 @app.post("/portal-alumno/retos/{reto_id}/cumplir", tags=["Portal Alumno"])
 def cumplir_reto_hoy(reto_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     reto = db.query(models.Reto).filter(models.Reto.id == reto_id, models.Reto.gimnasio_id == cliente.gimnasio_id,
         models.Reto.activo == True).first()
     if not reto:
@@ -7890,6 +7920,7 @@ def cumplir_reto_hoy(reto_id: int, cliente: models.Cliente = Depends(auth.get_cl
 
 @app.get("/portal-alumno/agenda", tags=["Portal Alumno"])
 def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     hoy = hoy_lima()
     inicio_semana = hoy - timedelta(days=hoy.weekday())
     clases = db.query(models.ClaseDictada).filter(
@@ -7908,6 +7939,7 @@ def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db
 
 @app.get("/portal-alumno/salas", tags=["Portal Alumno"])
 def salas_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     salas = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == cliente.gimnasio_id,
         models.SalaGimnasio.activo == True).order_by(models.SalaGimnasio.nombre).all()
     if not salas:
@@ -7931,6 +7963,7 @@ def salas_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actua
 
 @app.post("/portal-alumno/agenda/{clase_id}/inscripcion", tags=["Portal Alumno"])
 def alternar_inscripcion_clase(clase_id: int, cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    _validar_acceso_modulos_alumno(db, cliente)
     clase = db.query(models.ClaseDictada).filter(models.ClaseDictada.id == clase_id,
         models.ClaseDictada.gimnasio_id == cliente.gimnasio_id).first()
     if not clase or not clase.permite_registro or clase.fecha < hoy_lima():

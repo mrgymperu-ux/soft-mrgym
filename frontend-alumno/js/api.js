@@ -392,22 +392,81 @@ function alternarTemaPortal() {
 
 aplicarTemaPortal();
 
-async function aplicarBloqueoAsistenciaPortal() {
+function aplicarBloqueoPagoVencido(resumen) {
+    const vencido = !!resumen?.pago_vencido;
+    document.body.classList.toggle("pago-vencido", vencido);
+    document.querySelectorAll('.nav-bottom a:not([href="mi-perfil.html"])').forEach(enlace => {
+        enlace.classList.toggle("bloqueado-pago", vencido);
+        enlace.setAttribute("aria-disabled", vencido ? "true" : "false");
+    });
+    if (!vencido) {
+        document.querySelector(".aviso-pago-vencido")?.remove();
+        return false;
+    }
+
+    const archivoActual = window.location.pathname.split("/").pop() || "mi-perfil.html";
+    if (archivoActual !== "mi-perfil.html") {
+        window.location.replace("mi-perfil.html?pago=vencido");
+        return true;
+    }
+    const pagina = document.querySelector(".page");
+    if (pagina && !document.querySelector(".aviso-pago-vencido")) {
+        const aviso = document.createElement("div");
+        aviso.className = "aviso-pago-vencido";
+        aviso.innerHTML = "<strong>Tienes un pago vencido.</strong><span>Regulariza tu saldo para volver a acceder a los demás módulos.</span>";
+        pagina.prepend(aviso);
+    }
+    return true;
+}
+
+async function intentarAsistenciaAutomatica(resumen) {
+    if (!resumen || resumen.asistencia_hoy || resumen.pago_vencido || !resumen.sin_pagos_pendientes || !resumen.asistencia_ubicacion_configurada) return;
+    if (!navigator.geolocation) return;
+    const ultimoIntento = Number(sessionStorage.getItem("alumno_auto_asistencia_intento") || 0);
+    if (Date.now() - ultimoIntento < 5 * 60 * 1000) return;
+    sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now()));
+
+    navigator.geolocation.getCurrentPosition(async posicion => {
+        try {
+            const resultado = await apiFetch("/portal-alumno/marcar-asistencia", {
+                method: "POST",
+                body: JSON.stringify({
+                    latitud: posicion.coords.latitude,
+                    longitud: posicion.coords.longitude,
+                    precision_metros: posicion.coords.accuracy,
+                }),
+            });
+            if (!resultado?.registrada) return;
+            resumen.asistencia_hoy = true;
+            _guardarCachePortal("/portal-alumno/resumen", resumen, true);
+            window.dispatchEvent(new CustomEvent("mrgym:asistencia-automatica", { detail: resultado }));
+            const aviso = document.createElement("div");
+            aviso.className = "asistencia-auto-toast";
+            aviso.textContent = "✓ Asistencia marcada automáticamente";
+            document.body.appendChild(aviso);
+            setTimeout(() => aviso.remove(), 3500);
+        } catch (_) {
+            // Si esta fuera de la geocerca, no se registra ni se interrumpe el acceso de lectura.
+        }
+    }, () => {}, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+}
+
+async function inicializarAccesoPortal() {
     if (!getToken() || /login\.html$/.test(window.location.pathname)) return;
     try {
-        const resumen = await apiFetch("/portal-alumno/resumen");
-        if (!resumen || resumen.asistencia_hoy) return;
-        const pagina = document.querySelector(".page");
-        if (!pagina || document.querySelector(".asistencia-global")) return;
-        const aviso = document.createElement("div");
-        aviso.className = "asistencia-global";
-        aviso.textContent = "Marcar asistencia en Counter";
-        pagina.prepend(aviso);
-        document.body.classList.add("asistencia-pendiente");
+        const resumen = await _apiFetchRed("/portal-alumno/resumen", { cache: "no-store", _silencioso: true });
+        if (!resumen) return;
+        _guardarCachePortal("/portal-alumno/resumen", resumen, false);
+        if (aplicarBloqueoPagoVencido(resumen)) return;
+        intentarAsistenciaAutomatica(resumen);
     } catch (_) {}
 }
 
-setTimeout(aplicarBloqueoAsistenciaPortal, 0);
+setTimeout(inicializarAccesoPortal, 0);
+window.addEventListener("mrgym:cache-update", evento => {
+    if (evento.detail?.path !== "/portal-alumno/resumen" || !evento.detail.data) return;
+    if (!aplicarBloqueoPagoVencido(evento.detail.data)) intentarAsistenciaAutomatica(evento.detail.data);
+});
 setTimeout(_consultarVersionPortal, 80);
 setInterval(_consultarVersionPortal, 15000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _consultarVersionPortal(); });
