@@ -37,6 +37,7 @@ requireAuth();
 const HORA_INICIO = 6;
 const HORA_FIN = 22;
 const DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const COLORES_PROFESOR = ["#7566B8", "#4E7096", "#5F7F63", "#AD7645", "#AD6E7C", "#7C4155", "#3B7A75", "#8C6E3F", "#5B6B8C", "#8C5A5A"];
 let clases = [];
 let agendaActiva = "";
 let fechaBase = lunes(new Date());
@@ -69,7 +70,11 @@ async function cargar() {
   ]);
   clases = Array.isArray(agenda) ? agenda : [];
   const nombres = (Array.isArray(salas) ? salas : []).map(sala => sala.nombre);
-  if (!agendaActiva || !nombres.includes(agendaActiva)) agendaActiva = nombres[0] || "";
+  if (!agendaActiva || !nombres.includes(agendaActiva)) {
+    const inicio = iso(fechaBase);
+    const fin = new Date(fechaBase); fin.setDate(fin.getDate() + 6);
+    agendaActiva = nombres.find(nombre => clases.some(clase => clase.agenda === nombre && clase.fecha >= inicio && clase.fecha <= iso(fin))) || nombres[0] || "";
+  }
   document.getElementById("selector-sala").innerHTML = nombres.length
     ? nombres.map(nombre => `<option value="${nombre}" ${nombre === agendaActiva ? "selected" : ""}>${nombre}</option>`).join("")
     : `<option value="">Sin agendas</option>`;
@@ -134,7 +139,8 @@ function render() {
       const arriba = posicion(hora(clase.hora_inicio));
       const abajo = posicion(clase.hora_fin ? hora(clase.hora_fin) : hora(clase.hora_inicio) + 1);
       const alto = Math.max(abajo - arriba, 30);
-      return `<div class="agenda-evento ${clase.inscrito ? "inscrito" : ""}" style="top:${arriba}px;height:${alto}px"><strong>${clase.nombre}</strong><small>${hfmt(clase.hora_inicio)}${clase.sala ? ` · ${clase.sala}` : ""}</small>${clase.permite_registro ? `<button onclick="inscribir(${clase.id},this)">${clase.inscrito ? "Inscrito ✓" : "Programar"}</button>` : ""}</div>`;
+      const color = COLORES_PROFESOR[(clase.profesor_id || 0) % COLORES_PROFESOR.length];
+      return `<div class="agenda-evento ${clase.inscrito ? "inscrito" : ""}" style="top:${arriba}px;height:${alto}px;border-left-color:${color}"><strong>${clase.nombre}</strong><small>${hfmt(clase.hora_inicio)}${clase.sala ? ` · ${clase.sala}` : ""}</small>${clase.profesor ? `<small>${clase.profesor}</small>` : ""}${clase.permite_registro ? `<button onclick="inscribir(${clase.id},this)">${clase.inscrito ? "Inscrito ✓" : "Programar"}</button>` : ""}</div>`;
     }).join("");
     const esHoy = iso(fechas[indiceDia]) === hoyIso;
     html += `<div class="agenda-col ${lista.length ? "" : "vacia"} ${esHoy ? "hoy" : ""}" style="height:${total}px">${lineas}${items}</div>`;

@@ -469,10 +469,11 @@
             profesoresCache.map(p => `<option value="${p.id}">${p.nombre_completo}</option>`).join("");
 
         document.getElementById("f-fecha-clase").value = fechaPreseleccionada || fechaLocalISO();
-        ["nombre-clase","responsable","sala","hora-inicio","hora-fin","notas-clase"].forEach(f => {
+        ["nombre-clase","responsable","hora-inicio","hora-fin","notas-clase"].forEach(f => {
             const el = document.getElementById(`f-${f}`);
             if (el) el.value = "";
         });
+        document.getElementById("f-sala").value = salasCache.some(s => s.nombre === salaAgendaActual) ? salaAgendaActual : "";
         if (horaPreseleccionada) {
             document.getElementById("f-hora-inicio").value = horaPreseleccionada;
             const horaFinSugerida = Math.min(parseInt(horaPreseleccionada.slice(0,2)) + 1, 23);

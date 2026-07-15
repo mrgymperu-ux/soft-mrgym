@@ -7793,16 +7793,20 @@ def cumplir_reto_hoy(reto_id: int, cliente: models.Cliente = Depends(auth.get_cl
 
 @app.get("/portal-alumno/agenda", tags=["Portal Alumno"])
 def agenda_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actual), db: Session = Depends(get_db)):
+    hoy = hoy_lima()
+    inicio_semana = hoy - timedelta(days=hoy.weekday())
     clases = db.query(models.ClaseDictada).filter(
         models.ClaseDictada.gimnasio_id == cliente.gimnasio_id,
-        models.ClaseDictada.fecha >= hoy_lima(),
+        models.ClaseDictada.fecha >= inicio_semana,
     ).order_by(models.ClaseDictada.fecha, models.ClaseDictada.hora_inicio).limit(200).all()
     inscritas = {x[0] for x in db.query(models.InscripcionClaseAlumno.clase_id).filter(
         models.InscripcionClaseAlumno.cliente_id == cliente.id).all()}
     return [{"id": c.id, "agenda": c.sala or "General", "nombre": c.nombre_clase,
              "fecha": c.fecha, "hora_inicio": c.hora_inicio, "hora_fin": c.hora_fin,
-             "sala": c.sala, "profesor": c.profesor.nombre_completo if c.profesor else None,
-             "permite_registro": bool(c.permite_registro), "inscrito": c.id in inscritas} for c in clases]
+             "sala": c.sala, "profesor_id": c.profesor_id,
+             "profesor": c.profesor.nombre_completo if c.profesor else None,
+             "permite_registro": bool(c.permite_registro and c.fecha >= hoy),
+             "inscrito": c.id in inscritas} for c in clases]
 
 
 @app.get("/portal-alumno/salas", tags=["Portal Alumno"])
@@ -7813,7 +7817,19 @@ def salas_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_actua
         principal = models.SalaGimnasio(gimnasio_id=cliente.gimnasio_id, nombre="Agenda principal")
         db.add(principal); db.commit(); db.refresh(principal)
         salas = [principal]
-    return [{"id": s.id, "nombre": s.nombre} for s in salas]
+    resultado = [{"id": s.id, "nombre": s.nombre} for s in salas]
+    nombres = {s.nombre.strip().lower() for s in salas}
+    inicio_semana = hoy_lima() - timedelta(days=hoy_lima().weekday())
+    salas_clases = db.query(models.ClaseDictada.sala).filter(
+        models.ClaseDictada.gimnasio_id == cliente.gimnasio_id,
+        models.ClaseDictada.fecha >= inicio_semana,
+    ).distinct().all()
+    for fila in salas_clases:
+        nombre = (fila[0] or "General").strip()
+        if nombre.lower() not in nombres:
+            resultado.append({"id": None, "nombre": nombre})
+            nombres.add(nombre.lower())
+    return resultado
 
 
 @app.post("/portal-alumno/agenda/{clase_id}/inscripcion", tags=["Portal Alumno"])
