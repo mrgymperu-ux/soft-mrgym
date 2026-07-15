@@ -120,7 +120,7 @@
     </div>
 </div>
 
-<div id="modal-salas" class="modal">
+<div id="modal-salas" class="modal" style="z-index:130;">
     <div class="modal-content" style="max-width:440px;">
         <div class="modal-header"><h3 class="modal-title">Administrar agendas</h3><button class="modal-close" onclick="cerrarModalSalas()">✕</button></div>
         <p style="font-size:.82em;color:var(--color-texto-secundario);margin:-4px 0 12px;">Cada agenda corresponde a una sala o espacio del gimnasio.</p>
@@ -525,9 +525,11 @@
     }
 
     async function abrirModalSalas() {
-        await cargarSalasAgenda();
         document.getElementById("nueva-sala").value = "";
         document.getElementById("modal-salas").classList.add("active");
+        document.getElementById("lista-salas").innerHTML = '<p style="color:var(--color-texto-secundario);">Cargando agendas...</p>';
+        try { await cargarSalasAgenda(); }
+        catch (e) { document.getElementById("lista-salas").innerHTML = `<div class="alert alert-error">No se pudieron cargar las agendas: ${e.message}</div>`; }
     }
     function cerrarModalSalas() { document.getElementById("modal-salas").classList.remove("active"); }
     async function crearSalaAgenda() {

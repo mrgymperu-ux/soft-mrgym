@@ -5897,8 +5897,13 @@ def actualizar_empleado(
 
 # ---- Agenda / Clases dictadas ----
 
+def _asegurar_tabla_salas():
+    """Garantiza el catálogo en despliegues antiguos donde create_all no lo creó al arrancar."""
+    models.SalaGimnasio.__table__.create(bind=engine, checkfirst=True)
+
 @app.get("/salas/", response_model=List[schemas.SalaGimnasio], tags=["Agenda"])
 def listar_salas(db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
+    _asegurar_tabla_salas()
     gid = get_gid(usuario)
     # Conserva como opciones las salas históricas creadas antes del catálogo.
     existentes = {s.nombre.strip().lower() for s in db.query(models.SalaGimnasio).filter(
@@ -5923,6 +5928,7 @@ def listar_salas(db: Session = Depends(get_db), usuario=Depends(auth.requiere_st
 
 @app.post("/salas/", response_model=schemas.SalaGimnasio, tags=["Agenda"])
 def crear_sala(datos: schemas.SalaGimnasioCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    _asegurar_tabla_salas()
     nombre = datos.nombre.strip()
     sala = db.query(models.SalaGimnasio).filter(models.SalaGimnasio.gimnasio_id == get_gid(usuario),
         func.lower(models.SalaGimnasio.nombre) == nombre.lower()).first()
