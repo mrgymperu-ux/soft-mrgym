@@ -26,9 +26,14 @@
     </div>
     <div class="camara-vista">
       <video id="video-camara" autoplay muted playsinline></video>
+      <img id="previsualizacion-camara" alt="Foto capturada">
       <p id="camara-estado">Abriendo cámara...</p>
     </div>
     <button id="boton-capturar" class="camara-capturar" type="button" onclick="capturarFoto()" disabled><span></span><b>Tomar foto</b></button>
+    <div id="camara-confirmacion" class="camara-confirmacion">
+      <button class="camara-repetir" type="button" onclick="volverATomarFoto()">Volver a tomar</button>
+      <button class="camara-confirmar" type="button" onclick="confirmarFoto()">Confirmar foto</button>
+    </div>
   </div>
 </div>
 
@@ -48,6 +53,8 @@ requireAuth();
 let resumenActual = null;
 let flujoCamara = null;
 let modoCamara = "environment";
+let fotoCamaraPendiente = null;
+let urlFotoCamaraPendiente = null;
 
 function cambiarTema() {
   alternarTemaPortal();
@@ -109,10 +116,16 @@ async function subirFoto(input) {
 async function abrirCamara(event) {
   event?.stopPropagation();
   document.getElementById("menu-foto")?.classList.remove("activo");
+  limpiarFotoCamaraPendiente();
   const modal = document.getElementById("modal-camara");
-  const video = document.getElementById("video-camara");
   const estado = document.getElementById("camara-estado");
   const boton = document.getElementById("boton-capturar");
+  document.getElementById("titulo-camara").textContent = "Tomar foto";
+  document.getElementById("video-camara").style.display = "block";
+  document.getElementById("previsualizacion-camara").style.display = "none";
+  document.getElementById("camara-confirmacion").style.display = "none";
+  document.getElementById("boton-cambiar-camara").style.display = "inline-block";
+  boton.style.display = "flex";
   modal.classList.add("activo");
   estado.textContent = "Abriendo cámara...";
   estado.style.display = "block";
@@ -177,7 +190,19 @@ function liberarCamara() {
 
 function cerrarCamara() {
   liberarCamara();
+  limpiarFotoCamaraPendiente();
   document.getElementById("modal-camara").classList.remove("activo");
+}
+
+function limpiarFotoCamaraPendiente() {
+  if (urlFotoCamaraPendiente) URL.revokeObjectURL(urlFotoCamaraPendiente);
+  urlFotoCamaraPendiente = null;
+  fotoCamaraPendiente = null;
+  const preview = document.getElementById("previsualizacion-camara");
+  if (preview) {
+    preview.removeAttribute("src");
+    preview.style.display = "none";
+  }
 }
 
 async function capturarFoto() {
@@ -186,7 +211,7 @@ async function capturarFoto() {
   const textoBoton = boton.querySelector("b");
   if (!video.videoWidth || !video.videoHeight) return;
   boton.disabled = true;
-  textoBoton.textContent = "Guardando...";
+  textoBoton.textContent = "Procesando...";
 
   try {
     const maximo = 960;
@@ -197,23 +222,56 @@ async function capturarFoto() {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = Math.max(1, Math.round(ladoDestino));
     canvas.getContext("2d", { alpha: false }).drawImage(video, inicioX, inicioY, ladoOrigen, ladoOrigen, 0, 0, canvas.width, canvas.height);
-    liberarCamara();
 
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.72));
     canvas.width = canvas.height = 1;
     if (!blob) throw new Error("No se pudo procesar la foto");
 
     const extension = blob.type === "image/webp" ? "webp" : "jpg";
-    const archivo = new File([blob], `foto-camara.${extension}`, { type: blob.type || "image/jpeg" });
-    await apiUploadFile("/portal-alumno/mi-foto", archivo);
+    fotoCamaraPendiente = new File([blob], `foto-camara.${extension}`, { type: blob.type || "image/jpeg" });
+    urlFotoCamaraPendiente = URL.createObjectURL(blob);
+    const preview = document.getElementById("previsualizacion-camara");
+    preview.src = urlFotoCamaraPendiente;
+    try { await preview.decode(); } catch (_) {}
+    preview.style.display = "block";
+    video.style.display = "none";
+    document.getElementById("camara-estado").style.display = "none";
+    document.getElementById("boton-cambiar-camara").style.display = "none";
+    boton.style.display = "none";
+    document.getElementById("camara-confirmacion").style.display = "flex";
+    document.getElementById("titulo-camara").textContent = "Revisar foto";
+    liberarCamara();
+  } catch (error) {
+    alert(error.message || "No se pudo tomar la foto");
+  } finally {
+    textoBoton.textContent = "Tomar foto";
+    boton.disabled = false;
+  }
+}
+
+async function volverATomarFoto() {
+  limpiarFotoCamaraPendiente();
+  document.getElementById("titulo-camara").textContent = "Tomar foto";
+  document.getElementById("previsualizacion-camara").style.display = "none";
+  document.getElementById("video-camara").style.display = "block";
+  document.getElementById("camara-confirmacion").style.display = "none";
+  document.getElementById("boton-capturar").style.display = "flex";
+  document.getElementById("boton-cambiar-camara").style.display = "inline-block";
+  await iniciarCamara();
+}
+
+async function confirmarFoto() {
+  if (!fotoCamaraPendiente) return;
+  const botones = document.querySelectorAll("#camara-confirmacion button");
+  botones.forEach(boton => boton.disabled = true);
+  try {
+    await apiUploadFile("/portal-alumno/mi-foto", fotoCamaraPendiente);
     cerrarCamara();
     await cargar();
   } catch (error) {
     alert(error.message || "No se pudo guardar la foto");
-    cerrarCamara();
   } finally {
-    textoBoton.textContent = "Tomar foto";
-    boton.disabled = false;
+    botones.forEach(boton => boton.disabled = false);
   }
 }
 
