@@ -23,6 +23,7 @@ import time
 import logging
 import urllib.request
 import unicodedata
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -350,14 +351,31 @@ os.makedirs(FOTOS_PRODUCTOS_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 EXTENSIONES_IMAGEN_PERMITIDAS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-TAMANO_MAXIMO_FOTO_BYTES = 5 * 1024 * 1024  # 5 MB
+TAMANO_MAXIMO_FOTO_BYTES = 20 * 1024 * 1024  # admite fotos originales de camara; se comprimen al guardar
 
 
-def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str) -> str:
+def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str, optimizar: bool = False) -> str:
     if content_type not in EXTENSIONES_IMAGEN_PERMITIDAS:
         raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPEG, PNG o WEBP")
     if len(contenido) > TAMANO_MAXIMO_FOTO_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el tamano maximo de 5MB")
+        raise HTTPException(status_code=400, detail="La imagen supera el tamano maximo de 20MB")
+    if optimizar:
+        try:
+            imagen = Image.open(io.BytesIO(contenido))
+            imagen = ImageOps.exif_transpose(imagen)
+            imagen.thumbnail((960, 960), Image.Resampling.LANCZOS)
+            if imagen.mode not in ("RGB", "RGBA"):
+                imagen = imagen.convert("RGB")
+            elif imagen.mode == "RGBA":
+                fondo = Image.new("RGB", imagen.size, "white")
+                fondo.paste(imagen, mask=imagen.getchannel("A"))
+                imagen = fondo
+            salida = io.BytesIO()
+            imagen.save(salida, format="WEBP", quality=76, method=6, optimize=True)
+            contenido = salida.getvalue()
+            content_type = "image/webp"
+        except (UnidentifiedImageError, OSError, ValueError):
+            raise HTTPException(status_code=400, detail="La foto no es una imagen valida")
     extension = EXTENSIONES_IMAGEN_PERMITIDAS[content_type]
     nombre_archivo = f"{uuid.uuid4().hex}{extension}"
     ruta_destino = os.path.join(directorio, nombre_archivo)
@@ -2808,19 +2826,19 @@ async def subir_foto_cliente(
     usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor),
 ):
     """
-    Sube/reemplaza la foto de perfil de un cliente. Acepta JPEG, PNG
-    o WEBP hasta 5MB, la guarda en backend/uploads/clientes/ y
-    actualiza foto_url con la ruta servida en /uploads/...
+    Sube/reemplaza la foto de perfil. Acepta originales de camara
+    hasta 20MB y los convierte a WEBP de maximo 960x960.
     """
     cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     contenido = await foto.read()
-    _eliminar_foto_anterior(cliente.foto_url)
-    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR)
+    foto_anterior = cliente.foto_url
+    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR, optimizar=True)
     db.commit()
     db.refresh(cliente)
+    _eliminar_foto_anterior(foto_anterior)
     return cliente
 
 
@@ -7767,28 +7785,16 @@ async def actualizar_mi_foto(
     db: Session = Depends(get_db),
 ):
     """
-    Permite que el propio alumno actualice su foto desde el portal,
-    pero solo si su cuenta esta activa y no tiene deuda pendiente en
-    su membresia vigente (mismo calculo de deuda que /clientes/{id}/ficha).
+    Permite que el propio alumno actualice siempre su foto mientras
+    su cuenta este activa. La imagen se redimensiona y comprime.
     """
     if not cliente.activo:
         raise HTTPException(status_code=403, detail="Tu cuenta esta inactiva. Acercate a recepcion.")
 
-    cm_activa = (
-        db.query(models.ClienteMembresia)
-        .filter(models.ClienteMembresia.cliente_id == cliente.id, models.ClienteMembresia.activo == True)
-        .order_by(models.ClienteMembresia.fecha_fin.desc())
-        .first()
-    )
-    if cm_activa:
-        membresia = db.query(models.Membresia).filter(models.Membresia.id == cm_activa.membresia_id).first()
-        deuda = max((membresia.precio if membresia else 0.0) - (cm_activa.monto_pagado or 0.0), 0.0)
-        if deuda > 0:
-            raise HTTPException(status_code=403, detail="Tienes pagos pendientes. Acercate a recepcion para actualizar tu foto.")
-
     contenido = await foto.read()
-    _eliminar_foto_anterior(cliente.foto_url)
-    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR)
+    foto_anterior = cliente.foto_url
+    cliente.foto_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_CLIENTES_DIR, optimizar=True)
     db.commit()
     db.refresh(cliente)
+    _eliminar_foto_anterior(foto_anterior)
     return cliente

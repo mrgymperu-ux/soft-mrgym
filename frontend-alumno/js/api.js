@@ -141,7 +141,8 @@ async function apiUploadFile(path, file, fieldName = "foto") {
     const token = getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const formData = new FormData();
-    formData.append(fieldName, file);
+    const archivoOptimizado = await optimizarFotoPortal(file);
+    formData.append(fieldName, archivoOptimizado);
     let response;
     try {
         response = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: formData });
@@ -152,6 +153,24 @@ async function apiUploadFile(path, file, fieldName = "foto") {
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(data?.detail || `Error ${response.status}`);
     return data;
+}
+
+async function optimizarFotoPortal(file) {
+    if (!file?.type?.startsWith("image/") || file.size < 600 * 1024 || typeof createImageBitmap !== "function") return file;
+    try {
+        const bitmap = await createImageBitmap(file, { resizeWidth: 1280, resizeQuality: "high" });
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        ctx.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/webp", 0.74));
+        canvas.width = canvas.height = 1;
+        return blob ? new File([blob], "foto-optimizada.webp", { type: "image/webp" }) : file;
+    } catch (_) {
+        return file;
+    }
 }
 
 function urlFoto(fotoUrl) {
