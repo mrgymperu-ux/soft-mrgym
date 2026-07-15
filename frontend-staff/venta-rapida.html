@@ -269,6 +269,20 @@
         }
     }
 
+    async function sincronizarProductos() {
+        try {
+            productosCache = await apiFetch("/productos/");
+            carrito = carrito.map(item => {
+                const actualizado = productosCache.find(producto => producto.id === item.id);
+                if (!actualizado) return null;
+                return { ...item, nombre: actualizado.nombre, precio: actualizado.precio_venta, stock: actualizado.stock, cantidad: Math.min(item.cantidad, actualizado.stock) };
+            }).filter(item => item && item.cantidad > 0);
+            filtrarProductos(document.getElementById("filtro").value);
+            renderCarrito();
+        } catch (_) {}
+    }
+
+    window.addEventListener("mrgym:datos-actualizados", sincronizarProductos);
     init();
 </script>
 </body>

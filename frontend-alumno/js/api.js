@@ -80,7 +80,150 @@ function _ocultarCargando() {
     }
 }
 
+const _PORTAL_CACHE_PATHS = [
+    "/portal-alumno/resumen",
+    "/portal-alumno/mi-rutina",
+    "/portal-alumno/ejercicios-completados",
+    "/portal-alumno/agenda",
+    "/portal-alumno/salas",
+    "/portal-alumno/mi-nutricion",
+    "/portal-alumno/mi-progreso",
+    "/portal-alumno/progreso-entrenamiento",
+    "/portal-alumno/retos",
+];
+const _revalidacionesPortal = new Map();
+let _syncVersionPortal = Number(sessionStorage.getItem("alumno_sync_version") || 0);
+let _precargaPortalProgramada = false;
+
+function _cacheKeyPortal(path) {
+    const sesion = (getToken() || "anonimo").slice(-12);
+    return `alumno_cache:${sesion}:${path}`;
+}
+
+function _leerCachePortal(path) {
+    try {
+        const valor = sessionStorage.getItem(_cacheKeyPortal(path));
+        return valor ? JSON.parse(valor) : null;
+    } catch (_) { return null; }
+}
+
+function _precargarImagenesPortal(data) {
+    const pendientes = [data];
+    const urls = new Set();
+    while (pendientes.length && urls.size < 80) {
+        const valor = pendientes.pop();
+        if (!valor) continue;
+        if (Array.isArray(valor)) { pendientes.push(...valor); continue; }
+        if (typeof valor !== "object") continue;
+        Object.entries(valor).forEach(([clave, contenido]) => {
+            if (typeof contenido === "string" && /(?:foto|imagen|logo)_url$/i.test(clave) && contenido) urls.add(urlFoto(contenido));
+            else if (contenido && typeof contenido === "object") pendientes.push(contenido);
+        });
+    }
+    urls.forEach(url => { const imagen = new Image(); imagen.decoding = "async"; imagen.src = url; });
+}
+
+function _guardarCachePortal(path, data, notificar = false) {
+    const anterior = _leerCachePortal(path);
+    const cambio = !anterior || JSON.stringify(anterior.data) !== JSON.stringify(data);
+    try {
+        sessionStorage.setItem(_cacheKeyPortal(path), JSON.stringify({ data, actualizado: Date.now() }));
+    } catch (_) {}
+    _precargarImagenesPortal(data);
+    if (notificar && cambio) window.dispatchEvent(new CustomEvent("mrgym:cache-update", { detail: { path, data } }));
+    return cambio;
+}
+
+function invalidarCachePortal() {
+    const prefijo = `alumno_cache:${(getToken() || "anonimo").slice(-12)}:`;
+    Object.keys(sessionStorage).filter(clave => clave.startsWith(prefijo)).forEach(clave => sessionStorage.removeItem(clave));
+    sessionStorage.removeItem("alumno_cache_precarga");
+}
+
+async function _revalidarPortal(path, notificar = true) {
+    if (_revalidacionesPortal.has(path)) return _revalidacionesPortal.get(path);
+    const tarea = _apiFetchRed(path, { _silencioso: true })
+        .then(data => { if (data !== undefined) _guardarCachePortal(path, data, notificar); return data; })
+        .catch(() => null)
+        .finally(() => _revalidacionesPortal.delete(path));
+    _revalidacionesPortal.set(path, tarea);
+    return tarea;
+}
+
+async function precargarPortalAlumno(forzar = false) {
+    if (!getToken() || /login\.html$/.test(window.location.pathname)) return;
+    const ultima = Number(sessionStorage.getItem("alumno_cache_precarga") || 0);
+    if (!forzar && Date.now() - ultima < 60000) return;
+    sessionStorage.setItem("alumno_cache_precarga", String(Date.now()));
+    const pendientes = _PORTAL_CACHE_PATHS.filter(path => {
+        if (forzar) return true;
+        const cache = _leerCachePortal(path);
+        return !cache || Date.now() - Number(cache.actualizado || 0) > 30000;
+    });
+    await Promise.allSettled(pendientes.map(path => _revalidarPortal(path, false)));
+    if (pendientes.length) window.dispatchEvent(new CustomEvent("mrgym:cache-refresh"));
+}
+
+function _programarPrecargaPortal() {
+    if (_precargaPortalProgramada) return;
+    _precargaPortalProgramada = true;
+    setTimeout(() => precargarPortalAlumno(), 250);
+}
+
+function escucharActualizacionesPortal(paths, callback) {
+    const permitidos = new Set(paths);
+    let temporizador = null;
+    window.addEventListener("mrgym:cache-update", evento => {
+        if (!permitidos.has(evento.detail?.path)) return;
+        clearTimeout(temporizador);
+        temporizador = setTimeout(callback, 40);
+    });
+    window.addEventListener("mrgym:cache-refresh", () => {
+        clearTimeout(temporizador);
+        temporizador = setTimeout(callback, 40);
+    });
+}
+
+async function _consultarVersionPortal() {
+    if (!getToken() || document.visibilityState === "hidden") return;
+    try {
+        const response = await fetch(`${API_BASE}/sync-version`, { cache: "no-store" });
+        if (!response.ok) return;
+        const version = Number((await response.json()).version || 0);
+        if (!_syncVersionPortal) {
+            _syncVersionPortal = version;
+            sessionStorage.setItem("alumno_sync_version", String(version));
+            return;
+        }
+        if (version !== _syncVersionPortal) {
+            _syncVersionPortal = version;
+            sessionStorage.setItem("alumno_sync_version", String(version));
+            invalidarCachePortal();
+            await precargarPortalAlumno(true);
+        }
+    } catch (_) {}
+}
+
 async function apiFetch(path, options = {}) {
+    const metodo = String(options.method || "GET").toUpperCase();
+    const cacheable = metodo === "GET" && _PORTAL_CACHE_PATHS.includes(path);
+    if (cacheable) {
+        const cache = _leerCachePortal(path);
+        if (cache) {
+            if (Date.now() - Number(cache.actualizado || 0) > 5000) _revalidarPortal(path, true);
+            _programarPrecargaPortal();
+            return cache.data;
+        }
+    }
+    const data = await _apiFetchRed(path, options);
+    if (cacheable && data !== undefined) _guardarCachePortal(path, data, false);
+    if (cacheable) _programarPrecargaPortal();
+    if (metodo !== "GET") invalidarCachePortal();
+    return data;
+}
+
+async function _apiFetchRed(path, options = {}) {
+    const { _silencioso = false, ...fetchOptions } = options;
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     const token = getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -93,14 +236,20 @@ async function apiFetch(path, options = {}) {
     for (let intento = 1; intento <= MAX_REINTENTOS; intento++) {
         try {
             // Timer para mostrar overlay si tarda
-            if (!mostroLoading) {
+            if (!_silencioso && !mostroLoading) {
                 loadingTimer = setTimeout(() => {
                     mostroLoading = true;
                     _mostrarCargando();
                 }, TIMEOUT_LOADING_MS);
             }
 
-            const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+            const response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers });
+
+            const version = Number(response.headers.get("X-Sync-Version") || 0);
+            if (version) {
+                _syncVersionPortal = version;
+                sessionStorage.setItem("alumno_sync_version", String(version));
+            }
 
             if (loadingTimer) clearTimeout(loadingTimer);
 
@@ -122,7 +271,7 @@ async function apiFetch(path, options = {}) {
 
             // Si es un error de red (cold start), reintentar
             if (intento < MAX_REINTENTOS && (err.message === "Failed to fetch" || err.message === "No se pudo conectar con el servidor" || err.name === "TypeError")) {
-                if (!mostroLoading) {
+                if (!_silencioso && !mostroLoading) {
                     mostroLoading = true;
                     _mostrarCargando();
                 }
@@ -152,6 +301,12 @@ async function apiUploadFile(path, file, fieldName = "foto") {
     if (response.status === 401) { cerrarSesion(); return; }
     const data = await response.json().catch(() => null);
     if (!response.ok) throw new Error(data?.detail || `Error ${response.status}`);
+    const version = Number(response.headers.get("X-Sync-Version") || 0);
+    if (version) {
+        _syncVersionPortal = version;
+        sessionStorage.setItem("alumno_sync_version", String(version));
+    }
+    invalidarCachePortal();
     return data;
 }
 
@@ -253,3 +408,6 @@ async function aplicarBloqueoAsistenciaPortal() {
 }
 
 setTimeout(aplicarBloqueoAsistenciaPortal, 0);
+setTimeout(_consultarVersionPortal, 80);
+setInterval(_consultarVersionPortal, 15000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _consultarVersionPortal(); });

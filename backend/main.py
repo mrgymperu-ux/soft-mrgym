@@ -49,6 +49,7 @@ PASSWORD_INICIAL_ALUMNO = "1234"
 # - Fuera de ese horario deja dormir al contenedor (ahorra horas)
 # ==================================================================
 _ultimo_request_ts = time.time()
+_sync_version = int(time.time() * 1000)
 _INTERVALO_CHECK_SEG = 30           # evita superar los 15 min por desfase del contador
 _UMBRAL_INACTIVIDAD_SEG = 14 * 60   # Render duerme tras 15 min sin trafico
 _HORA_INICIO = 6    # 6 AM Lima
@@ -98,10 +99,14 @@ async def _keep_alive_loop():
 
 @app.middleware("http")
 async def track_last_request(request: Request, call_next):
-    """Registra el timestamp de cada request para el keep-alive."""
-    global _ultimo_request_ts
+    """Registra actividad y publica una version liviana de cambios de datos."""
+    global _ultimo_request_ts, _sync_version
     _ultimo_request_ts = time.time()
-    return await call_next(request)
+    response = await call_next(request)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and response.status_code < 400:
+        _sync_version += 1
+    response.headers["X-Sync-Version"] = str(_sync_version)
+    return response
 
 
 # ==================================================================
@@ -409,6 +414,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Sync-Version"],
 )
 
 
@@ -716,6 +722,12 @@ def ping():
     """Health check liviano. Usado por el keep-alive interno."""
     hora, dia = _hora_lima_actual()
     return {"status": "ok", "hora_lima": hora, "dia": dia, "keep_alive_activo": _en_horario_activo()}
+
+
+@app.get("/sync-version", tags=["Sistema"])
+def sync_version():
+    """Version minima para que los clientes consulten cambios sin descargar todos los datos."""
+    return {"version": _sync_version}
 
 
 @app.on_event("startup")

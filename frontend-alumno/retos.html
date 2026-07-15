@@ -52,6 +52,7 @@
         }
         async function cumplirReto(id) { await apiFetch(`/portal-alumno/retos/${id}/cumplir`, { method:"POST" }); cargar(); }
         cargar();
+        escucharActualizacionesPortal(["/portal-alumno/resumen", "/portal-alumno/retos"], cargar);
     </script>
 </body>
 </html>

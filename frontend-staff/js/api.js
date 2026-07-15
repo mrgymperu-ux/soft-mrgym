@@ -10,6 +10,31 @@ const SESSION_KEYS = {
     rol: "mrgym_rol",
     nombre: "mrgym_nombre",
 };
+let _syncVersionStaff = Number(sessionStorage.getItem("mrgym_sync_version") || 0);
+
+function _registrarVersionStaff(response) {
+    const version = Number(response.headers.get("X-Sync-Version") || 0);
+    if (!version) return;
+    _syncVersionStaff = version;
+    sessionStorage.setItem("mrgym_sync_version", String(version));
+}
+
+async function _consultarVersionStaff() {
+    if (!getToken() || document.visibilityState === "hidden") return;
+    try {
+        const response = await fetch(`${API_BASE_URL}/sync-version`, { cache: "no-store" });
+        if (!response.ok) return;
+        const version = Number((await response.json()).version || 0);
+        if (!_syncVersionStaff) {
+            _syncVersionStaff = version;
+            sessionStorage.setItem("mrgym_sync_version", String(version));
+        } else if (version !== _syncVersionStaff) {
+            _syncVersionStaff = version;
+            sessionStorage.setItem("mrgym_sync_version", String(version));
+            window.dispatchEvent(new CustomEvent("mrgym:datos-actualizados", { detail: { version } }));
+        }
+    } catch (_) {}
+}
 
 function guardarSesion(token, rol, nombre, permisos = {}) {
     sessionStorage.setItem(SESSION_KEYS.token, token);
@@ -64,6 +89,8 @@ async function apiFetch(path, options = {}) {
         throw new Error("No se pudo conectar con el servidor. Verifica que el backend este corriendo.");
     }
 
+    _registrarVersionStaff(response);
+
     if (response.status === 401) { cerrarSesion(); throw new Error("Sesion expirada"); }
 
     let data = null;
@@ -98,6 +125,9 @@ async function apiUploadFile(path, file, fieldName = "foto") {
         throw new Error("No se pudo conectar con el servidor. Verifica que el backend este corriendo.");
     }
 
+
+    _registrarVersionStaff(response);
+
     if (response.status === 401) { cerrarSesion(); throw new Error("Sesion expirada"); }
 
     let data = null;
@@ -114,6 +144,10 @@ function urlFoto(fotoUrl) {
     if (!fotoUrl) return null;
     return fotoUrl.startsWith("http") ? fotoUrl : `${API_BASE_URL}${fotoUrl}`;
 }
+
+setTimeout(_consultarVersionStaff, 100);
+setInterval(_consultarVersionStaff, 15000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _consultarVersionStaff(); });
 
 function avatarHtml(nombre, fotoUrl, extraStyle = "") {
     const url = urlFoto(fotoUrl);

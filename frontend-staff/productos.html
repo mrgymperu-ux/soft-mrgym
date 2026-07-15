@@ -280,6 +280,9 @@
     }
 
     cargarProductos();
+    window.addEventListener("mrgym:datos-actualizados", () => {
+        if (!document.querySelector(".modal.active")) cargarProductos();
+    });
 
     const productoEditarUrl = new URLSearchParams(window.location.search).get("editar");
     if (productoEditarUrl) abrirModalEditar(parseInt(productoEditarUrl));

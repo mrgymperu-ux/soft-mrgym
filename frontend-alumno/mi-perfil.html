@@ -220,6 +220,7 @@ async function capturarFoto() {
 document.getElementById("modal-camara").addEventListener("click", cerrarCamara);
 window.addEventListener("pagehide", liberarCamara);
 actualizarSwitchTema();
+escucharActualizacionesPortal(["/portal-alumno/resumen"], cargar);
 cargar();
 </script>
 </body>
