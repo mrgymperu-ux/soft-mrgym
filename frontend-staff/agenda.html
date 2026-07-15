@@ -510,7 +510,9 @@
     }
 
     async function cargarSalasAgenda(seleccionar = null) {
-        salasCache = await apiFetch("/salas/");
+        const respuesta = await apiFetch("/salas/");
+        if (!Array.isArray(respuesta)) throw new Error("El servidor no devolvió la lista de agendas");
+        salasCache = respuesta;
         const select = document.getElementById("f-sala");
         const actual = seleccionar !== null ? seleccionar : select.value;
         select.innerHTML = '<option value="">Sin sala</option>' + salasCache.map(s => `<option value="${s.nombre}">${s.nombre}</option>`).join("");
