@@ -22,17 +22,17 @@
                 <label>DNI</label>
                 <input type="text" id="dni" placeholder="12345678" required autofocus inputmode="numeric">
             </div>
-            <div class="form-group">
-                <label>Codigo de acceso</label>
-                <input type="password" id="codigo" placeholder="••••" required inputmode="numeric" maxlength="6">
+            <div class="form-group" id="grupo-codigo" style="display:none;">
+                <label>Contraseña</label>
+                <input type="password" id="codigo" placeholder="••••" inputmode="numeric" maxlength="6">
             </div>
-            <button type="submit" class="btn-login" id="btn">Ingresar</button>
+            <button type="submit" class="btn-login" id="btn">Continuar</button>
         </form>
     </div>
     <div id="modal-cambiar-password" class="password-modal" aria-modal="true" role="dialog">
         <div class="password-modal-card">
             <h2>Crear contraseña de 4 a 6 números</h2>
-            <p>La contraseña 1234 es temporal. Crea una nueva para continuar.</p>
+            <p>Crea una contraseña personal para ingresar a tu portal.</p>
             <div id="password-alert"></div>
             <div class="form-group">
                 <label>Crea tu contraseña</label>
@@ -58,10 +58,6 @@
             const alert = document.getElementById("password-alert");
             if (!/^\d{4,6}$/.test(nueva)) {
                 alert.innerHTML = '<div class="alert alert-error">Usa entre 4 y 6 números.</div>';
-                return;
-            }
-            if (nueva === "1234") {
-                alert.innerHTML = '<div class="alert alert-error">Elige una contraseña diferente de 1234.</div>';
                 return;
             }
             if (nueva !== confirmar) {
@@ -115,20 +111,35 @@
                 }
             }
         })();
+        let esperandoPassword = false;
         document.getElementById("form-login").addEventListener("submit", async (e) => {
             e.preventDefault();
             const btn = document.getElementById("btn");
             btn.disabled = true;
-            btn.textContent = "Ingresando...";
+            btn.textContent = esperandoPassword ? "Ingresando..." : "Comprobando...";
             document.getElementById("alert-container").innerHTML = "";
             try {
-                const sesion = await loginAlumno(
-                    document.getElementById("dni").value.trim(),
-                    document.getElementById("codigo").value.trim()
-                );
-                if (sesion.debe_cambiar_password) {
+                const dni = document.getElementById("dni").value.trim();
+                if (!esperandoPassword) {
+                    const inicio = await iniciarLoginAlumno(dni);
+                    if (inicio.debe_crear_password) {
+                        btn.disabled = false;
+                        btn.textContent = "Continuar";
+                        mostrarCambioPassword();
+                        return;
+                    }
+                    esperandoPassword = true;
+                    document.getElementById("grupo-codigo").style.display = "block";
+                    document.getElementById("dni").readOnly = true;
                     btn.disabled = false;
                     btn.textContent = "Ingresar";
+                    document.getElementById("codigo").focus();
+                    return;
+                }
+                const sesion = await loginAlumno(dni, document.getElementById("codigo").value.trim());
+                if (sesion.debe_cambiar_password) {
+                    btn.disabled = false;
+                    btn.textContent = "Continuar";
                     mostrarCambioPassword();
                 } else {
                     window.location.href = "mi-perfil.html";
@@ -137,7 +148,7 @@
                 document.getElementById("alert-container").innerHTML =
                     `<div class="alert alert-error">${err.message}</div>`;
                 btn.disabled = false;
-                btn.textContent = "Ingresar";
+                btn.textContent = esperandoPassword ? "Ingresar" : "Continuar";
             }
         });
     </script>

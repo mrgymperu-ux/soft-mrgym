@@ -348,6 +348,21 @@ async function loginAlumno(dni, codigo) {
     return data;
 }
 
+async function iniciarLoginAlumno(dni) {
+    const slug = getSlug();
+    const body = { dni };
+    if (slug) body.slug = slug;
+    const response = await fetch(`${API_BASE}/auth/iniciar-alumno`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "No se pudo iniciar el acceso");
+    if (data.access_token) guardarSesion(data.access_token, data.nombre, data.gimnasio_id, data.debe_cambiar_password);
+    return data;
+}
+
 async function cambiarPasswordAlumno(nuevaPassword) {
     const data = await apiFetch("/portal-alumno/cambiar-password", {
         method: "PUT",

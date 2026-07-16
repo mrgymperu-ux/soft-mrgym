@@ -86,6 +86,12 @@ class LoginAlumnoRequest(BaseModel):
     slug: Optional[str] = None
 
 
+class InicioLoginAlumnoRequest(BaseModel):
+    """Primer paso del portal: identifica al alumno solo por DNI."""
+    dni: str
+    slug: Optional[str] = None
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -290,6 +296,7 @@ class Cliente(ClienteBase):
     id: int
     fecha_registro: datetime
     activo: bool
+    password_configurada: bool = False
     # Calculado (no es columna): dias asistidos / dias del ULTIMO
     # plan asignado, como %. None si el cliente nunca tuvo un plan.
     porcentaje_asistencia: Optional[float] = None

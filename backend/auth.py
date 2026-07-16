@@ -467,6 +467,19 @@ def autenticar_alumno(db: Session, dni: str, codigo_acceso: str, gimnasio_id: in
     return cliente
 
 
+def obtener_alumno_para_inicio(db: Session, dni: str, gimnasio_id: int = None) -> Optional[models.Cliente]:
+    """Busca un alumno activo para decidir si debe crear o ingresar su contraseña."""
+    query = db.query(models.Cliente).filter(models.Cliente.dni == dni)
+    if gimnasio_id:
+        query = query.filter(models.Cliente.gimnasio_id == gimnasio_id)
+    cliente = query.first()
+    if not cliente or not cliente.activo:
+        return None
+    if not _suscripcion_permite_acceso(db, cliente.gimnasio_id):
+        return None
+    return cliente
+
+
 def autenticar_profesor(db: Session, dni: str, codigo_acceso: str, gimnasio_id: int = None) -> Optional[models.Empleado]:
     """
     Login de profesores de sala a su 'Zona de Profesores':

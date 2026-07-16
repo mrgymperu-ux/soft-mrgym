@@ -41,7 +41,7 @@ logger = logging.getLogger("soft-mrgym")
 
 app = FastAPI(title="Soft-Gym API")
 
-PASSWORD_INICIAL_ALUMNO = "1234"
+PASSWORD_LEGACY_ALUMNO = "1234"
 
 # ==================================================================
 # KEEP-ALIVE INTELIGENTE (anti-sleep Render free tier)
@@ -712,10 +712,11 @@ def _sembrar_gimnasio_default():
                     ))
                 except Exception:
                     pass  # tabla puede no existir aun en una BD nueva
+            # El flujo anterior asignaba una clave comun. Los alumnos que aun
+            # la conservan pasan al nuevo flujo seguro de crear su propia clave.
             conn.execute(text(
-                "UPDATE clientes SET codigo_acceso = :password "
-                "WHERE codigo_acceso IS NULL OR TRIM(codigo_acceso) = ''"
-            ), {"password": PASSWORD_INICIAL_ALUMNO})
+                "UPDATE clientes SET codigo_acceso = NULL WHERE codigo_acceso = :password_legacy"
+            ), {"password_legacy": PASSWORD_LEGACY_ALUMNO})
             conn.commit()
 
         # 4. Marcar al primer admin como superadmin (idempotente)
@@ -1792,8 +1793,31 @@ def login_alumno(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db
         rol="alumno",
         nombre=cliente.nombre,
         gimnasio_id=cliente.gimnasio_id,
-        debe_cambiar_password=cliente.codigo_acceso == PASSWORD_INICIAL_ALUMNO,
+        debe_cambiar_password=False,
     )
+
+
+@app.post("/auth/iniciar-alumno", tags=["Auth"])
+def iniciar_login_alumno(datos: schemas.InicioLoginAlumnoRequest, db: Session = Depends(get_db)):
+    """Indica si pide contraseña o permite crearla en el primer ingreso."""
+    gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
+    cliente = auth.obtener_alumno_para_inicio(db, datos.dni.strip(), gimnasio_id=gid)
+    if not cliente:
+        raise HTTPException(status_code=401, detail="No encontramos un alumno activo con ese DNI")
+    if cliente.codigo_acceso and cliente.codigo_acceso.strip():
+        return {"requiere_password": True, "debe_crear_password": False}
+
+    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    return {
+        "requiere_password": False,
+        "debe_crear_password": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "rol": "alumno",
+        "nombre": cliente.nombre,
+        "gimnasio_id": cliente.gimnasio_id,
+        "debe_cambiar_password": True,
+    }
 
 
 @app.post("/auth/login-profesor", response_model=schemas.TokenResponse, tags=["Auth"])
@@ -2598,7 +2622,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db),
     if cliente.dni and q(db, models.Cliente, usuario).filter(models.Cliente.dni == cliente.dni).first():
         raise HTTPException(status_code=400, detail="Ya existe un cliente con ese DNI en este gimnasio")
     valores = cliente.model_dump()
-    valores["codigo_acceso"] = (valores.get("codigo_acceso") or PASSWORD_INICIAL_ALUMNO).strip()
+    valores["codigo_acceso"] = None
     db_cliente = models.Cliente(**valores, gimnasio_id=get_gid(usuario))
     db.add(db_cliente)
     db.commit()
@@ -2833,9 +2857,9 @@ def reset_password_cliente(
     cliente = q(db, models.Cliente, usuario).filter(models.Cliente.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    cliente.codigo_acceso = PASSWORD_INICIAL_ALUMNO
+    cliente.codigo_acceso = None
     db.commit()
-    return {"message": "Contraseña restablecida", "password_temporal": PASSWORD_INICIAL_ALUMNO}
+    return {"message": "El alumno deberá crear una nueva contraseña al ingresar"}
 
 
 @app.delete("/clientes/{cliente_id}", tags=["Clientes"])
@@ -7785,14 +7809,6 @@ def marcar_asistencia_desde_portal(
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == cliente.gimnasio_id).first()
     if not gimnasio or gimnasio.latitud is None or gimnasio.longitud is None:
         raise HTTPException(status_code=409, detail="El gimnasio aun no configuro la ubicacion para marcar asistencia")
-    if datos.precision_metros is not None and datos.precision_metros > 250:
-        raise HTTPException(
-            status_code=400,
-            detail=(f"La ubicacion del celular aun tiene una precision aproximada de "
-                    f"{int(round(datos.precision_metros))} metros. Activa la ubicacion precisa, "
-                    "acercate a una ventana e intenta nuevamente"),
-        )
-
     hoy = hoy_lima()
     membresia = db.query(models.ClienteMembresia).filter(
         models.ClienteMembresia.cliente_id == cliente.id,
@@ -7813,9 +7829,13 @@ def marcar_asistencia_desde_portal(
     distancia = _distancia_metros(datos.latitud, datos.longitud, gimnasio.latitud, gimnasio.longitud)
     radio_permitido = float(gimnasio.radio_asistencia_metros or 150.0)
     if distancia > radio_permitido:
+        detalle_precision = ""
+        if datos.precision_metros is not None and datos.precision_metros > 250:
+            detalle_precision = " La ubicacion del celular es aproximada; activa Ubicacion precisa para mejorarla."
         raise HTTPException(
             status_code=403,
-            detail=f"Debes estar en el gimnasio para marcar asistencia. Estas aproximadamente a {int(round(distancia))} metros",
+            detail=(f"Debes estar en el gimnasio para marcar asistencia. Estas aproximadamente a "
+                    f"{int(round(distancia))} metros.{detalle_precision}"),
         )
 
     asistencia = models.Asistencia(
@@ -7838,8 +7858,8 @@ def cambiar_password_alumno(
     nueva = datos.nueva_password.strip()
     if not nueva.isdigit():
         raise HTTPException(status_code=400, detail="La contraseña debe contener solo números")
-    if nueva == PASSWORD_INICIAL_ALUMNO:
-        raise HTTPException(status_code=400, detail="Elige una contraseña diferente de 1234")
+    if nueva == PASSWORD_LEGACY_ALUMNO:
+        raise HTTPException(status_code=400, detail="Elige una contraseña menos predecible")
     cliente.codigo_acceso = nueva
     db.commit()
     return {"message": "Contraseña actualizada correctamente"}

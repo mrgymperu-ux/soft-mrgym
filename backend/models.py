@@ -283,6 +283,10 @@ class Cliente(Base):
     membresias_cliente = relationship("ClienteMembresia", back_populates="cliente")
     medidas = relationship("Medida", back_populates="cliente")
 
+    @property
+    def password_configurada(self):
+        return bool(self.codigo_acceso and self.codigo_acceso.strip())
+
 
 # ==================================================================
 # 2b. CLIENTES ANTIGUOS / HISTORICOS (base historica, ej. 8000 alumnos)

@@ -127,7 +127,7 @@
         </div>
         <div class="card">
             <div class="search-bar">
-                <input type="search" id="buscador" name="busqueda_clientes" value="" autocomplete="off" placeholder="Buscar por nombre o DNI..." oninput="debouncarBusqueda(this.value)">
+                <input type="search" id="buscador" value="" autocomplete="new-password" data-lpignore="true" data-form-type="other" readonly placeholder="Buscar por nombre o DNI..." onfocus="this.removeAttribute('readonly');this.value=''" onpointerdown="this.removeAttribute('readonly')" oninput="debouncarBusqueda(this.value)">
             </div>
             <button id="filtros-toggle" class="filtros-toggle" type="button" onclick="alternarFiltrosMovil()">Filtros ▾</button>
             <div class="filtros-bar">
@@ -187,7 +187,7 @@
                             <tr><td><strong>Fecha de renovacion</strong></td><td id="d-renovacion"></td></tr>
                             <tr><td><strong>Fecha de vencimiento</strong></td><td id="d-vencimiento"></td></tr>
                             <tr><td><strong>Asistencia</strong></td><td id="d-asistencias"></td></tr>
-                            <tr><td><strong>Contraseña portal alumno</strong></td><td><span id="d-codigo"></span> <button type="button" class="btn btn-secondary btn-sm" onclick="resetPasswordCliente()" style="margin-left:8px;">Restablecer a 1234</button></td></tr>
+                            <tr><td><strong>Acceso al portal</strong></td><td><span id="d-codigo"></span> <button type="button" class="btn btn-secondary btn-sm" onclick="resetPasswordCliente()" style="margin-left:8px;">Solicitar nueva contraseña</button></td></tr>
                         </tbody></table>
                     </div>
                 </div>
@@ -222,7 +222,6 @@
         <div class="form-row"><label>Celular</label><input type="text" id="f-telefono" placeholder="987654321"></div>
         <div class="form-row"><label>Email</label><input type="email" id="f-email" placeholder="juan@email.com"></div>
         <div class="form-row"><label>Fecha de Nacimiento</label><input type="date" id="f-nacimiento"></div>
-        <div class="form-row"><label>Contraseña portal</label><input type="password" id="f-codigo" placeholder="Dejar en blanco para conservar" inputmode="numeric" maxlength="6"></div>
         <div class="form-row foto-row">
             <label>Foto</label>
             <div style="display:flex;align-items:center;gap:12px;flex:1;">
@@ -543,7 +542,9 @@
         document.getElementById("d-renovacion").textContent = clienteActual.fecha_renovacion ? formatFecha(clienteActual.fecha_renovacion) : "—";
         document.getElementById("d-vencimiento").textContent = clienteActual.fecha_vencimiento ? formatFecha(clienteActual.fecha_vencimiento) : "—";
         document.getElementById("d-asistencias").textContent = (clienteActual.porcentaje_asistencia !== null && clienteActual.porcentaje_asistencia !== undefined) ? `${clienteActual.porcentaje_asistencia}% (dias asistidos / dias del ultimo plan)` : "Sin plan asignado aún";
-        document.getElementById("d-codigo").textContent = "Configurada";
+        document.getElementById("d-codigo").textContent = clienteActual.password_configurada
+            ? "Contraseña configurada"
+            : "Pendiente: la creará al ingresar";
         document.getElementById("btn-eliminar-ficha").style.display = puedeEliminar() ? "inline-block" : "none";
         showTab("datos", document.querySelector(".tab"));
     }
@@ -1441,7 +1442,6 @@
         document.getElementById("f-email").value = clienteActual.email || "";
         document.getElementById("f-nacimiento").value = clienteActual.fecha_nacimiento || "";
         document.getElementById("f-direccion").value = clienteActual.direccion || "";
-        document.getElementById("f-codigo").value = "";
         document.getElementById("f-genero").value = clienteActual.genero || "";
         document.getElementById("f-foto").value = "";
         document.getElementById("f-foto-nombre").textContent = "";
@@ -1463,8 +1463,6 @@
             direccion: document.getElementById("f-direccion").value.trim() || null,
             genero: document.getElementById("f-genero").value || null,
         };
-        const passwordPortal = document.getElementById("f-codigo").value.trim();
-        if (passwordPortal) datos.codigo_acceso = passwordPortal;
         if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
         try {
             await apiFetch(`/clientes/${clienteActual.id}`, { method: "PUT", body: JSON.stringify(datos) });
@@ -1485,10 +1483,10 @@
 
     async function resetPasswordCliente() {
         if (!clienteActual) return;
-        if (!(await confirmDialog("¿Restablecer la contraseña del socio a 1234?"))) return;
+        if (!(await confirmDialog("¿Solicitar que el alumno cree una nueva contraseña en su próximo ingreso?"))) return;
         try {
             await apiFetch(`/clientes/${clienteActual.id}/reset-password`, { method: "POST" });
-            showSuccess("Contraseña restablecida a 1234");
+            showSuccess("El alumno deberá crear una nueva contraseña al ingresar");
         } catch (e) { showError(e.message); }
     }
 
