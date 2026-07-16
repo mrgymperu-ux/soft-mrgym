@@ -163,27 +163,6 @@
                 <button class="btn btn-primary" onclick="guardarClausulas()">Guardar modelo</button>
             </div>
 
-            <!-- Comisiones por ventas (solo admin) -->
-            <div class="config-section" id="seccion-comisiones" style="display:none;grid-column:1/-1;">
-                <h3>💹 Comisiones por Ventas <span style="font-size:0.6em;color:#636E72;font-weight:normal;">(solo administrador)</span></h3>
-                <p style="font-size:0.82em;color:#636E72;">Define a partir de que % de cumplimiento de la meta mensual (ver "Metas y Comisiones") se activa cada tramo de comision. Se aplica el tramo mas alto alcanzado.</p>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-                    <div>
-                        <h4 style="font-size:0.85em;margin-bottom:8px;">Comision por venta de Membresias (por tramos, segun % de meta)</h4>
-                        <div id="tramos-membresia"></div>
-                        <button class="btn btn-secondary btn-sm" onclick="agregarTramo('membresia')">+ Agregar tramo</button>
-                    </div>
-                    <div>
-                        <h4 style="font-size:0.85em;margin-bottom:8px;">Comision por venta de Productos</h4>
-                        <p style="font-size:0.78em;color:#636E72;margin:-4px 0 8px;">No depende de metas: se aplica el mismo % a cada venta de producto.</p>
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <input type="number" id="c-comision-producto" step="0.1" min="0" style="width:100px;padding:8px;border:1px solid var(--color-borde);border-radius:8px;">
-                            <span>% sobre cada venta de producto</span>
-                        </div>
-                        <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="guardarComisionProducto()">Guardar</button>
-                    </div>
-                </div>
-            </div>
         </div>
     </main>
 </div>
@@ -212,12 +191,6 @@
 
         document.getElementById("info-usuario").textContent = getNombreUsuario() || "—";
         document.getElementById("info-rol").textContent = getRol() || "—";
-
-        if (esAdministrador()) {
-            document.getElementById("seccion-comisiones").style.display = "block";
-            document.getElementById("c-comision-producto").value = config.comision_producto_porcentaje || 0;
-            await cargarTramosComision();
-        }
 
         renderSelectorTemas(config.tema || TEMA_POR_DEFECTO);
         renderSelectorModo(config.modo_tema || MODO_POR_DEFECTO);
@@ -276,61 +249,6 @@
             await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ tema: clave }) });
             configuracionCache = null;
             showSuccess("Tema actualizado para todo el staff");
-        } catch (e) { showError(e.message); }
-    }
-
-    async function guardarComisionProducto() {
-        try {
-            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ comision_producto_porcentaje: parseFloat(document.getElementById("c-comision-producto").value) || 0 }) });
-            showSuccess("Comision de productos actualizada");
-        } catch (e) { showError(e.message); }
-    }
-
-    let tramosCache = [];
-
-    async function cargarTramosComision() {
-        tramosCache = await apiFetch("/comisiones/tramos");
-        renderTramos("membresia");
-    }
-
-    function renderTramos(tipo) {
-        const contenedor = document.getElementById(`tramos-${tipo}`);
-        const items = tramosCache.filter(t => t.tipo === tipo);
-        if (!items.length) {
-            contenedor.innerHTML = '<p style="font-size:0.8em;color:#636E72;">Sin tramos configurados</p>';
-            return;
-        }
-        contenedor.innerHTML = items.map(t => `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                <span style="font-size:0.82em;white-space:nowrap;">Si llega a</span>
-                <input type="number" value="${t.porcentaje_meta_minimo}" style="width:70px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;" onchange="actualizarTramo(${t.id},'porcentaje_meta_minimo',this.value)">
-                <span style="font-size:0.82em;">% meta →</span>
-                <input type="number" value="${t.porcentaje_comision}" style="width:70px;padding:6px;border:1px solid var(--color-borde);border-radius:6px;" onchange="actualizarTramo(${t.id},'porcentaje_comision',this.value)">
-                <span style="font-size:0.82em;">% comision</span>
-                <button class="btn btn-sm btn-danger" onclick="eliminarTramo(${t.id})">🗑️</button>
-            </div>
-        `).join("");
-    }
-
-    async function agregarTramo(tipo) {
-        try {
-            await apiFetch("/comisiones/tramos", { method: "POST", body: JSON.stringify({ tipo: "membresia", porcentaje_meta_minimo: 30, porcentaje_comision: 2 }) });
-            await cargarTramosComision();
-        } catch (e) { showError(e.message); }
-    }
-
-    async function actualizarTramo(id, campo, valor) {
-        try {
-            await apiFetch(`/comisiones/tramos/${id}`, { method: "PUT", body: JSON.stringify({ [campo]: parseFloat(valor) }) });
-            showSuccess("Tramo actualizado");
-            await cargarTramosComision();
-        } catch (e) { showError(e.message); }
-    }
-
-    async function eliminarTramo(id) {
-        try {
-            await apiFetch(`/comisiones/tramos/${id}`, { method: "DELETE" });
-            await cargarTramosComision();
         } catch (e) { showError(e.message); }
     }
 

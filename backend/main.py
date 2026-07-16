@@ -7238,6 +7238,77 @@ def resumen_comisiones(
     return resultado
 
 
+@app.get("/metas/evolucion", tags=["Metas"])
+def evolucion_metas_anual(
+    anio: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Resumen mensual compacto para comparar metas, ventas y comisiones."""
+    gid = get_gid(usuario)
+    metas = {
+        m.mes: m for m in q(db, models.MetaMensual, usuario)
+        .filter(models.MetaMensual.anio == anio).all()
+    }
+    config = _configuracion_del_gym(db, usuario)
+    porcentaje_producto = float(config.comision_producto_porcentaje or 0.0)
+    tramos = q(db, models.TramoComision, usuario).filter(
+        models.TramoComision.activo == True,
+        models.TramoComision.tipo == "membresia",
+    ).all()
+    evolucion = []
+
+    for mes in range(1, 13):
+        desde = date(anio, mes, 1)
+        hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+        meta = metas.get(mes)
+        meta_membresias = float(meta.meta_membresias or 0.0) if meta else 0.0
+        meta_productos = float(meta.meta_productos or 0.0) if meta else 0.0
+
+        membresias_por_usuario = dict(db.query(
+            models.ClienteMembresia.vendido_por_id,
+            func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0),
+        ).join(
+            models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id,
+        ).filter(
+            models.Cliente.gimnasio_id == gid,
+            models.ClienteMembresia.fecha_inicio >= desde,
+            models.ClienteMembresia.fecha_inicio < hasta,
+        ).group_by(models.ClienteMembresia.vendido_por_id).all())
+        productos_por_usuario = dict(db.query(
+            models.Venta.usuario_id,
+            func.coalesce(func.sum(models.Venta.total), 0.0),
+        ).filter(
+            models.Venta.gimnasio_id == gid,
+            models.Venta.fecha_venta >= desde,
+            models.Venta.fecha_venta < hasta,
+        ).group_by(models.Venta.usuario_id).all())
+
+        ventas_membresias = round(sum(float(v or 0) for v in membresias_por_usuario.values()), 2)
+        ventas_productos = round(sum(float(v or 0) for v in productos_por_usuario.values()), 2)
+        comisiones = 0.0
+        for usuario_id in set(membresias_por_usuario) | set(productos_por_usuario):
+            if usuario_id is None:
+                continue
+            venta_m = float(membresias_por_usuario.get(usuario_id) or 0.0)
+            venta_p = float(productos_por_usuario.get(usuario_id) or 0.0)
+            cumplimiento = (venta_m / meta_membresias * 100) if meta_membresias else 0.0
+            comisiones += venta_m * _comision_aplicable(cumplimiento, tramos) / 100
+            comisiones += venta_p * porcentaje_producto / 100
+
+        evolucion.append({
+            "mes": mes,
+            "meta_membresias": round(meta_membresias, 2),
+            "ventas_membresias": ventas_membresias,
+            "cumplimiento_membresias": round(ventas_membresias / meta_membresias * 100, 1) if meta_membresias else 0.0,
+            "meta_productos": round(meta_productos, 2),
+            "ventas_productos": ventas_productos,
+            "cumplimiento_productos": round(ventas_productos / meta_productos * 100, 1) if meta_productos else 0.0,
+            "comisiones": round(comisiones, 2),
+        })
+    return evolucion
+
+
 # ==================================================================
 # SAAS / SUPER-ADMIN (gestion de gimnasios y planes)
 # ==================================================================

@@ -146,7 +146,8 @@ function urlFoto(fotoUrl) {
 }
 
 setTimeout(_consultarVersionStaff, 100);
-setInterval(_consultarVersionStaff, 15000);
+// Sincronizacion ligera para reflejar asistencias y ventas casi en tiempo real.
+setInterval(_consultarVersionStaff, 5000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _consultarVersionStaff(); });
 
 function avatarHtml(nombre, fotoUrl, extraStyle = "") {

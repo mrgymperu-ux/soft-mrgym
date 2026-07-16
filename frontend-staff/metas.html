@@ -8,11 +8,27 @@
     <script src="js/tema.js"></script>
     <style>
         .metas-grid { width: 100%; border-collapse: collapse; }
-        .metas-grid th, .metas-grid td { padding: 10px 14px; border-bottom: 1px solid var(--color-borde); text-align: left; }
-        .metas-grid input { width: 120px; padding: 7px 9px; border: 1px solid var(--color-borde); border-radius: 8px; font-size: 0.88em; }
+        .metas-grid th, .metas-grid td { padding: 5px 10px; border-bottom: 1px solid var(--color-borde); text-align: left; height:34px; }
+        .metas-grid input { width: 112px; height:30px; padding: 3px 8px; border: 1px solid var(--color-borde); border-radius: 5px; font-size: 0.84em; }
         .metas-grid tr.mes-actual td { background: #EAF1FF; }
         .barra-progreso { background: #F0F0F5; border-radius: 8px; height: 8px; overflow: hidden; width: 100px; }
         .barra-progreso-fill { height: 100%; background: var(--color-exito); }
+        .resumen-grid { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px; }
+        .metrica-card { background:var(--color-blanco);border:1px solid var(--color-borde);border-radius:10px;padding:13px 15px;box-shadow:var(--sombra); }
+        .metrica-card span { display:block;color:var(--color-texto-secundario);font-size:.75em;margin-bottom:5px; }
+        .metrica-card strong { font-size:1.25em; }
+        .acordeon-card { padding:0;overflow:hidden;margin-bottom:12px; }
+        .acordeon-header { min-height:48px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--color-borde); }
+        .acordeon-header .card-title { margin:0;font-size:.96em; }
+        .acordeon-toggle { width:30px;height:30px;padding:0;border:1px solid var(--color-borde);background:transparent;color:var(--color-texto);cursor:pointer;font-size:1.05em; }
+        .acordeon-body { padding:0; }
+        .acordeon-card.comprimido .acordeon-body { display:none; }
+        .acordeon-card.comprimido .acordeon-header { border-bottom:0; }
+        .config-comisiones { display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:14px 16px; }
+        .tramo-fila { display:flex;align-items:center;gap:7px;margin-bottom:5px;min-height:30px;flex-wrap:wrap; }
+        .tramo-fila input { width:66px;height:29px;padding:3px 6px;border:1px solid var(--color-borde); }
+        .cumplimiento-chip { display:inline-block;min-width:52px;padding:3px 7px;background:#edf7f0;color:#287a4d;font-weight:700;font-size:.78em;text-align:center; }
+        @media(max-width:900px){.resumen-grid{grid-template-columns:1fr 1fr}.config-comisiones{grid-template-columns:1fr}.metas-grid{min-width:760px}}
     </style>
 </head>
 <body>
@@ -34,28 +50,35 @@
         <div id="aviso-no-admin" style="display:none;" class="alert alert-error">Esta seccion es solo para administradores.</div>
 
         <div id="contenido-admin">
-            <div class="card">
-                <div class="card-header"><h3 class="card-title">Proyeccion de metas mensuales (1 año)</h3></div>
-                <div class="table-container">
-                    <table class="metas-grid">
-                        <thead><tr><th>Mes</th><th>Meta Membresias</th><th>Meta Productos</th><th>Notas</th><th></th></tr></thead>
-                        <tbody id="tabla-metas"></tbody>
-                    </table>
-                </div>
+            <div class="resumen-grid">
+                <div class="metrica-card"><span>Ventas de membresías</span><strong id="kpi-ventas-membresias">—</strong></div>
+                <div class="metrica-card"><span>Ventas de productos</span><strong id="kpi-ventas-productos">—</strong></div>
+                <div class="metrica-card"><span>Cumplimiento anual</span><strong id="kpi-cumplimiento">—</strong></div>
+                <div class="metrica-card"><span>Comisiones generadas</span><strong id="kpi-comisiones">—</strong></div>
             </div>
 
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Comisiones del mes</h3>
-                    <select id="sel-mes-comisiones" onchange="cargarComisiones()" style="padding:8px 12px;border:1px solid var(--color-borde);border-radius:8px;"></select>
+            <section class="card acordeon-card" id="seccion-evolucion">
+                <div class="acordeon-header"><h3 class="card-title">Evolución mensual</h3><button class="acordeon-toggle" onclick="toggleSeccion('seccion-evolucion',this)" title="Comprimir">−</button></div>
+                <div class="acordeon-body table-container"><table class="metas-grid"><thead><tr><th>Mes</th><th>Meta membresías</th><th>Ventas</th><th>Cumpl.</th><th>Meta productos</th><th>Ventas</th><th>Cumpl.</th><th>Comisiones</th></tr></thead><tbody id="tabla-evolucion"></tbody></table></div>
+            </section>
+
+            <section class="card acordeon-card" id="seccion-metas">
+                <div class="acordeon-header"><h3 class="card-title">Metas mensuales</h3><button class="acordeon-toggle" onclick="toggleSeccion('seccion-metas',this)" title="Comprimir">−</button></div>
+                <div class="acordeon-body table-container"><table class="metas-grid"><thead><tr><th>Mes</th><th>Meta membresías</th><th>Meta productos</th><th>Notas</th><th></th></tr></thead><tbody id="tabla-metas"></tbody></table></div>
+            </section>
+
+            <section class="card acordeon-card" id="seccion-config-comisiones">
+                <div class="acordeon-header"><h3 class="card-title">Configuración de comisiones por ventas</h3><button class="acordeon-toggle" onclick="toggleSeccion('seccion-config-comisiones',this)" title="Comprimir">−</button></div>
+                <div class="acordeon-body config-comisiones">
+                    <div><h4 style="margin:0 0 8px;font-size:.86em;">Membresías por tramos</h4><div id="tramos-membresia"></div><button class="btn btn-secondary btn-sm" onclick="agregarTramo('membresia')">+ Agregar tramo</button></div>
+                    <div><h4 style="margin:0 0 5px;font-size:.86em;">Productos</h4><p style="font-size:.76em;color:var(--color-texto-secundario);margin:0 0 8px;">Porcentaje fijo sobre cada venta.</p><div class="tramo-fila"><input type="number" id="c-comision-producto" step="0.1" min="0"><span>% por venta</span><button class="btn btn-primary btn-sm" onclick="guardarComisionProducto()">Guardar</button></div></div>
                 </div>
-                <div class="table-container">
-                    <table class="table">
-                        <thead><tr><th>Trabajador</th><th>Ventas Membresias</th><th>% Meta</th><th>Comision</th><th>Ventas Productos</th><th>% Meta</th><th>Comision</th><th>Total</th></tr></thead>
-                        <tbody id="tabla-comisiones"><tr class="empty-row"><td colspan="8">Selecciona un mes</td></tr></tbody>
-                    </table>
-                </div>
-            </div>
+            </section>
+
+            <section class="card acordeon-card" id="seccion-comisiones-mes">
+                <div class="acordeon-header"><h3 class="card-title">Comisiones del mes</h3><div style="display:flex;align-items:center;gap:8px;"><select id="sel-mes-comisiones" onchange="cargarComisiones()" style="padding:6px 10px;border:1px solid var(--color-borde);"></select><button class="acordeon-toggle" onclick="toggleSeccion('seccion-comisiones-mes',this)" title="Comprimir">−</button></div></div>
+                <div class="acordeon-body table-container"><table class="table"><thead><tr><th>Trabajador</th><th>Ventas membresías</th><th>% Meta</th><th>Comisión</th><th>Ventas productos</th><th>% Meta</th><th>Comisión</th><th>Total</th></tr></thead><tbody id="tabla-comisiones"><tr class="empty-row"><td colspan="8">Selecciona un mes</td></tr></tbody></table></div>
+            </section>
         </div>
     </main>
 </div>
@@ -66,6 +89,13 @@
     requireAuth();
     let anioActual = new Date().getFullYear();
     const NOMBRES_MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+    let tramosCache = [];
+
+    function toggleSeccion(id, boton) {
+        const seccion = document.getElementById(id);
+        seccion.classList.toggle("comprimido");
+        boton.textContent = seccion.classList.contains("comprimido") ? "+" : "−";
+    }
 
     if (!esAdministrador()) {
         document.getElementById("aviso-no-admin").style.display = "block";
@@ -78,16 +108,24 @@
     function cambiarAnio(delta) {
         anioActual += delta;
         document.getElementById("anio-actual").textContent = anioActual;
+        actualizarSelectorMes();
         cargarMetas();
+        cargarEvolucion();
+        cargarComisiones();
     }
 
     async function init() {
+        actualizarSelectorMes();
+        const config = await getConfiguracion();
+        document.getElementById("c-comision-producto").value = config.comision_producto_porcentaje || 0;
+        await Promise.all([cargarMetas(), cargarTramosComision(), cargarEvolucion(), cargarComisiones()]);
+    }
+
+    function actualizarSelectorMes() {
         const hoy = new Date();
         const selMes = document.getElementById("sel-mes-comisiones");
         selMes.innerHTML = NOMBRES_MESES.map((n, i) => `<option value="${i+1}">${n} ${anioActual}</option>`).join("");
         selMes.value = hoy.getFullYear() === anioActual ? (hoy.getMonth() + 1) : 1;
-        await cargarMetas();
-        await cargarComisiones();
     }
 
     async function cargarMetas() {
@@ -120,7 +158,61 @@
         try {
             await apiFetch(`/metas/${anioActual}/${mes}`, { method: "PUT", body: JSON.stringify(datos) });
             showSuccess(`Meta de ${NOMBRES_MESES[mes-1]} guardada`);
+            cargarEvolucion();
         } catch (e) { showError(e.message); }
+    }
+
+    async function cargarEvolucion() {
+        try {
+            const [filas, config] = await Promise.all([apiFetch(`/metas/evolucion?anio=${anioActual}`), getConfiguracion()]);
+            const tbody = document.getElementById("tabla-evolucion");
+            tbody.innerHTML = filas.map(f => `<tr>
+                <td><strong>${NOMBRES_MESES[f.mes - 1]}</strong></td>
+                <td>${formatCurrency(f.meta_membresias, config.moneda)}</td><td>${formatCurrency(f.ventas_membresias, config.moneda)}</td><td><span class="cumplimiento-chip">${f.cumplimiento_membresias}%</span></td>
+                <td>${formatCurrency(f.meta_productos, config.moneda)}</td><td>${formatCurrency(f.ventas_productos, config.moneda)}</td><td><span class="cumplimiento-chip">${f.cumplimiento_productos}%</span></td>
+                <td><strong>${formatCurrency(f.comisiones, config.moneda)}</strong></td>
+            </tr>`).join("");
+            const suma = campo => filas.reduce((total, f) => total + Number(f[campo] || 0), 0);
+            const ventasM = suma("ventas_membresias"), ventasP = suma("ventas_productos"), metaM = suma("meta_membresias"), metaP = suma("meta_productos");
+            document.getElementById("kpi-ventas-membresias").textContent = formatCurrency(ventasM, config.moneda);
+            document.getElementById("kpi-ventas-productos").textContent = formatCurrency(ventasP, config.moneda);
+            document.getElementById("kpi-cumplimiento").textContent = (metaM + metaP) ? `${Math.round((ventasM + ventasP) / (metaM + metaP) * 100)}%` : "0%";
+            document.getElementById("kpi-comisiones").textContent = formatCurrency(suma("comisiones"), config.moneda);
+        } catch (e) { showError(e.message); }
+    }
+
+    async function guardarComisionProducto() {
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ comision_producto_porcentaje: parseFloat(document.getElementById("c-comision-producto").value) || 0 }) });
+            configuracionCache = null;
+            showSuccess("Comisión de productos actualizada");
+            cargarEvolucion(); cargarComisiones();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarTramosComision() {
+        tramosCache = await apiFetch("/comisiones/tramos");
+        const contenedor = document.getElementById("tramos-membresia");
+        const items = tramosCache.filter(t => t.tipo === "membresia");
+        contenedor.innerHTML = items.length ? items.map(t => `<div class="tramo-fila">
+            <span style="font-size:.8em;">Desde</span><input type="number" value="${t.porcentaje_meta_minimo}" onchange="actualizarTramo(${t.id},'porcentaje_meta_minimo',this.value)"><span style="font-size:.8em;">% meta →</span>
+            <input type="number" value="${t.porcentaje_comision}" onchange="actualizarTramo(${t.id},'porcentaje_comision',this.value)"><span style="font-size:.8em;">% comisión</span>
+            <button class="btn btn-sm btn-danger" onclick="eliminarTramo(${t.id})">×</button></div>`).join("") : '<p style="font-size:.8em;color:var(--color-texto-secundario);">Sin tramos configurados</p>';
+    }
+
+    async function agregarTramo() {
+        try { await apiFetch("/comisiones/tramos", { method: "POST", body: JSON.stringify({ tipo: "membresia", porcentaje_meta_minimo: 30, porcentaje_comision: 2 }) }); await cargarTramosComision(); }
+        catch (e) { showError(e.message); }
+    }
+
+    async function actualizarTramo(id, campo, valor) {
+        try { await apiFetch(`/comisiones/tramos/${id}`, { method: "PUT", body: JSON.stringify({ [campo]: parseFloat(valor) }) }); showSuccess("Tramo actualizado"); await cargarTramosComision(); cargarEvolucion(); }
+        catch (e) { showError(e.message); }
+    }
+
+    async function eliminarTramo(id) {
+        try { await apiFetch(`/comisiones/tramos/${id}`, { method: "DELETE" }); await cargarTramosComision(); cargarEvolucion(); }
+        catch (e) { showError(e.message); }
     }
 
     async function cargarComisiones() {

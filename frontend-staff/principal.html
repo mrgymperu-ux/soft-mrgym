@@ -1079,7 +1079,11 @@
     cargarProductosMini();
     cargarOtrosIngresos();
     setInterval(cargarDashboard, 120000);
-    setInterval(cargarUltimosIngresos, 60000);
+    setInterval(cargarUltimosIngresos, 15000);
+    window.addEventListener("mrgym:datos-actualizados", () => {
+        cargarUltimosIngresos();
+        cargarDashboard();
+    });
 </script>
 </body>
 </html>
