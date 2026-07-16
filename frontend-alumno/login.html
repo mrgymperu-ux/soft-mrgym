@@ -24,23 +24,23 @@
             </div>
             <div class="form-group" id="grupo-codigo" style="display:none;">
                 <label>Contraseña</label>
-                <input type="password" id="codigo" placeholder="••••" inputmode="numeric" maxlength="6">
+                <input type="password" id="codigo" placeholder="••••••" inputmode="numeric" maxlength="12">
             </div>
             <button type="submit" class="btn-login" id="btn">Continuar</button>
         </form>
     </div>
     <div id="modal-cambiar-password" class="password-modal" aria-modal="true" role="dialog">
         <div class="password-modal-card">
-            <h2>Crear contraseña de 4 a 6 números</h2>
+            <h2>Crear contraseña de 6 a 12 números</h2>
             <p>Crea una contraseña personal para ingresar a tu portal.</p>
             <div id="password-alert"></div>
             <div class="form-group">
                 <label>Crea tu contraseña</label>
-                <input type="password" id="nueva-password" inputmode="numeric" maxlength="6" placeholder="4 a 6 números">
+                <input type="password" id="nueva-password" inputmode="numeric" maxlength="12" placeholder="6 a 12 números">
             </div>
             <div class="form-group">
                 <label>Repite la contraseña</label>
-                <input type="password" id="confirmar-password" inputmode="numeric" maxlength="6" placeholder="Repite la contraseña">
+                <input type="password" id="confirmar-password" inputmode="numeric" maxlength="12" placeholder="Repite la contraseña">
             </div>
             <button type="button" class="btn-login" id="btn-cambiar-password" onclick="confirmarCambioPassword()">Guardar e ingresar</button>
         </div>
@@ -56,8 +56,8 @@
             const nueva = document.getElementById("nueva-password").value.trim();
             const confirmar = document.getElementById("confirmar-password").value.trim();
             const alert = document.getElementById("password-alert");
-            if (!/^\d{4,6}$/.test(nueva)) {
-                alert.innerHTML = '<div class="alert alert-error">Usa entre 4 y 6 números.</div>';
+            if (!/^\d{6,12}$/.test(nueva)) {
+                alert.innerHTML = '<div class="alert alert-error">Usa entre 6 y 12 números.</div>';
                 return;
             }
             if (nueva !== confirmar) {

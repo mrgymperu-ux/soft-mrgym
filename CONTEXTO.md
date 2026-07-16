@@ -17,11 +17,45 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-07-13 (v6 - Suscripciones SaaS + navegación móvil)
+> Última actualización: 2026-07-16 (v7 - Endurecimiento inicial de autenticación)
 > main.py: ~296KB, ~6530 líneas | models.py: ~1225 líneas | schemas.py: ~1470 líneas | auth.py: ~490 líneas
 
 ## Qué es
 Sistema de gestión de gimnasio multi-tenant (SaaS). Un superadmin administra gimnasios; cada gimnasio tiene su staff, clientes, productos, etc. completamente aislados.
+
+## Seguridad v7 (2026-07-16)
+- Contraseñas de propietarios y staff: mínimo 10 caracteres, con letras y números.
+- Registro público exige email válido (la verificación por correo queda para el siguiente bloque).
+- Login de staff, alumnos y profesores limitado a 5 fallos por IP+identificador durante 15 minutos.
+- Códigos de alumnos y profesores nuevos se guardan con bcrypt; los antiguos migran automáticamente al iniciar sesión correctamente.
+- Los códigos de profesores ya no se devuelven en respuestas de la API.
+- Primer acceso del alumno usa un token de configuración de 15 minutos que solo permite crear contraseña; luego se emite una sesión normal.
+- En producción, el backend rechaza la clave JWT predeterminada cuando `ENVIRONMENT=production`.
+- Suite: 25 pruebas (`tests/test_multitenant.py` + `tests/test_security.py`).
+- Correo transaccional preparado para Resend mediante `RESEND_API_KEY` y `EMAIL_FROM`; sin esas variables no intenta enviar.
+- Verificación de correo con token de un solo uso válido por 24 horas.
+- Recuperación de contraseña con respuesta anti-enumeración y enlace válido por 30 minutos.
+- Los tokens de correo se guardan únicamente como hash SHA-256 y quedan inutilizados después de consumirse.
+- `sesion_version` permite cerrar todas las sesiones anteriores al restablecer contraseña o solicitar cierre global.
+- Páginas nuevas: `recuperar.html`, `restablecer.html`, `verificar-email.html`.
+- `REQUIRE_EMAIL_VERIFICATION=false` mantiene compatibilidad hasta configurar dominio/remitente; cambiar a `true` después de validar Resend.
+- Invitaciones de trabajadores: enlace de un solo uso válido por 72 horas, revocable y asociado al gimnasio; el trabajador crea su propio usuario y contraseña.
+- Si Resend no está configurado, el administrador puede copiar el enlace de invitación durante el piloto.
+- Cada login de staff crea una sesión identificada (`jti`) con IP, navegador, creación y última actividad.
+- API de sesiones: `GET /auth/sesiones`, `DELETE /auth/sesiones/{id}` y cierre global con invalidación de tokens anteriores.
+- Cabeceras defensivas globales: CSP, anti-iframe, `nosniff`, referrer policy, permisos de cámara/ubicación y HSTS en HTTPS.
+- Imágenes limitadas a 10 MB y 25 megapíxeles; Pillow verifica el contenido real y que coincida con JPEG/PNG/WEBP antes de guardar.
+- Helper `escapeHTML` disponible en los tres portales; primera limpieza aplicada a inicio administrativo, rutina y perfil del alumno.
+- Auditoría transversal: toda operación POST/PUT/PATCH/DELETE y toda descarga con adjunto registra gimnasio, usuario, acción, ruta, estado, IP, dispositivo y fecha sin guardar el cuerpo del formulario.
+- Inicio de sesión exitoso registrado como `INICIO_SESION`.
+- Consulta aislada por tenant en `GET /auditoria`, visible solo para administradores, con filtros y paginación.
+- Nueva pantalla `auditoria.html` en la sección Sistema.
+- Alembic incorporado (`alembic.ini`, `migrations/`) y ejecutado antes de Gunicorn en cada despliegue; revisión base + revisión de seguridad/medios persistentes.
+- Logotipos e imágenes nuevas de ejercicios se almacenan como binarios optimizados en PostgreSQL, no en el disco efímero de Render.
+- Respaldo portable verificable en `scripts/backup_database.py`, con recuento de tablas/filas y manifiesto SHA-256.
+- Restauración segura en `scripts/restore_database.py`: exige variable separada, confirmación explícita y base destino vacía.
+- Ensayo backup→restore realizado correctamente incluyendo un logotipo binario.
+- `scripts/migrate_legacy_media.py` rescata medios `/uploads/` desde el contenedor activo; simula por defecto y revierte toda la operación si alguna descarga falla.
 
 ## URLs en producción
 - **Panel Staff:** https://soft-mrgym.onrender.com/

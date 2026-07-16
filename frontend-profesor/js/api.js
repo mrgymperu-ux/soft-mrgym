@@ -1,4 +1,5 @@
 const API_BASE = "http://localhost:8000";
+function escapeHTML(valor) { return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 const SESSION_KEYS = { token: "mrgym_prof_token", nombre: "mrgym_prof_nombre" };
 
 /* Slug del gimnasio: se lee de ?gym=slug en la URL */

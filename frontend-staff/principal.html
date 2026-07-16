@@ -864,7 +864,7 @@
         clienteSeleccionadoVenta = { id: clienteId, nombre };
         const badge = document.getElementById("vr-cliente-badge");
         badge.classList.remove("vacio");
-        document.getElementById("vr-cliente-texto").innerHTML = `<span class="nombre-cliente">👤 ${nombre}</span>`;
+        document.getElementById("vr-cliente-texto").innerHTML = `<span class="nombre-cliente">👤 ${escapeHTML(nombre)}</span>`;
         document.getElementById("vr-cliente-quitar").style.display = "inline";
     }
 
@@ -999,7 +999,7 @@
             const ingresos = await apiFetch(`/otros-ingresos/?desde=${hoy}&hasta=${hoy}&limit=30`);
             const cont = document.getElementById("oi-lista");
             if (!ingresos.length) { cont.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">Sin otros ingresos hoy</p>'; return; }
-            cont.innerHTML = ingresos.map(i => `<div class="ui-item"><div class="ui-item-info"><div style="font-size:.82em;font-weight:600;">${i.concepto ? i.concepto.nombre : "Otro ingreso"}</div><div style="font-size:.7em;color:var(--color-texto-secundario);">${i.descripcion || ""} · ${i.metodo_pago}</div></div><strong style="color:var(--color-exito);font-weight:500;">+ ${formatCurrency(i.monto)}</strong></div>`).join("");
+            cont.innerHTML = ingresos.map(i => `<div class="ui-item"><div class="ui-item-info"><div style="font-size:.82em;font-weight:600;">${escapeHTML(i.concepto ? i.concepto.nombre : "Otro ingreso")}</div><div style="font-size:.7em;color:var(--color-texto-secundario);">${escapeHTML(i.descripcion || "")} · ${escapeHTML(i.metodo_pago)}</div></div><strong style="color:var(--color-exito);font-weight:500;">+ ${formatCurrency(i.monto)}</strong></div>`).join("");
         } catch(e) { showError(e.message); }
     }
 
@@ -1017,7 +1017,7 @@
 
     function renderConceptosIngreso() {
         const cont = document.getElementById("conceptos-ingreso-lista");
-        cont.innerHTML = conceptosIngresoCache.length ? conceptosIngresoCache.map(c => `<div class="ui-item"><div class="ui-item-info"><div style="font-size:.82em;font-weight:600;">${c.nombre}</div><div style="font-size:.7em;color:var(--color-texto-secundario);">${formatCurrency(c.monto_sugerido)}${c.mostrar_agenda ? " · Visible en Agenda" : ""}</div></div><button class="btn btn-secondary btn-sm" onclick="editarConceptoIngreso(${c.id})">Editar</button></div>`).join("") : '<p style="color:var(--color-texto-secundario);font-size:.82em;">Aún no hay conceptos.</p>';
+        cont.innerHTML = conceptosIngresoCache.length ? conceptosIngresoCache.map(c => `<div class="ui-item"><div class="ui-item-info"><div style="font-size:.82em;font-weight:600;">${escapeHTML(c.nombre)}</div><div style="font-size:.7em;color:var(--color-texto-secundario);">${formatCurrency(c.monto_sugerido)}${c.mostrar_agenda ? " · Visible en Agenda" : ""}</div></div><button class="btn btn-secondary btn-sm" onclick="editarConceptoIngreso(${Number(c.id)})">Editar</button></div>`).join("") : '<p style="color:var(--color-texto-secundario);font-size:.82em;">Aún no hay conceptos.</p>';
     }
 
     function limpiarConceptoIngreso() {
@@ -1052,7 +1052,7 @@
         await cargarConceptosIngreso();
         if (!conceptosIngresoCache.length) { showInfo("Primero crea un concepto de ingreso"); return abrirConceptosIngreso(); }
         document.getElementById("oi-fecha").value = fechaLocalISO();
-        document.getElementById("oi-concepto").innerHTML = '<option value="">Seleccionar...</option>' + conceptosIngresoCache.map(c => `<option value="${c.id}">${c.nombre}</option>`).join("");
+        document.getElementById("oi-concepto").innerHTML = '<option value="">Seleccionar...</option>' + conceptosIngresoCache.map(c => `<option value="${Number(c.id)}">${escapeHTML(c.nombre)}</option>`).join("");
         document.getElementById("oi-monto").value = ""; document.getElementById("oi-metodo").value = "efectivo"; document.getElementById("oi-descripcion").value = "";
         document.getElementById("modal-otro-ingreso").classList.add("active");
     }

@@ -19,8 +19,11 @@ sed -i "s|http://localhost:8000|${DOMAIN_URL}|g" /app/frontend-staff/js/api.js
 sed -i "s|http://localhost:8000|${DOMAIN_URL}|g" /app/frontend-alumno/js/api.js
 sed -i "s|http://localhost:8000|${DOMAIN_URL}|g" /app/frontend-profesor/js/api.js
 
-# Iniciar backend con gunicorn (mejor que uvicorn solo para producción)
+# Aplicar cambios de esquema versionados antes de aceptar tráfico.
 cd /app
+python -m alembic -c /app/alembic.ini upgrade head
+
+# Iniciar backend con gunicorn (mejor que uvicorn solo para producción)
 gunicorn backend.main:app \
     --worker-class uvicorn.workers.UvicornWorker \
     --workers 1 \

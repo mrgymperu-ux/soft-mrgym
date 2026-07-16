@@ -380,7 +380,7 @@
         const confirmar = document.getElementById("confirmar-pass").value;
         if (!nueva) { showError("Escribe la nueva contrasena"); return; }
         if (nueva !== confirmar) { showError("Las contrasenas no coinciden"); return; }
-        if (nueva.length < 6) { showError("La contrasena debe tener al menos 6 caracteres"); return; }
+        if (nueva.length < 10 || !/[A-Za-z]/.test(nueva) || !/\d/.test(nueva)) { showError("Usa al menos 10 caracteres, combinando letras y numeros"); return; }
 
         try {
             const yo = await apiFetch("/usuarios/me");

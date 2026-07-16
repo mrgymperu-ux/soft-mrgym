@@ -70,7 +70,7 @@ function actualizarLogoTema() {
   if (!resumenActual?.gimnasio) return;
   const g = resumenActual.gimnasio;
   const ruta = document.documentElement.dataset.tema === "oscuro" ? (g.logo_oscuro_url || g.logo_url) : g.logo_url;
-  document.getElementById("logo-gimnasio").innerHTML = ruta ? `<img src="${urlFoto(ruta)}" alt="${g.nombre}">` : `<strong>${g.nombre}</strong>`;
+  document.getElementById("logo-gimnasio").innerHTML = ruta ? `<img src="${urlFoto(ruta)}" alt="${escapeHTML(g.nombre)}">` : `<strong>${escapeHTML(g.nombre)}</strong>`;
 }
 
 function dinero(valor) {
@@ -87,11 +87,11 @@ async function cargar() {
     : `<img src="alumno-generico.svg" alt="Imagen genérica de alumno">`;
   const plan = resumenActual.plan;
   const planHtml = plan
-    ? `<div class="plan-filas"><div><span>Plan</span><strong>${plan.nombre}</strong></div><div><span>Inicio</span><strong>${formatFecha(plan.inicio)}</strong></div><div><span>Fin</span><strong>${formatFecha(plan.fin)}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo > 0 ? "saldo-pendiente" : ""}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo > 0 ? (resumenActual.pago_online_url ? `<a class="btn-pagar" href="${resumenActual.pago_online_url}" target="_blank" rel="noopener">Pagar con Yape o Plin</a>` : `<button class="btn-pagar" disabled>Pago en línea próximamente</button>`) : ""}`
+    ? `<div class="plan-filas"><div><span>Plan</span><strong>${escapeHTML(plan.nombre)}</strong></div><div><span>Inicio</span><strong>${escapeHTML(formatFecha(plan.inicio))}</strong></div><div><span>Fin</span><strong>${escapeHTML(formatFecha(plan.fin))}</strong></div><div><span>Precio</span><strong>${dinero(plan.precio)}</strong></div><div><span>Pagado</span><strong>${dinero(plan.pagado)}</strong></div><div><span>Saldo</span><strong class="${plan.saldo > 0 ? "saldo-pendiente" : ""}">${dinero(plan.saldo)}</strong></div></div>${plan.saldo > 0 ? `<button class="btn-pagar" disabled>Pago en línea próximamente</button>` : ""}`
     : `<div class="vacio-plan">No tienes un plan activo.</div>`;
 
   actualizarLogoTema();
-  document.getElementById("contenido").innerHTML = `<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<button class="boton-camara" aria-label="Cambiar foto" onclick="alternarMenuFoto(event)">📷</button><div class="menu-foto" id="menu-foto"><label>Galería<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label><button type="button" onclick="abrirCamara(event)">Tomar foto</button></div></div><div class="perfil-linea"><strong>${nombre}</strong><span>${perfil.telefono || "Sin celular"}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
+  document.getElementById("contenido").innerHTML = `<section class="perfil-identidad"><div class="avatar-grande" id="avatar-wrap">${avatar}<button class="boton-camara" aria-label="Cambiar foto" onclick="alternarMenuFoto(event)">📷</button><div class="menu-foto" id="menu-foto"><label>Galería<input type="file" accept="image/*" style="display:none" onchange="subirFoto(this)"></label><button type="button" onclick="abrirCamara(event)">Tomar foto</button></div></div><div class="perfil-linea"><strong>${escapeHTML(nombre)}</strong><span>${escapeHTML(perfil.telefono || "Sin celular")}</span></div></section><section class="card plan-card"><div class="card-header">Mi plan actual</div><div class="card-body">${planHtml}</div></section>`;
 }
 
 function alternarMenuFoto(event) {

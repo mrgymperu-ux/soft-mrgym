@@ -52,12 +52,12 @@ class UsuarioBase(BaseModel):
 
 
 class UsuarioCreate(UsuarioBase):
-    password: str  # texto plano solo en el request; se hashea en auth.py
+    password: str = Field(min_length=10, max_length=128)
 
 
 class UsuarioUpdate(BaseModel):
     nombre_completo: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=10, max_length=128)
     activo: Optional[bool] = None
     empleado_id: Optional[int] = None
     es_administrador: Optional[bool] = None
@@ -90,6 +90,36 @@ class InicioLoginAlumnoRequest(BaseModel):
     """Primer paso del portal: identifica al alumno solo por DNI."""
     dni: str
     slug: Optional[str] = None
+
+
+class SolicitarRecuperacionRequest(BaseModel):
+    email: EmailStr
+
+
+class RestablecerPasswordRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    nueva_password: str = Field(min_length=10, max_length=128)
+
+
+class VerificarEmailRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
+class InvitacionUsuarioCreate(BaseModel):
+    email: EmailStr
+    rol: RolUsuario = RolUsuario.STAFF
+    empleado_id: Optional[int] = None
+    es_administrador: bool = False
+    puede_eliminar: bool = False
+    puede_exportar: bool = False
+    zonas_permitidas: Optional[str] = None
+
+
+class InvitacionUsuarioAceptar(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    nombre_completo: str = Field(min_length=2, max_length=150)
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=10, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -153,7 +183,7 @@ class GimnasioBase(BaseModel):
 
 class GimnasioCreate(GimnasioBase):
     admin_username: str = "admin"
-    admin_password: str = "admin123"
+    admin_password: str = Field(min_length=10, max_length=128)
     admin_nombre: str = "Administrador"
 
 class GimnasioUpdate(BaseModel):
@@ -242,8 +272,8 @@ class RegistroGimnasioRequest(BaseModel):
     slug: str
     nombre_admin: str
     username: str
-    password: str
-    email: Optional[str] = None
+    password: str = Field(min_length=10, max_length=128)
+    email: EmailStr
     telefono: Optional[str] = None
 
 
@@ -288,7 +318,7 @@ class ClienteUpdate(BaseModel):
 
 
 class CambioPasswordAlumnoRequest(BaseModel):
-    nueva_password: str = Field(min_length=4, max_length=6)
+    nueva_password: str = Field(min_length=6, max_length=12)
 
 
 class Cliente(ClienteBase):
@@ -1054,6 +1084,7 @@ class EmpleadoUpdate(BaseModel):
 
 class Empleado(EmpleadoBase):
     model_config = ConfigDict(from_attributes=True)
+    codigo_acceso: Optional[str] = Field(default=None, exclude=True)
     id: int
     activo: bool
     fecha_ingreso: date

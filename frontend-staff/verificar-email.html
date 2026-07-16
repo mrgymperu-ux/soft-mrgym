@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verificar correo - Soft-Gym</title><link rel="stylesheet" href="css/styles.css"></head>
+<body class="login-page"><main class="login-card"><h1>Verificación de correo</h1><p id="mensaje">Verificando…</p></main>
+<script src="js/api.js"></script><script>(async()=>{const m=document.getElementById("mensaje"),token=new URLSearchParams(location.search).get("token")||"";try{const r=await fetch(`${API_BASE_URL}/auth/verificar-email`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"No se pudo verificar");m.innerHTML='Correo verificado correctamente. <a href="login.html">Continuar</a>'}catch(e){m.textContent=e.message}})();</script></body></html>

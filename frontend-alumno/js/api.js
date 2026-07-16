@@ -8,6 +8,7 @@ function getSlug() {
 
 function getToken() { return sessionStorage.getItem("alumno_token"); }
 function getNombre() { return sessionStorage.getItem("alumno_nombre"); }
+function escapeHTML(valor) { return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 function debeCambiarPassword() { return sessionStorage.getItem("alumno_cambiar_password") === "1"; }
 
 function guardarSesion(token, nombre, gimnasioId, cambiarPassword = false) {
@@ -368,7 +369,8 @@ async function cambiarPasswordAlumno(nuevaPassword) {
         method: "PUT",
         body: JSON.stringify({ nueva_password: nuevaPassword }),
     });
-    sessionStorage.setItem("alumno_cambiar_password", "0");
+    if (data.access_token) guardarSesion(data.access_token, data.nombre, data.gimnasio_id, false);
+    else sessionStorage.setItem("alumno_cambiar_password", "0");
     return data;
 }
 

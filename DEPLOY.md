@@ -120,4 +120,37 @@ Usar los endpoints existentes `/clientes/importar`, `/membresias/importar`, etc.
 
 - El web service de Render **se duerme** tras 15 min sin uso (tarda ~30s en despertar). Con múltiples gyms activos, rara vez duerme.
 - La BD en Supabase **nunca se apaga** — siempre disponible.
-- Las fotos subidas (clientes/productos) se pierden al redesplegar (el filesystem de Render es efímero). Para producción real, migrar uploads a Supabase Storage o Cloudflare R2.
+- Las fotos de clientes/productos y los nuevos logotipos/imágenes de ejercicios se guardan en PostgreSQL y sobreviven a los redespliegues. Los archivos antiguos bajo `/uploads` deben migrarse antes de retirar el contenedor anterior.
+
+### Respaldo antes de desplegar
+
+Con `DATABASE_URL` apuntando a producción:
+
+```powershell
+python scripts/backup_database.py --output-dir backups
+```
+
+El comando crea un `.json.gz`, vuelve a abrirlo, cuenta tablas/filas y genera un manifiesto `.sha256.json`. Guarda ambos fuera del repositorio y no los compartas: contienen datos personales y hashes de acceso.
+
+Ensayo de restauración sobre una base vacía independiente:
+
+```powershell
+$env:RESTORE_DATABASE_URL="postgresql://...base-vacia-de-prueba..."
+python scripts/restore_database.py backups/archivo.json.gz --confirm RESTORE_EMPTY_DATABASE
+```
+
+El restaurador se niega a trabajar si encuentra datos en el destino y deliberadamente no utiliza `DATABASE_URL`, para reducir el riesgo de sobrescribir producción.
+
+Antes del despliegue, detectar medios antiguos todavía alojados en el contenedor activo:
+
+```powershell
+python scripts/migrate_legacy_media.py --base-url https://soft-mrgym.onrender.com
+```
+
+La simulación no escribe. Después del respaldo y de revisar el resultado:
+
+```powershell
+python scripts/migrate_legacy_media.py --base-url https://soft-mrgym.onrender.com --apply --confirm MIGRATE_MEDIA
+```
+
+La operación es transaccional: si una descarga falla, revierte todo y conserva las URLs anteriores.

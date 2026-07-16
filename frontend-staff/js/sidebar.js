@@ -52,6 +52,7 @@ const NAV_ITEMS = [
             { href: "reportes.html", icono: "📊", texto: "Reportes", zona: null, soloExportar: true },
             { href: "metas.html", icono: "🎯", texto: "Metas y Comisiones", zona: "metas", soloAdmin: true },
             { href: "configuracion.html", icono: "⚙️", texto: "Configuracion", zona: "configuracion" },
+            { href: "auditoria.html", icono: "🛡️", texto: "Auditoria", zona: null, soloAdmin: true },
             { href: "superadmin.html", icono: "🛡️", texto: "Super Admin", zona: null, soloSuperadmin: true },
         ],
     },
@@ -61,7 +62,7 @@ const PAGINAS_SOLO_STAFF = [
     "clientes.html", "membresias.html", "productos.html", "ventas.html",
     "venta-rapida.html", "planilla-staff.html", "planilla-profesores.html",
     "usuarios-staff.html", "usuarios-profesores.html", "pagos.html",
-    "configuracion.html", "metas.html", "reportes.html", "dashboard.html",
+    "configuracion.html", "metas.html", "reportes.html", "dashboard.html", "auditoria.html",
 ];
 
 function renderSidebar() {

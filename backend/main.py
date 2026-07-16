@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import models, schemas, auth, pdf_generator
+from . import models, schemas, auth, pdf_generator, email_service
 from .database import get_db, engine, SessionLocal, SQLALCHEMY_DATABASE_URL
 from .time_utils import ahora_lima, hoy_lima
 
@@ -42,6 +42,34 @@ logger = logging.getLogger("soft-mrgym")
 app = FastAPI(title="Soft-Gym API")
 
 PASSWORD_LEGACY_ALUMNO = "1234"
+
+
+def _crear_sesion_usuario(db: Session, usuario: models.Usuario, request: Request) -> models.SesionUsuario:
+    sesion = models.SesionUsuario(
+        usuario_id=usuario.id,
+        jti=uuid.uuid4().hex,
+        ip=request.client.host if request.client else None,
+        user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+    )
+    db.add(sesion)
+    db.commit()
+    db.refresh(sesion)
+    return sesion
+
+
+def _evento_auditoria(db: Session, accion: str, request: Request, usuario: Optional[models.Usuario] = None, detalles: Optional[str] = None):
+    db.add(models.EventoAuditoria(
+        gimnasio_id=usuario.gimnasio_id if usuario else None,
+        usuario_id=usuario.id if usuario else None,
+        accion=accion,
+        metodo=request.method,
+        ruta=request.url.path,
+        estado_http=200,
+        ip=request.client.host if request.client else None,
+        user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+        detalles=detalles[:1000] if detalles else None,
+    ))
+    db.commit()
 
 # ==================================================================
 # KEEP-ALIVE INTELIGENTE (anti-sleep Render free tier)
@@ -107,6 +135,48 @@ async def track_last_request(request: Request, call_next):
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and response.status_code < 400:
         _sync_version += 1
     response.headers["X-Sync-Version"] = str(_sync_version)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(self), geolocation=(self), microphone=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    if request.url.path not in {"/docs", "/redoc", "/openapi.json"}:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+            "img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'"
+        )
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    es_mutacion = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    es_exportacion = "attachment" in (response.headers.get("content-disposition") or "").lower()
+    if es_mutacion or es_exportacion:
+        token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        payload = {}
+        if token:
+            try:
+                payload = auth.decodificar_token(token)
+            except HTTPException:
+                payload = {}
+        db_auditoria = SessionLocal()
+        try:
+            db_auditoria.add(models.EventoAuditoria(
+                gimnasio_id=payload.get("gimnasio_id"),
+                usuario_id=int(payload["sub"]) if payload.get("tipo") == "usuario" and str(payload.get("sub", "")).isdigit() else None,
+                accion="EXPORTAR" if es_exportacion else request.method,
+                metodo=request.method,
+                ruta=request.url.path[:500],
+                estado_http=response.status_code,
+                ip=request.client.host if request.client else None,
+                user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+            ))
+            db_auditoria.commit()
+        except Exception:
+            db_auditoria.rollback()
+            logger.exception("No se pudo registrar auditoria para %s", request.url.path)
+        finally:
+            db_auditoria.close()
     return response
 
 
@@ -357,17 +427,24 @@ os.makedirs(FOTOS_PRODUCTOS_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 EXTENSIONES_IMAGEN_PERMITIDAS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-TAMANO_MAXIMO_FOTO_BYTES = 20 * 1024 * 1024  # admite fotos originales de camara; se comprimen al guardar
+TAMANO_MAXIMO_FOTO_BYTES = 10 * 1024 * 1024
+Image.MAX_IMAGE_PIXELS = 25_000_000
 
 
 def _validar_y_optimizar_foto(contenido: bytes, content_type: str, optimizar: bool = False):
     if content_type not in EXTENSIONES_IMAGEN_PERMITIDAS:
         raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPEG, PNG o WEBP")
     if len(contenido) > TAMANO_MAXIMO_FOTO_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el tamano maximo de 20MB")
-    if optimizar:
-        try:
-            imagen = Image.open(io.BytesIO(contenido))
+        raise HTTPException(status_code=400, detail="La imagen supera el tamano maximo de 10MB")
+    formatos_por_mime = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+    try:
+        inspeccion = Image.open(io.BytesIO(contenido))
+        if inspeccion.format != formatos_por_mime[content_type]:
+            raise HTTPException(status_code=400, detail="El contenido no coincide con el formato declarado")
+        inspeccion.verify()
+        imagen = Image.open(io.BytesIO(contenido))
+        imagen.load()
+        if optimizar:
             imagen = ImageOps.exif_transpose(imagen)
             imagen.thumbnail((960, 960), Image.Resampling.LANCZOS)
             if imagen.mode not in ("RGB", "RGBA"):
@@ -380,8 +457,10 @@ def _validar_y_optimizar_foto(contenido: bytes, content_type: str, optimizar: bo
             imagen.save(salida, format="WEBP", quality=76, method=6, optimize=True)
             contenido = salida.getvalue()
             content_type = "image/webp"
-        except (UnidentifiedImageError, OSError, ValueError):
-            raise HTTPException(status_code=400, detail="La foto no es una imagen valida")
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(status_code=400, detail="La foto no es una imagen valida o es demasiado grande")
     return contenido, content_type
 
 
@@ -475,6 +554,10 @@ def _migrar_columnas_nuevas():
             ("longitud", "FLOAT"),
             ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
             ("equipamiento_disponible", "TEXT"),
+            ("logo_datos", "BLOB"),
+            ("logo_tipo", "VARCHAR"),
+            ("logo_oscuro_datos", "BLOB"),
+            ("logo_oscuro_tipo", "VARCHAR"),
         ],
         "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
         "clientes": [
@@ -515,6 +598,9 @@ def _migrar_columnas_nuevas():
             ("puede_exportar", "BOOLEAN DEFAULT 0"),
             ("zonas_permitidas", "VARCHAR"),
             ("gimnasio_id", "INTEGER"),
+            ("email", "VARCHAR"),
+            ("email_verificado", "BOOLEAN DEFAULT 0"),
+            ("sesion_version", "INTEGER DEFAULT 1"),
         ],
         "membresias": [
             ("duracion_meses", "INTEGER"),
@@ -568,6 +654,8 @@ def _migrar_columnas_nuevas():
             ("objetivo", "VARCHAR"),
             ("imagen_url_2", "VARCHAR"),
             ("imagen_url_3", "VARCHAR"),
+            ("imagen_datos", "BLOB"),
+            ("imagen_tipo", "VARCHAR"),
             ("gimnasio_id", "INTEGER"),
         ],
         "alimentos": [
@@ -1616,18 +1704,31 @@ async def subir_logo_gimnasio(
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
     if not gimnasio:
         raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
-    contenido = await logo.read()
-    # Guardar en uploads/logos/
-    logos_dir = os.path.join(UPLOADS_DIR, "logos")
-    os.makedirs(logos_dir, exist_ok=True)
-    campo_logo = "logo_oscuro_url" if modo == "oscuro" else "logo_url"
-    _eliminar_foto_anterior(getattr(gimnasio, campo_logo))
-    foto_url = _validar_y_guardar_foto(contenido, logo.content_type, logos_dir)
-    # _validar_y_guardar_foto usa os.path.basename, ajustar ruta
-    nombre_archivo = os.path.basename(foto_url)
-    setattr(gimnasio, campo_logo, f"/uploads/logos/{nombre_archivo}")
+    contenido, tipo = _validar_y_optimizar_foto(await logo.read(), logo.content_type, optimizar=True)
+    if modo == "oscuro":
+        gimnasio.logo_oscuro_datos, gimnasio.logo_oscuro_tipo = contenido, tipo
+        gimnasio.logo_oscuro_url = f"/gym/{gimnasio.slug}/logo/oscuro"
+        campo_logo = "logo_oscuro_url"
+    else:
+        gimnasio.logo_datos, gimnasio.logo_tipo = contenido, tipo
+        gimnasio.logo_url = f"/gym/{gimnasio.slug}/logo/claro"
+        campo_logo = "logo_url"
     db.commit()
     return {"logo_url": getattr(gimnasio, campo_logo), "modo": modo}
+
+
+@app.get("/gym/{slug}/logo/{modo}", tags=["PWA"])
+def obtener_logo_gimnasio(slug: str, modo: str, db: Session = Depends(get_db)):
+    if modo not in {"claro", "oscuro"}:
+        raise HTTPException(status_code=404, detail="Logo no encontrado")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    contenido = gimnasio.logo_oscuro_datos if modo == "oscuro" else gimnasio.logo_datos
+    tipo = gimnasio.logo_oscuro_tipo if modo == "oscuro" else gimnasio.logo_tipo
+    if not contenido:
+        raise HTTPException(status_code=404, detail="Logo no encontrado")
+    return Response(content=contenido, media_type=tipo or "image/webp", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/gym-actual/", tags=["Auth"])
@@ -1787,12 +1888,18 @@ def qr_portal_alumno(slug: str, portal: str = "alumno", db: Session = Depends(ge
 
 
 @app.post("/auth/login", response_model=schemas.TokenResponse, tags=["Auth"])
-def login_staff_profesor(datos: schemas.LoginRequest, db: Session = Depends(get_db)):
+def login_staff_profesor(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Login de staff y profesores con username + password."""
+    clave = auth.clave_rate_limit(request, "staff", datos.username)
+    auth.exigir_intentos_disponibles(clave)
     usuario = auth.autenticar_usuario(db, datos.username, datos.password)
     if not usuario:
+        auth.login_rate_limiter.registrar_fallo(clave)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+    if os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true" and usuario.email and not usuario.email_verificado:
+        raise HTTPException(status_code=403, detail="Debes verificar tu correo antes de ingresar")
 
+    auth.login_rate_limiter.limpiar(clave)
     # Obtener slug del gimnasio para el frontend
     gym_slug = None
     if usuario.gimnasio_id:
@@ -1800,11 +1907,15 @@ def login_staff_profesor(datos: schemas.LoginRequest, db: Session = Depends(get_
         if gym:
             gym_slug = gym.slug
 
+    sesion = _crear_sesion_usuario(db, usuario, request)
+    _evento_auditoria(db, "INICIO_SESION", request, usuario)
     token = auth.crear_access_token({
         "sub": str(usuario.id),
         "tipo": "usuario",
         "rol": usuario.rol.value,
         "gimnasio_id": usuario.gimnasio_id,
+        "sv": usuario.sesion_version or 1,
+        "jti": sesion.jti,
     })
     return schemas.TokenResponse(
         access_token=token,
@@ -1820,14 +1931,265 @@ def login_staff_profesor(datos: schemas.LoginRequest, db: Session = Depends(get_
     )
 
 
+def _crear_token_un_solo_uso(db: Session, usuario_id: int, proposito: str, minutos: int) -> str:
+    import hashlib
+    import secrets
+    token = secrets.token_urlsafe(48)
+    db.add(models.TokenAutenticacion(
+        usuario_id=usuario_id,
+        proposito=proposito,
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        expira_en=ahora_lima() + timedelta(minutes=minutos),
+    ))
+    db.commit()
+    return token
+
+
+def _consumir_token_un_solo_uso(db: Session, token: str, proposito: str) -> models.TokenAutenticacion:
+    import hashlib
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    registro = db.query(models.TokenAutenticacion).filter(
+        models.TokenAutenticacion.token_hash == token_hash,
+        models.TokenAutenticacion.proposito == proposito,
+        models.TokenAutenticacion.usado_en.is_(None),
+    ).first()
+    if not registro or registro.expira_en < ahora_lima():
+        raise HTTPException(status_code=400, detail="El enlace es invalido o ya vencio")
+    registro.usado_en = ahora_lima()
+    return registro
+
+
+@app.post("/auth/solicitar-recuperacion", tags=["Auth"])
+def solicitar_recuperacion(datos: schemas.SolicitarRecuperacionRequest, db: Session = Depends(get_db)):
+    """Respuesta deliberadamente generica para no revelar si un correo existe."""
+    usuario = db.query(models.Usuario).filter(
+        func.lower(models.Usuario.email) == datos.email.lower(),
+        models.Usuario.activo == True,
+    ).first()
+    if usuario and email_service.esta_configurado():
+        token = _crear_token_un_solo_uso(db, usuario.id, "recuperar_password", 30)
+        base = os.getenv("APP_BASE_URL", "http://localhost:3001").rstrip("/")
+        url = f"{base}/restablecer.html?token={token}"
+        email_service.enviar(
+            usuario.email,
+            "Restablece tu contraseña de Soft-Gym",
+            email_service.plantilla_accion("Restablecer contraseña", "Este enlace vence en 30 minutos.", "Crear nueva contraseña", url),
+        )
+    return {"message": "Si el correo corresponde a una cuenta, enviaremos las instrucciones."}
+
+
+@app.post("/auth/restablecer-password", tags=["Auth"])
+def restablecer_password(datos: schemas.RestablecerPasswordRequest, db: Session = Depends(get_db)):
+    try:
+        auth.validar_password_segura(datos.nueva_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    registro = _consumir_token_un_solo_uso(db, datos.token, "recuperar_password")
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == registro.usuario_id, models.Usuario.activo == True).first()
+    if not usuario:
+        raise HTTPException(status_code=400, detail="La cuenta ya no esta disponible")
+    usuario.password_hash = auth.hash_password(datos.nueva_password)
+    usuario.sesion_version = int(usuario.sesion_version or 1) + 1
+    db.commit()
+    return {"message": "Contraseña actualizada. Ya puedes iniciar sesión."}
+
+
+@app.post("/auth/verificar-email", tags=["Auth"])
+def verificar_email(datos: schemas.VerificarEmailRequest, db: Session = Depends(get_db)):
+    registro = _consumir_token_un_solo_uso(db, datos.token, "verificar_email")
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == registro.usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=400, detail="La cuenta ya no esta disponible")
+    usuario.email_verificado = True
+    db.commit()
+    return {"message": "Correo verificado correctamente"}
+
+
+@app.post("/auth/cerrar-otras-sesiones", tags=["Auth"])
+def cerrar_otras_sesiones(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.get_usuario_actual)):
+    db.query(models.SesionUsuario).filter(
+        models.SesionUsuario.usuario_id == usuario.id,
+        models.SesionUsuario.revocada_en.is_(None),
+    ).update({"revocada_en": ahora_lima()}, synchronize_session=False)
+    usuario.sesion_version = int(usuario.sesion_version or 1) + 1
+    db.commit()
+    return {"message": "Todas las sesiones fueron cerradas. Ingresa nuevamente."}
+
+
+@app.get("/auditoria", tags=["Auditoria"])
+def consultar_auditoria(
+    accion: Optional[str] = None,
+    desde: Optional[date] = None,
+    hasta: Optional[date] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    consulta = db.query(models.EventoAuditoria).filter(models.EventoAuditoria.gimnasio_id == get_gid(admin))
+    if accion:
+        consulta = consulta.filter(models.EventoAuditoria.accion == accion.upper())
+    if desde:
+        consulta = consulta.filter(models.EventoAuditoria.creado_en >= datetime.combine(desde, datetime.min.time()))
+    if hasta:
+        consulta = consulta.filter(models.EventoAuditoria.creado_en <= datetime.combine(hasta, datetime.max.time()))
+    eventos = consulta.order_by(models.EventoAuditoria.creado_en.desc()).offset(skip).limit(limit).all()
+    usuarios = {u.id: u.nombre_completo for u in db.query(models.Usuario).filter(models.Usuario.gimnasio_id == get_gid(admin)).all()}
+    return [{
+        "id": e.id, "accion": e.accion, "metodo": e.metodo, "ruta": e.ruta,
+        "estado_http": e.estado_http, "usuario_id": e.usuario_id,
+        "usuario": usuarios.get(e.usuario_id, "Sistema"), "ip": e.ip,
+        "dispositivo": e.user_agent, "detalles": e.detalles, "creado_en": e.creado_en,
+    } for e in eventos]
+
+
+@app.get("/auth/sesiones", tags=["Auth"])
+def listar_sesiones(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.get_usuario_actual)):
+    sesiones = db.query(models.SesionUsuario).filter(
+        models.SesionUsuario.usuario_id == usuario.id,
+    ).order_by(models.SesionUsuario.ultima_actividad.desc()).limit(30).all()
+    return [{
+        "id": s.id, "ip": s.ip, "dispositivo": s.user_agent,
+        "creada_en": s.creada_en, "ultima_actividad": s.ultima_actividad,
+        "activa": s.revocada_en is None, "revocada_en": s.revocada_en,
+    } for s in sesiones]
+
+
+@app.delete("/auth/sesiones/{sesion_id}", tags=["Auth"])
+def cerrar_sesion(sesion_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.get_usuario_actual)):
+    sesion = db.query(models.SesionUsuario).filter(
+        models.SesionUsuario.id == sesion_id,
+        models.SesionUsuario.usuario_id == usuario.id,
+    ).first()
+    if not sesion:
+        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    sesion.revocada_en = ahora_lima()
+    db.commit()
+    return {"message": "Sesión cerrada"}
+
+
+@app.get("/usuarios/invitaciones", tags=["Usuarios"])
+def listar_invitaciones(db: Session = Depends(get_db), admin: models.Usuario = Depends(auth.requiere_administrador)):
+    invitaciones = db.query(models.InvitacionUsuario).filter(
+        models.InvitacionUsuario.gimnasio_id == get_gid(admin),
+    ).order_by(models.InvitacionUsuario.creado_en.desc()).all()
+    return [{
+        "id": i.id, "email": i.email, "rol": i.rol.value,
+        "expira_en": i.expira_en, "aceptada_en": i.aceptada_en,
+        "revocada_en": i.revocada_en, "creado_en": i.creado_en,
+    } for i in invitaciones]
+
+
+@app.post("/usuarios/invitaciones", tags=["Usuarios"])
+def crear_invitacion(
+    datos: schemas.InvitacionUsuarioCreate,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    import hashlib
+    import secrets
+    email = str(datos.email).strip().lower()
+    if db.query(models.Usuario).filter(func.lower(models.Usuario.email) == email, models.Usuario.activo == True).first():
+        raise HTTPException(status_code=400, detail="Ese correo ya pertenece a una cuenta activa")
+    if datos.empleado_id:
+        empleado = q(db, models.Empleado, admin).filter(models.Empleado.id == datos.empleado_id).first()
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    ahora = ahora_lima()
+    anteriores = db.query(models.InvitacionUsuario).filter(
+        models.InvitacionUsuario.gimnasio_id == get_gid(admin),
+        func.lower(models.InvitacionUsuario.email) == email,
+        models.InvitacionUsuario.aceptada_en.is_(None),
+        models.InvitacionUsuario.revocada_en.is_(None),
+    ).all()
+    for anterior in anteriores:
+        anterior.revocada_en = ahora
+
+    token = secrets.token_urlsafe(48)
+    invitacion = models.InvitacionUsuario(
+        gimnasio_id=get_gid(admin), email=email, rol=datos.rol,
+        empleado_id=datos.empleado_id, es_administrador=datos.es_administrador,
+        puede_eliminar=datos.puede_eliminar, puede_exportar=datos.puede_exportar,
+        zonas_permitidas=datos.zonas_permitidas,
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        expira_en=ahora + timedelta(hours=72), invitado_por_id=admin.id,
+    )
+    db.add(invitacion)
+    db.commit()
+    db.refresh(invitacion)
+    base = os.getenv("APP_BASE_URL", "http://localhost:3001").rstrip("/")
+    url = f"{base}/aceptar-invitacion.html?token={token}"
+    enviado = False
+    if email_service.esta_configurado():
+        try:
+            email_service.enviar(email, "Invitación a Soft-Gym", email_service.plantilla_accion(
+                "Te invitaron a Soft-Gym", "Crea tu cuenta personal. Este enlace vence en 72 horas.", "Aceptar invitación", url))
+            enviado = True
+        except Exception:
+            logger.exception("No se pudo enviar la invitacion %s", invitacion.id)
+    return {"id": invitacion.id, "email": email, "expira_en": invitacion.expira_en, "enviado": enviado, "enlace": url}
+
+
+@app.delete("/usuarios/invitaciones/{invitacion_id}", tags=["Usuarios"])
+def revocar_invitacion(invitacion_id: int, db: Session = Depends(get_db), admin: models.Usuario = Depends(auth.requiere_administrador)):
+    invitacion = db.query(models.InvitacionUsuario).filter(
+        models.InvitacionUsuario.id == invitacion_id,
+        models.InvitacionUsuario.gimnasio_id == get_gid(admin),
+    ).first()
+    if not invitacion:
+        raise HTTPException(status_code=404, detail="Invitación no encontrada")
+    if invitacion.aceptada_en:
+        raise HTTPException(status_code=400, detail="La invitación ya fue aceptada")
+    invitacion.revocada_en = ahora_lima()
+    db.commit()
+    return {"message": "Invitación revocada"}
+
+
+@app.post("/auth/aceptar-invitacion", tags=["Auth"])
+def aceptar_invitacion(datos: schemas.InvitacionUsuarioAceptar, db: Session = Depends(get_db)):
+    import hashlib
+    try:
+        auth.validar_password_segura(datos.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    token_hash = hashlib.sha256(datos.token.encode("utf-8")).hexdigest()
+    invitacion = db.query(models.InvitacionUsuario).filter(
+        models.InvitacionUsuario.token_hash == token_hash,
+        models.InvitacionUsuario.aceptada_en.is_(None),
+        models.InvitacionUsuario.revocada_en.is_(None),
+    ).first()
+    if not invitacion or invitacion.expira_en < ahora_lima():
+        raise HTTPException(status_code=400, detail="La invitación es inválida o ya venció")
+    username = datos.username.strip()
+    if db.query(models.Usuario).filter(models.Usuario.username == username).first():
+        raise HTTPException(status_code=400, detail="Ese nombre de usuario ya está en uso")
+    usuario = models.Usuario(
+        gimnasio_id=invitacion.gimnasio_id, nombre_completo=datos.nombre_completo.strip(),
+        username=username, email=invitacion.email, email_verificado=True,
+        password_hash=auth.hash_password(datos.password), rol=invitacion.rol,
+        empleado_id=invitacion.empleado_id, es_administrador=invitacion.es_administrador,
+        puede_eliminar=invitacion.puede_eliminar, puede_exportar=invitacion.puede_exportar,
+        zonas_permitidas=invitacion.zonas_permitidas,
+    )
+    db.add(usuario)
+    invitacion.aceptada_en = ahora_lima()
+    db.commit()
+    return {"message": "Cuenta creada correctamente. Ya puedes iniciar sesión."}
+
+
 @app.post("/auth/login-alumno", response_model=schemas.TokenResponse, tags=["Auth"])
-def login_alumno(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db)):
+def login_alumno(datos: schemas.LoginAlumnoRequest, request: Request, db: Session = Depends(get_db)):
     """Login de alumnos con DNI + codigo de acceso corto."""
+    clave = auth.clave_rate_limit(request, "alumno", datos.dni, datos.slug)
+    auth.exigir_intentos_disponibles(clave)
     gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
     cliente = auth.autenticar_alumno(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
     if not cliente:
+        auth.login_rate_limiter.registrar_fallo(clave)
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
+    auth.login_rate_limiter.limpiar(clave)
     token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
     return schemas.TokenResponse(
         access_token=token,
@@ -1848,7 +2210,10 @@ def iniciar_login_alumno(datos: schemas.InicioLoginAlumnoRequest, db: Session = 
     if cliente.codigo_acceso and cliente.codigo_acceso.strip():
         return {"requiere_password": True, "debe_crear_password": False}
 
-    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    token = auth.crear_access_token(
+        {"sub": str(cliente.id), "tipo": "alumno_configuracion", "gimnasio_id": cliente.gimnasio_id},
+        expires_delta=timedelta(minutes=15),
+    )
     return {
         "requiere_password": False,
         "debe_crear_password": True,
@@ -1862,16 +2227,20 @@ def iniciar_login_alumno(datos: schemas.InicioLoginAlumnoRequest, db: Session = 
 
 
 @app.post("/auth/login-profesor", response_model=schemas.TokenResponse, tags=["Auth"])
-def login_profesor(datos: schemas.LoginAlumnoRequest, db: Session = Depends(get_db)):
+def login_profesor(datos: schemas.LoginAlumnoRequest, request: Request, db: Session = Depends(get_db)):
     """
     Login de profesores de sala a su Zona de Profesores (portal
     aparte, sin acceso al software de staff): DNI + codigo corto.
     """
     gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
+    clave = auth.clave_rate_limit(request, "profesor", datos.dni, datos.slug)
+    auth.exigir_intentos_disponibles(clave)
     profesor = auth.autenticar_profesor(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
     if not profesor:
+        auth.login_rate_limiter.registrar_fallo(clave)
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
+    auth.login_rate_limiter.limpiar(clave)
     token = auth.crear_access_token({"sub": str(profesor.id), "tipo": "profesor", "gimnasio_id": profesor.gimnasio_id})
     return schemas.TokenResponse(access_token=token, rol="profesor_sala", nombre=profesor.nombre_completo, gimnasio_id=profesor.gimnasio_id)
 
@@ -1892,6 +2261,10 @@ def crear_usuario(datos: schemas.UsuarioCreate, db: Session = Depends(get_db), u
     a un empleado_id, ese Empleado debe existir y, para un usuario
     con rol PROFESOR, debe ser de tipo PROFESOR_DE_SALA.
     """
+    try:
+        auth.validar_password_segura(datos.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if datos.rol == models.RolUsuario.STAFF:
         _validar_limite_plan(db, usuario_admin, "usuarios_staff")
     existente = db.query(models.Usuario).filter(models.Usuario.username == datos.username).first()
@@ -1958,6 +2331,10 @@ def actualizar_usuario(
     if "password" in datos_dict:
         nueva_password = datos_dict.pop("password")
         if nueva_password:
+            try:
+                auth.validar_password_segura(nueva_password)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
             usuario.password_hash = auth.hash_password(nueva_password)
 
     for campo, valor in datos_dict.items():
@@ -5117,12 +5494,21 @@ async def subir_imagen_tipo_ejercicio(
     te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.gimnasio_id == get_gid(usuario)).first()
     if not te:
         raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
-    contenido = await foto.read()
-    _eliminar_foto_anterior(te.imagen_url)
-    te.imagen_url = _validar_y_guardar_foto(contenido, foto.content_type, FOTOS_EJERCICIOS_DIR)
+    contenido, tipo = _validar_y_optimizar_foto(await foto.read(), foto.content_type, optimizar=True)
+    te.imagen_datos = contenido
+    te.imagen_tipo = tipo
+    te.imagen_url = f"/tipos-ejercicio/{te.id}/imagen-publica"
     db.commit()
     db.refresh(te)
     return te
+
+
+@app.get("/tipos-ejercicio/{tipo_id}/imagen-publica", tags=["Entrenamientos"])
+def imagen_publica_tipo_ejercicio(tipo_id: int, db: Session = Depends(get_db)):
+    te = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.id == tipo_id, models.TipoEjercicio.activo == True).first()
+    if not te or not te.imagen_datos:
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+    return Response(content=te.imagen_datos, media_type=te.imagen_tipo or "image/webp", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/rutinas/recomendar/{cliente_id}", response_model=schemas.RecomendacionRutina, tags=["Entrenamientos"])
@@ -6184,7 +6570,10 @@ def actualizar_puesto(puesto_id: int, datos: schemas.PuestoUpdate, db: Session =
 
 @app.post("/empleados/", response_model=schemas.Empleado, tags=["Personal"])
 def crear_empleado(empleado: schemas.EmpleadoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    db_empleado = models.Empleado(**empleado.model_dump(), gimnasio_id=get_gid(usuario))
+    valores = empleado.model_dump()
+    if valores.get("codigo_acceso"):
+        valores["codigo_acceso"] = auth.hash_codigo_acceso(valores["codigo_acceso"])
+    db_empleado = models.Empleado(**valores, gimnasio_id=get_gid(usuario))
     db.add(db_empleado)
     db.commit()
     db.refresh(db_empleado)
@@ -6202,6 +6591,8 @@ def actualizar_empleado(
     if not empleado:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
     for campo, valor in datos.model_dump(exclude_unset=True).items():
+        if campo == "codigo_acceso" and valor:
+            valor = auth.hash_codigo_acceso(valor)
         setattr(empleado, campo, valor)
     db.commit()
     db.refresh(empleado)
@@ -7847,13 +8238,17 @@ def evolucion_metas_anual(
 
 
 @app.post("/auth/registro-gimnasio", response_model=schemas.TokenResponse, tags=["Auth"])
-def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depends(get_db)):
+def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, request: Request, db: Session = Depends(get_db)):
     """
     Registro publico: un dueño de gimnasio crea su cuenta.
     Crea el gimnasio (plan Free), su usuario admin, siembra datos
     iniciales y devuelve un token listo para usar.
     """
     import re
+    try:
+        auth.validar_password_segura(datos.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     slug = datos.slug.strip().lower()
     if not re.match(r'^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$', slug):
         raise HTTPException(status_code=400, detail="El slug debe tener 3-50 caracteres, solo letras minusculas, numeros y guiones, sin empezar ni terminar en guion")
@@ -7883,6 +8278,8 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depe
         gimnasio_id=db_gimnasio.id,
         nombre_completo=datos.nombre_admin.strip(),
         username=username,
+        email=str(datos.email).lower(),
+        email_verificado=False,
         password_hash=auth.hash_password(datos.password),
         rol=models.RolUsuario.STAFF,
         es_administrador=True,
@@ -7897,11 +8294,27 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, db: Session = Depe
     db.commit()
     db.refresh(db_admin)
 
+    if email_service.esta_configurado():
+        try:
+            token_email = _crear_token_un_solo_uso(db, db_admin.id, "verificar_email", 24 * 60)
+            base = os.getenv("APP_BASE_URL", "http://localhost:3001").rstrip("/")
+            url = f"{base}/verificar-email.html?token={token_email}"
+            email_service.enviar(
+                db_admin.email,
+                "Verifica tu correo de Soft-Gym",
+                email_service.plantilla_accion("Verifica tu correo", "Confirma que este correo pertenece al propietario del gimnasio.", "Verificar correo", url),
+            )
+        except Exception:
+            logger.exception("No se pudo enviar el correo de verificacion del gimnasio %s", db_gimnasio.id)
+
+    sesion = _crear_sesion_usuario(db, db_admin, request)
     token = auth.crear_access_token({
         "sub": str(db_admin.id),
         "tipo": "usuario",
         "rol": db_admin.rol.value,
         "gimnasio_id": db_gimnasio.id,
+        "sv": db_admin.sesion_version or 1,
+        "jti": sesion.jti,
     })
     return schemas.TokenResponse(
         access_token=token,
@@ -8083,6 +8496,10 @@ def crear_gimnasio(
     Crea un gimnasio nuevo con su usuario admin inicial.
     El slug debe ser unico (URL-friendly).
     """
+    try:
+        auth.validar_password_segura(datos.admin_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     existente = db.query(models.Gimnasio).filter(models.Gimnasio.slug == datos.slug).first()
     if existente:
         raise HTTPException(status_code=400, detail=f"Ya existe un gimnasio con slug '{datos.slug}'")
@@ -8456,7 +8873,7 @@ def marcar_asistencia_desde_portal(
 @app.put("/portal-alumno/cambiar-password", tags=["Portal Alumno"])
 def cambiar_password_alumno(
     datos: schemas.CambioPasswordAlumnoRequest,
-    cliente: models.Cliente = Depends(auth.get_cliente_actual),
+    cliente: models.Cliente = Depends(auth.get_cliente_para_configurar_password),
     db: Session = Depends(get_db),
 ):
     nueva = datos.nueva_password.strip()
@@ -8464,9 +8881,16 @@ def cambiar_password_alumno(
         raise HTTPException(status_code=400, detail="La contraseña debe contener solo números")
     if nueva == PASSWORD_LEGACY_ALUMNO:
         raise HTTPException(status_code=400, detail="Elige una contraseña menos predecible")
-    cliente.codigo_acceso = nueva
+    cliente.codigo_acceso = auth.hash_codigo_acceso(nueva)
     db.commit()
-    return {"message": "Contraseña actualizada correctamente"}
+    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    return {
+        "message": "Contraseña actualizada correctamente",
+        "access_token": token,
+        "token_type": "bearer",
+        "nombre": cliente.nombre,
+        "gimnasio_id": cliente.gimnasio_id,
+    }
 
 
 @app.get("/portal-alumno/mi-rutina", response_model=List[schemas.Rutina], tags=["Portal Alumno"])

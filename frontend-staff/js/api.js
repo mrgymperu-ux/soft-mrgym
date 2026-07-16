@@ -5,6 +5,10 @@
 
 const API_BASE_URL = "http://localhost:8000";
 
+function escapeHTML(valor) {
+    return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+}
+
 const SESSION_KEYS = {
     token: "mrgym_token",
     rol: "mrgym_rol",

@@ -29,6 +29,10 @@ IMPORTANTE - variable de entorno SECRET_KEY:
 """
 
 import os
+import re
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -40,7 +44,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from . import models
-from .time_utils import hoy_lima
+from .time_utils import ahora_lima, hoy_lima
 from .database import get_db
 
 load_dotenv()
@@ -49,6 +53,8 @@ SECRET_KEY = os.getenv(
     "SECRET_KEY",
     "cambiar-esta-clave-en-produccion-no-usar-en-real",
 )
+if os.getenv("ENVIRONMENT", "").lower() in {"production", "prod"} and SECRET_KEY == "cambiar-esta-clave-en-produccion-no-usar-en-real":
+    raise RuntimeError("SECRET_KEY debe configurarse con un valor seguro en produccion")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 12  # 12 horas, pensado para un turno de trabajo largo
 
@@ -71,19 +77,89 @@ def verificar_password(password_plano: str, password_hash: str) -> bool:
     return pwd_context.verify(password_plano, password_hash)
 
 
+def validar_password_segura(password: str) -> None:
+    """Regla comun para propietarios y cuentas de staff."""
+    if len(password) < 10:
+        raise ValueError("La contrasena debe tener al menos 10 caracteres")
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise ValueError("La contrasena debe combinar letras y numeros")
+
+
+CODIGO_HASH_PREFIX = "$2"
+
+
+def hash_codigo_acceso(codigo: str) -> str:
+    return pwd_context.hash(codigo.strip())
+
+
 # ==================================================================
 # CODIGO DE ACCESO DE ALUMNOS
 # ==================================================================
 
 def verificar_codigo_acceso(codigo_ingresado: str, codigo_guardado: Optional[str]) -> bool:
     """
-    Comparacion simple del codigo de acceso del alumno. Se guarda
-    en texto plano por decision explicita (no es informacion
-    sensible tipo bancaria, y prioriza velocidad/simplicidad).
+    Acepta hashes bcrypt y, temporalmente, valores antiguos en texto
+    plano para permitir una migracion gradual sin bloquear usuarios.
     """
     if not codigo_guardado:
         return False
-    return codigo_ingresado.strip() == codigo_guardado.strip()
+    codigo = codigo_ingresado.strip()
+    guardado = codigo_guardado.strip()
+    if guardado.startswith(CODIGO_HASH_PREFIX):
+        try:
+            return pwd_context.verify(codigo, guardado)
+        except (ValueError, TypeError):
+            return False
+    return codigo == guardado
+
+
+def codigo_necesita_rehash(codigo_guardado: Optional[str]) -> bool:
+    return bool(codigo_guardado and not codigo_guardado.strip().startswith(CODIGO_HASH_PREFIX))
+
+
+class LoginRateLimiter:
+    """Limitador local por IP+identificador, sin guardar contrasenas."""
+    def __init__(self, max_intentos: int = 5, ventana_segundos: int = 15 * 60):
+        self.max_intentos = max_intentos
+        self.ventana_segundos = ventana_segundos
+        self._intentos = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def comprobar(self, clave: str) -> Optional[int]:
+        ahora = time.monotonic()
+        with self._lock:
+            intentos = self._intentos[clave]
+            while intentos and ahora - intentos[0] >= self.ventana_segundos:
+                intentos.popleft()
+            if len(intentos) >= self.max_intentos:
+                return max(1, int(self.ventana_segundos - (ahora - intentos[0])))
+        return None
+
+    def registrar_fallo(self, clave: str) -> None:
+        with self._lock:
+            self._intentos[clave].append(time.monotonic())
+
+    def limpiar(self, clave: str) -> None:
+        with self._lock:
+            self._intentos.pop(clave, None)
+
+
+login_rate_limiter = LoginRateLimiter()
+
+
+def clave_rate_limit(request: Request, tipo: str, identificador: str, slug: Optional[str] = None) -> str:
+    ip = request.client.host if request.client else "desconocida"
+    return f"{tipo}:{ip}:{(slug or '').lower()}:{identificador.strip().lower()}"
+
+
+def exigir_intentos_disponibles(clave: str) -> None:
+    espera = login_rate_limiter.comprobar(clave)
+    if espera is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos. Espera antes de volver a probar.",
+            headers={"Retry-After": str(espera)},
+        )
 
 
 # ==================================================================
@@ -190,6 +266,20 @@ def get_usuario_actual(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario no encontrado o inactivo",
         )
+    if int(payload.get("sv", 0)) != int(usuario.sesion_version or 1):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="La sesion fue cerrada. Ingresa nuevamente")
+    jti = payload.get("jti")
+    sesion = db.query(models.SesionUsuario).filter(
+        models.SesionUsuario.usuario_id == usuario.id,
+        models.SesionUsuario.jti == jti,
+        models.SesionUsuario.revocada_en.is_(None),
+    ).first() if jti else None
+    if not sesion:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="La sesion ya no esta activa")
+    ahora = ahora_lima()
+    if not sesion.ultima_actividad or (ahora - sesion.ultima_actividad).total_seconds() >= 300:
+        sesion.ultima_actividad = ahora
+        db.commit()
 
     # Un tenant suspendido no puede seguir usando tokens existentes.
     # El superadmin de plataforma queda exento para poder administrarlo.
@@ -386,6 +476,26 @@ def get_cliente_actual(
     return cliente
 
 
+def get_cliente_para_configurar_password(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> models.Cliente:
+    """Acepta solamente el token corto de primer acceso/reset de clave."""
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+    payload = decodificar_token(token)
+    if payload.get("tipo") != "alumno_configuracion":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token no valido para configurar la contrasena")
+    try:
+        cliente_id = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.activo == True).first()
+    if not cliente or (cliente.codigo_acceso and cliente.codigo_acceso.strip()):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="La configuracion inicial ya no esta disponible")
+    return cliente
+
+
 def get_profesor_actual(
     token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -464,6 +574,9 @@ def autenticar_alumno(db: Session, dni: str, codigo_acceso: str, gimnasio_id: in
         return None
     if not verificar_codigo_acceso(codigo_acceso, cliente.codigo_acceso):
         return None
+    if codigo_necesita_rehash(cliente.codigo_acceso):
+        cliente.codigo_acceso = hash_codigo_acceso(codigo_acceso)
+        db.commit()
     return cliente
 
 
@@ -501,4 +614,7 @@ def autenticar_profesor(db: Session, dni: str, codigo_acceso: str, gimnasio_id: 
         return None
     if not verificar_codigo_acceso(codigo_acceso, profesor.codigo_acceso):
         return None
+    if codigo_necesita_rehash(profesor.codigo_acceso):
+        profesor.codigo_acceso = hash_codigo_acceso(codigo_acceso)
+        db.commit()
     return profesor

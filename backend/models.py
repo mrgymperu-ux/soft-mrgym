@@ -90,6 +90,10 @@ class Gimnasio(Base):
     direccion = Column(String, nullable=True)
     logo_url = Column(String, nullable=True)
     logo_oscuro_url = Column(String, nullable=True)
+    logo_datos = deferred(Column(LargeBinary, nullable=True))
+    logo_tipo = Column(String, nullable=True)
+    logo_oscuro_datos = deferred(Column(LargeBinary, nullable=True))
+    logo_oscuro_tipo = Column(String, nullable=True)
     latitud = Column(Float, nullable=True)
     longitud = Column(Float, nullable=True)
     radio_asistencia_metros = Column(Float, default=150.0)
@@ -210,6 +214,9 @@ class Usuario(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     nombre_completo = Column(String, nullable=False)
     username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, nullable=True, index=True)
+    email_verificado = Column(Boolean, default=False)
+    sesion_version = Column(Integer, default=1)
     password_hash = Column(String, nullable=False)
     rol = Column(Enum(RolUsuario), nullable=False)
     activo = Column(Boolean, default=True)
@@ -234,6 +241,68 @@ class Usuario(Base):
     # tambien puede tener ficha de Empleado, pero no es obligatorio).
     empleado_id = Column(Integer, ForeignKey("empleados.id"), nullable=True)
     empleado = relationship("Empleado", back_populates="usuario")
+
+
+class TokenAutenticacion(Base):
+    """Token de un solo uso; solo se persiste su hash SHA-256."""
+    __tablename__ = "tokens_autenticacion"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    proposito = Column(String, nullable=False, index=True)  # verificar_email | recuperar_password
+    token_hash = Column(String, unique=True, nullable=False, index=True)
+    expira_en = Column(DateTime, nullable=False)
+    usado_en = Column(DateTime, nullable=True)
+    creado_en = Column(DateTime, default=ahora_lima)
+
+
+class InvitacionUsuario(Base):
+    __tablename__ = "invitaciones_usuario"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    email = Column(String, nullable=False, index=True)
+    rol = Column(Enum(RolUsuario), nullable=False, default=RolUsuario.STAFF)
+    empleado_id = Column(Integer, ForeignKey("empleados.id"), nullable=True)
+    es_administrador = Column(Boolean, default=False)
+    puede_eliminar = Column(Boolean, default=False)
+    puede_exportar = Column(Boolean, default=False)
+    zonas_permitidas = Column(String, nullable=True)
+    token_hash = Column(String, unique=True, nullable=False, index=True)
+    expira_en = Column(DateTime, nullable=False)
+    aceptada_en = Column(DateTime, nullable=True)
+    revocada_en = Column(DateTime, nullable=True)
+    invitado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    creado_en = Column(DateTime, default=ahora_lima)
+
+
+class SesionUsuario(Base):
+    __tablename__ = "sesiones_usuario"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False, index=True)
+    jti = Column(String, unique=True, nullable=False, index=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    creada_en = Column(DateTime, default=ahora_lima)
+    ultima_actividad = Column(DateTime, default=ahora_lima)
+    revocada_en = Column(DateTime, nullable=True)
+
+
+class EventoAuditoria(Base):
+    __tablename__ = "eventos_auditoria"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True, index=True)
+    accion = Column(String, nullable=False, index=True)
+    metodo = Column(String, nullable=True)
+    ruta = Column(String, nullable=True, index=True)
+    estado_http = Column(Integer, nullable=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    detalles = Column(Text, nullable=True)
+    creado_en = Column(DateTime, default=ahora_lima, nullable=False, index=True)
 
 
 # ==================================================================
@@ -599,6 +668,8 @@ class TipoEjercicio(Base):
     grupo_muscular = Column(String, nullable=True)  # ej. "Pecho", "Espalda", "Piernas", "Cardio"
     descripcion = Column(Text, nullable=True)  # como se hace / tecnica
     imagen_url = Column(String, nullable=True)
+    imagen_datos = deferred(Column(LargeBinary, nullable=True))
+    imagen_tipo = Column(String, nullable=True)
     video_url = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=ahora_lima)

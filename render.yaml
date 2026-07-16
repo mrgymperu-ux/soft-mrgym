@@ -17,6 +17,16 @@ services:
         sync: false  # se configura manualmente con la URL de Supabase
       - key: SECRET_KEY
         generateValue: true
+      - key: ENVIRONMENT
+        value: "production"
+      - key: APP_BASE_URL
+        value: "https://soft-mrgym.onrender.com"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "false"
       - key: CORS_ORIGINS
         value: "https://soft-mrgym.onrender.com"
 

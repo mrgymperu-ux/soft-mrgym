@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recuperar contraseña - Soft-Gym</title><link rel="stylesheet" href="css/styles.css"></head>
+<body class="login-page"><main class="login-card"><h1>Recuperar contraseña</h1><p>Escribe el correo asociado a la cuenta.</p>
+<div class="form-group"><label>Correo</label><input id="email" type="email" required></div>
+<button class="btn btn-primary" id="enviar">Enviar instrucciones</button><div id="mensaje"></div>
+<div style="margin-top:1rem"><a href="login.html">Volver al ingreso</a></div></main>
+<script src="js/api.js"></script><script>document.getElementById("enviar").onclick=async()=>{const m=document.getElementById("mensaje"),email=document.getElementById("email").value.trim();try{const r=await fetch(`${API_BASE_URL}/auth/solicitar-recuperacion`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"No se pudo procesar");m.textContent=d.message}catch(e){m.textContent=e.message}};</script></body></html>

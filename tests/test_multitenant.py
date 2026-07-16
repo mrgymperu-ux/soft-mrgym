@@ -28,6 +28,7 @@ from backend.main import (
     crear_paquete_rutina,
     crear_reserva_sala,
     crear_venta,
+    consultar_auditoria,
     eliminar_pago_membresia,
     generar_rutinas_por_equipamiento,
     registrar_compra,
@@ -103,6 +104,16 @@ class MultiTenantTest(unittest.TestCase):
         config.email = "gym@example.com"
         self.assertEqual(config.nombre, "Nuevo nombre")
         self.assertEqual(config.email_contacto, "gym@example.com")
+
+    def test_auditoria_no_expone_eventos_de_otro_gimnasio(self):
+        self.db.add_all([
+            models.EventoAuditoria(gimnasio_id=self.gym1.id, usuario_id=self.admin1.id, accion="POST", ruta="/clientes"),
+            models.EventoAuditoria(gimnasio_id=self.gym2.id, accion="DELETE", ruta="/clientes/99"),
+        ])
+        self.db.commit()
+        eventos = consultar_auditoria(accion=None, desde=None, hasta=None, skip=0, limit=100, db=self.db, admin=self.admin1)
+        self.assertEqual(len(eventos), 1)
+        self.assertEqual(eventos[0]["ruta"], "/clientes")
 
     def test_asistencia_abierta_se_cierra_exactamente_a_las_tres_horas(self):
         ahora = datetime(2026, 7, 13, 18, 30)
