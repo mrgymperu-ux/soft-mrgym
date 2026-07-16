@@ -579,6 +579,7 @@ def _migrar_columnas_nuevas():
         "asistencias": [("gimnasio_id", "INTEGER")],
         "progresos": [("gimnasio_id", "INTEGER")],
         "rutinas": [("gimnasio_id", "INTEGER")],
+        "paquetes_rutina": [("equipamiento_origen", "VARCHAR")],
         "paquetes_nutricion": [("gimnasio_id", "INTEGER")],
         "paquete_alimentos": [("porcion_cliente", "VARCHAR")],
         "retos": [("gimnasio_id", "INTEGER")],
@@ -7327,6 +7328,80 @@ EQUIPAMIENTO_GIMNASIO = [
 ]
 EQUIPAMIENTO_CODIGOS = {item[0] for item in EQUIPAMIENTO_GIMNASIO}
 
+# Ejercicios base que pueden incorporarse de forma incremental cuando
+# el gimnasio compra o habilita equipamiento nuevo.
+EJERCICIOS_GENERABLES_EQUIPO = {
+    "mancuernas": [("Press con mancuernas", "Pecho", "fuerza", "principiante", "10-12"), ("Remo con mancuerna", "Espalda", "fuerza", "principiante", "10-12"), ("Zancadas con mancuernas", "Piernas", "fuerza", "principiante", "12 por lado")],
+    "barra_discos": [("Sentadilla con barra", "Piernas", "fuerza", "intermedio", "8-10"), ("Remo con barra", "Espalda", "fuerza", "intermedio", "8-10"), ("Peso muerto rumano con barra", "Piernas", "fuerza", "intermedio", "10")],
+    "barra_olimpica": [("Peso muerto con barra olimpica", "Piernas", "fuerza", "intermedio", "6-8"), ("Clean con barra olimpica", "Cuerpo completo", "funcional", "avanzado", "6")],
+    "barra_ez": [("Curl de biceps con barra Z", "Biceps", "fuerza", "principiante", "10-12"), ("Extension de triceps con barra Z", "Triceps", "fuerza", "intermedio", "10-12")],
+    "barra_hexagonal": [("Peso muerto con barra hexagonal", "Piernas", "fuerza", "intermedio", "8-10")],
+    "kettlebell": [("Kettlebell swing", "Cuerpo completo", "funcional", "intermedio", "15"), ("Sentadilla goblet con kettlebell", "Piernas", "fuerza", "principiante", "12")],
+    "banco_plano": [("Fondos apoyados en banco", "Triceps", "fuerza", "principiante", "12"), ("Step up en banco", "Piernas", "funcional", "principiante", "12 por lado")],
+    "banco_inclinado": [("Flexiones inclinadas en banco", "Pecho", "fuerza", "principiante", "12")],
+    "rack_sentadillas": [("Sentadilla en rack", "Piernas", "fuerza", "intermedio", "8-10")],
+    "jaula_potencia": [("Sentadilla en jaula de potencia", "Piernas", "fuerza", "intermedio", "8-10")],
+    "landmine": [("Press landmine", "Hombros", "fuerza", "intermedio", "10 por lado"), ("Remo landmine", "Espalda", "fuerza", "intermedio", "10")],
+    "barra_dominadas": [("Dominadas", "Espalda", "fuerza", "avanzado", "Al fallo tecnico"), ("Elevacion de rodillas colgado", "Core", "fuerza", "intermedio", "12")],
+    "paralelas": [("Fondos en paralelas", "Triceps", "fuerza", "avanzado", "8-12")],
+    "multiestacion": [("Circuito en multiestacion", "Cuerpo completo", "fuerza", "principiante", "12 por estacion")],
+    "poleas": [("Jalon al pecho en polea", "Espalda", "fuerza", "principiante", "12"), ("Patada de gluteo en polea", "Gluteos", "fuerza", "principiante", "12 por lado"), ("Extension de triceps en polea", "Triceps", "fuerza", "principiante", "12")],
+    "smith": [("Sentadilla en maquina Smith", "Piernas", "fuerza", "principiante", "10-12"), ("Press de pecho en Smith", "Pecho", "fuerza", "intermedio", "10")],
+    "hack_sentadilla": [("Sentadilla Hack", "Piernas", "fuerza", "principiante", "10-12")],
+    "sentadilla_pendular": [("Sentadilla pendular", "Piernas", "fuerza", "principiante", "10-12")],
+    "press_pecho_maquina": [("Press en maquina de pecho", "Pecho", "fuerza", "principiante", "12")],
+    "remo_maquina": [("Remo en maquina", "Espalda", "fuerza", "principiante", "12")],
+    "prensa_piernas": [("Prensa de piernas", "Piernas", "fuerza", "principiante", "12")],
+    "extension_cuadriceps": [("Extension de cuadriceps", "Piernas", "fuerza", "principiante", "12-15")],
+    "curl_femoral": [("Curl femoral en maquina", "Piernas", "fuerza", "principiante", "12")],
+    "hip_thrust_maquina": [("Hip thrust en maquina", "Gluteos", "fuerza", "principiante", "12")],
+    "abductores_aductores": [("Abduccion de cadera en maquina", "Gluteos", "fuerza", "principiante", "15"), ("Aduccion de cadera en maquina", "Piernas", "fuerza", "principiante", "15")],
+    "pantorrilla_maquina": [("Elevacion de pantorrilla en maquina", "Piernas", "fuerza", "principiante", "15")],
+    "press_hombros_maquina": [("Press de hombros en maquina", "Hombros", "fuerza", "principiante", "12")],
+    "pec_deck": [("Aperturas en pec deck", "Pecho", "fuerza", "principiante", "12")],
+    "deltoide_posterior": [("Apertura posterior en maquina", "Hombros", "fuerza", "principiante", "12")],
+    "biceps_maquina": [("Curl de biceps en maquina", "Biceps", "fuerza", "principiante", "12")],
+    "triceps_maquina": [("Extension de triceps en maquina", "Triceps", "fuerza", "principiante", "12")],
+    "gluteo_maquina": [("Patada de gluteo en maquina", "Gluteos", "fuerza", "principiante", "12 por lado")],
+    "abdominal_maquina": [("Crunch en maquina abdominal", "Core", "fuerza", "principiante", "15")],
+    "lumbar_maquina": [("Extension lumbar en maquina", "Espalda", "fuerza", "principiante", "12")],
+    "caminadora": [("Caminata en caminadora", "Piernas", "cardio", "principiante", "15 min"), ("Intervalos en caminadora", "Piernas", "cardio", "intermedio", "10 min")],
+    "bicicleta_estatica": [("Bicicleta estatica", "Piernas", "cardio", "principiante", "15 min")],
+    "eliptica": [("Trabajo en eliptica", "Cuerpo completo", "cardio", "principiante", "15 min")],
+    "escaladora": [("Intervalos en escaladora", "Piernas", "cardio", "intermedio", "10 min")],
+    "remo_cardio": [("Remo ergometro", "Cuerpo completo", "cardio", "intermedio", "1000 m")],
+    "bicicleta_spinning": [("Spinning por intervalos", "Piernas", "cardio", "intermedio", "20 min")],
+    "air_bike": [("Intervalos en air bike", "Cuerpo completo", "cardio", "intermedio", "10 x 30 s")],
+    "ski_erg": [("Intervalos en ski erg", "Cuerpo completo", "cardio", "intermedio", "10 min")],
+    "bandas_elasticas": [("Sentadilla con banda elastica", "Piernas", "funcional", "principiante", "15"), ("Pull apart con banda", "Espalda", "funcional", "principiante", "15")],
+    "trx": [("Remo en TRX", "Espalda", "funcional", "principiante", "12"), ("Sentadilla asistida en TRX", "Piernas", "funcional", "principiante", "15")],
+    "step": [("Step con rodillazo", "Piernas", "cardio", "intermedio", "16"), ("Step lateral", "Piernas", "cardio", "principiante", "16")],
+    "cajon": [("Salto al cajon", "Piernas", "funcional", "intermedio", "10")],
+    "colchoneta": [("Plancha frontal", "Core", "fuerza", "principiante", "30 s"), ("Crunch abdominal", "Core", "fuerza", "principiante", "15")],
+    "cuerda_saltar": [("Saltar cuerda basico", "Cuerpo completo", "cardio", "principiante", "60 s"), ("Saltar cuerda doble", "Cuerpo completo", "cardio", "intermedio", "30 s")],
+    "cuerda_batida": [("Battle ropes", "Cuerpo completo", "funcional", "intermedio", "30 s")],
+    "fitball": [("Crunch con fitball", "Core", "fuerza", "principiante", "15"), ("Puente de gluteos con fitball", "Gluteos", "funcional", "intermedio", "12")],
+    "balon_medicinal": [("Wall ball con balon medicinal", "Cuerpo completo", "funcional", "intermedio", "15")],
+    "bosu": [("Sentadilla sobre BOSU", "Piernas", "funcional", "intermedio", "12")],
+    "foam_roller": [("Movilidad con foam roller", "Cuerpo completo", "estiramiento", "principiante", "8 min")],
+    "discos_deslizantes": [("Mountain climbers con deslizadores", "Core", "funcional", "intermedio", "30 s")],
+    "escalera_agilidad": [("Pasos rapidos en escalera", "Piernas", "cardio", "intermedio", "6 vueltas")],
+    "conos": [("Zigzag entre conos", "Piernas", "cardio", "principiante", "6 vueltas")],
+    "vallas": [("Saltos sobre vallas", "Piernas", "funcional", "intermedio", "10")],
+    "chaleco_lastrado": [("Caminata con chaleco lastrado", "Cuerpo completo", "fuerza", "intermedio", "10 min")],
+    "trineo": [("Empuje de trineo", "Piernas", "funcional", "intermedio", "20 m")],
+    "rueda_abdominal": [("Despliegue con rueda abdominal", "Core", "fuerza", "intermedio", "10")],
+    "saco_boxeo": [("Golpes rectos al saco", "Cuerpo completo", "cardio", "principiante", "3 min"), ("Combinaciones al saco", "Cuerpo completo", "cardio", "intermedio", "3 min")],
+    "pera_boxeo": [("Trabajo de pera de boxeo", "Hombros", "cardio", "intermedio", "3 min")],
+    "paos_boxeo": [("Combinaciones con paos", "Cuerpo completo", "cardio", "intermedio", "3 min")],
+}
+
+EQUIPAMIENTO_GRUPOS = {
+    codigo: sorted({plantilla[1] for plantilla in plantillas})
+    for codigo, plantillas in EJERCICIOS_GENERABLES_EQUIPO.items()
+}
+EQUIPAMIENTO_POR_CODIGO = {codigo: (nombre, categoria) for codigo, nombre, categoria in EQUIPAMIENTO_GIMNASIO}
+
 
 def _equipamiento_disponible_gym(gimnasio: models.Gimnasio) -> set:
     return {"sin_equipo"} | {
@@ -7335,12 +7410,27 @@ def _equipamiento_disponible_gym(gimnasio: models.Gimnasio) -> set:
     }
 
 
+def _equipos_pendientes_generacion(db: Session, gimnasio_id: int, seleccionados: set) -> list:
+    generados = {
+        fila[0] for fila in db.query(models.PaqueteRutina.equipamiento_origen).filter(
+            models.PaqueteRutina.gimnasio_id == gimnasio_id,
+            models.PaqueteRutina.equipamiento_origen.isnot(None),
+        ).all()
+    }
+    return sorted((seleccionados & set(EJERCICIOS_GENERABLES_EQUIPO)) - generados)
+
+
 @app.get("/equipamiento-gimnasio", tags=["Entrenamientos"])
 def obtener_equipamiento_gimnasio(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
     gimnasio = _configuracion_del_gym(db, usuario)
+    seleccionados = _equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}
     return {
-        "catalogo": [{"codigo": c, "nombre": n, "categoria": cat} for c, n, cat in EQUIPAMIENTO_GIMNASIO],
-        "seleccionados": sorted(_equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}),
+        "catalogo": [
+            {"codigo": c, "nombre": n, "categoria": cat, "grupos_musculares": EQUIPAMIENTO_GRUPOS.get(c, ["Cuerpo completo"])}
+            for c, n, cat in EQUIPAMIENTO_GIMNASIO
+        ],
+        "seleccionados": sorted(seleccionados),
+        "pendientes_generacion": _equipos_pendientes_generacion(db, gimnasio.id, seleccionados),
     }
 
 
@@ -7350,9 +7440,86 @@ def guardar_equipamiento_gimnasio(datos: schemas.EquipamientoGimnasioUpdate, db:
     if desconocidos:
         raise HTTPException(status_code=400, detail="Hay equipamiento no reconocido")
     gimnasio = _configuracion_del_gym(db, usuario)
-    gimnasio.equipamiento_disponible = ",".join(sorted(set(datos.equipos)))
+    seleccionados = set(datos.equipos)
+    gimnasio.equipamiento_disponible = ",".join(sorted(seleccionados))
     db.commit()
-    return {"seleccionados": sorted(set(datos.equipos))}
+    return {
+        "seleccionados": sorted(seleccionados),
+        "pendientes_generacion": _equipos_pendientes_generacion(db, gimnasio.id, seleccionados),
+    }
+
+
+@app.post("/equipamiento-gimnasio/generar-rutinas", tags=["Entrenamientos"])
+def generar_rutinas_por_equipamiento(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    gimnasio = _configuracion_del_gym(db, usuario)
+    seleccionados = _equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}
+    pendientes = _equipos_pendientes_generacion(db, gimnasio.id, seleccionados)
+    paquetes_creados = []
+    ejercicios_creados = 0
+
+    for codigo in pendientes:
+        nombre_equipo, categoria_equipo = EQUIPAMIENTO_POR_CODIGO[codigo]
+        ejercicios_paquete = []
+        for nombre, grupo, categoria, nivel, repeticiones in EJERCICIOS_GENERABLES_EQUIPO[codigo]:
+            ejercicio = db.query(models.TipoEjercicio).filter(
+                models.TipoEjercicio.gimnasio_id == gimnasio.id,
+                models.TipoEjercicio.nombre == nombre,
+            ).first()
+            if not ejercicio:
+                ejercicio = models.TipoEjercicio(
+                    gimnasio_id=gimnasio.id,
+                    nombre=nombre,
+                    grupo_muscular=grupo,
+                    categoria=categoria,
+                    equipamiento=codigo,
+                    nivel=nivel,
+                    genero_recomendado="todos",
+                    objetivo="bajar_peso" if categoria == "cardio" else "ganar_masa",
+                    activo=True,
+                )
+                db.add(ejercicio)
+                db.flush()
+                ejercicios_creados += 1
+            else:
+                ejercicio.activo = True
+                ejercicio.equipamiento = codigo
+                ejercicio.grupo_muscular = ejercicio.grupo_muscular or grupo
+                ejercicio.categoria = ejercicio.categoria or categoria
+            ejercicios_paquete.append(models.PaqueteRutinaEjercicio(
+                tipo_ejercicio_id=ejercicio.id,
+                nombre=ejercicio.nombre,
+                series=1 if "min" in repeticiones else 3,
+                repeticiones=repeticiones,
+                notas=f"Usar {nombre_equipo}",
+            ))
+
+        objetivo = "bajar_peso" if categoria_equipo == "Cardio" else ("rendimiento" if categoria_equipo in {"Boxeo", "Funcional y accesorios"} else "ganar_masa")
+        paquete = models.PaqueteRutina(
+            gimnasio_id=gimnasio.id,
+            nombre=f"Rutina · {nombre_equipo}",
+            descripcion=f"Generada al habilitar {nombre_equipo}. No modifica los paquetes ni las rutinas existentes.",
+            nivel="basico",
+            objetivo=objetivo,
+            etapa="adaptacion",
+            genero_recomendado="todos",
+            duracion_semanas=4,
+            equipamiento_origen=codigo,
+            dias=[models.PaqueteRutinaDia(
+                nombre=f"Día 1 · {nombre_equipo}",
+                orden=0,
+                ejercicios=ejercicios_paquete,
+            )],
+        )
+        db.add(paquete)
+        paquetes_creados.append(nombre_equipo)
+
+    db.commit()
+    return {
+        "equipos_procesados": paquetes_creados,
+        "ejercicios_creados": ejercicios_creados,
+        "paquetes_creados": len(paquetes_creados),
+        "mensaje": "Se agregaron ejercicios y paquetes nuevos sin modificar las rutinas existentes" if paquetes_creados else "No hay equipamiento nuevo pendiente",
+    }
 
 @app.get("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
 def obtener_configuracion(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
@@ -7726,6 +7893,7 @@ def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
     for paquete in db.query(models.PaqueteRutina).filter(
         models.PaqueteRutina.gimnasio_id == GYM_TEMPLATE,
         models.PaqueteRutina.activo == True,
+        models.PaqueteRutina.equipamiento_origen.is_(None),
     ).all():
         dias = []
         for dia in paquete.dias:

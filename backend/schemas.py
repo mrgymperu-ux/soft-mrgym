@@ -732,6 +732,7 @@ class PaqueteRutinaCreate(BaseModel):
 class PaqueteRutina(PaqueteRutinaCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    equipamiento_origen: Optional[str] = None
     activo: bool
     fecha_creacion: datetime
     dias: List[PaqueteRutinaDia] = []

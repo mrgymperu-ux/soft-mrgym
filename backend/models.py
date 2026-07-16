@@ -684,6 +684,7 @@ class PaqueteRutina(Base):
     edad_min = Column(Integer, nullable=True)
     edad_max = Column(Integer, nullable=True)
     duracion_semanas = Column(Integer, default=4)
+    equipamiento_origen = Column(String, nullable=True, index=True)
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=ahora_lima)
 

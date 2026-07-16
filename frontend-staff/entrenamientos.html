@@ -49,6 +49,9 @@
         .equipamiento-cabecera h2 { font-size:1em;margin:0 0 3px; }
         .equipamiento-cabecera p { font-size:.78em;color:var(--color-texto-secundario);margin:0; }
         .equipamiento-acciones { display:flex;gap:7px;flex-wrap:wrap; }
+        .equipamiento-filtros { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px; }
+        .equipamiento-filtros input { flex:1;min-width:210px; }
+        .equipamiento-filtros select { min-width:180px; }
         .equipamiento-grupos { display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px; }
         .equipamiento-grupo { background:var(--color-fondo);border:1px solid var(--color-borde);padding:10px;border-radius:9px; }
         .equipamiento-grupo strong { display:block;font-size:.78em;margin-bottom:7px; }
@@ -56,6 +59,8 @@
         .equipo-check input { width:16px;height:16px;accent-color:var(--color-primario); }
         .aviso-equipo { font-size:.73em;color:#a45b14;background:#fff4df;border-radius:6px;padding:6px;margin:5px 0; }
         .alternativas-equipo { font-size:.71em;color:var(--color-texto-secundario);margin:5px 0 8px; }
+        .estado-ejercicio { display:inline-block;font-size:.68em;font-weight:700;padding:3px 7px;margin-bottom:7px;border:1px solid var(--color-borde); }
+        .estado-ejercicio.disponible { color:#277849;background:#EAF7EF; }.estado-ejercicio.bloqueado { color:#9B5415;background:#FFF3DF; }
         #modal-paquete .modal-content { max-width:980px; }
         @media (max-width:768px) {
             .paquetes-grid { grid-template-columns:1fr; }
@@ -85,8 +90,9 @@
         <div id="vista-equipamiento" style="display:none;">
             <section class="equipamiento-panel">
                 <div class="equipamiento-cabecera"><div><h2>Equipamiento disponible</h2><p>Marca lo que tiene el gimnasio. Los ejercicios que no puedas realizar se bloquearán y mostrarán alternativas.</p></div>
-                    <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button></div>
+                    <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button><button class="btn btn-primary btn-sm" id="btn-generar-rutinas" onclick="generarRutinasEquipamiento()" disabled>Generar más rutinas</button></div>
                 </div>
+                <div class="equipamiento-filtros"><input id="buscar-equipo" type="search" placeholder="Buscar máquina, mancuerna, soga, saco..." oninput="renderEquipamiento()"><select id="fil-grupo-equipo" onchange="renderEquipamiento()"><option value="">Todos los grupos musculares</option></select></div>
                 <div id="equipamiento-grupos" class="equipamiento-grupos"><span>Cargando equipamiento...</span></div>
             </section>
         </div>
@@ -100,7 +106,7 @@
             <div id="paquetes" class="paquetes-grid"><div class="vacio">Cargando paquetes...</div></div>
         </div>
         <div id="vista-catalogo" style="display:none;">
-            <div class="filtros-rutina"><input id="buscar-ejercicio" type="search" placeholder="Buscar ejercicio o grupo muscular..." oninput="renderCatalogo()"></div>
+            <div class="filtros-rutina"><input id="buscar-ejercicio" type="search" placeholder="Buscar ejercicio o grupo muscular..." oninput="renderCatalogo()"><select id="fil-grupo-catalogo" onchange="renderCatalogo()"><option value="">Todos los grupos musculares</option></select><select id="fil-disponibilidad" onchange="renderCatalogo()"><option value="">Todos</option><option value="disponibles">Disponibles</option><option value="bloqueados">Requieren equipamiento</option></select></div>
             <div id="catalogo-grid" class="catalogo-grid"></div>
         </div>
     </main>
@@ -160,7 +166,7 @@
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
 <script>
-    let paquetes = [], catalogo = [], clientes = [], equipamientoCatalogo = [], equipamientoSeleccionado = new Set(), paqueteEditando = null, paqueteAsignando = null, ejercicioEditando = null, secuenciaDia = 0;
+    let paquetes = [], catalogo = [], clientes = [], equipamientoCatalogo = [], equipamientoSeleccionado = new Set(), equipamientoGuardado = new Set(), equipamientoPendiente = [], catalogoCargado = false, paqueteEditando = null, paqueteAsignando = null, ejercicioEditando = null, secuenciaDia = 0;
     let paqueteBaseRecomendado = null, clienteRecomendacionId = null, flujoRecomendacionIniciado = false;
     const ETIQ = {
         basico:"Básico", intermedio:"Intermedio", avanzado:"Avanzado", competencia:"Competencia",
@@ -187,22 +193,61 @@
     }
 
     async function cargar() {
+        const resultados = await Promise.allSettled([
+            apiFetch("/paquetes-rutina/"),
+            apiFetch("/tipos-ejercicio/?solo_activos=true"),
+            apiFetch("/clientes/"),
+            apiFetch("/equipamiento-gimnasio"),
+        ]);
+        paquetes = resultados[0].status === "fulfilled" ? resultados[0].value : [];
+        catalogo = resultados[1].status === "fulfilled" ? resultados[1].value : [];
+        catalogoCargado = resultados[1].status === "fulfilled";
+        clientes = resultados[2].status === "fulfilled" ? resultados[2].value : [];
+        if (resultados[3].status === "fulfilled") {
+            aplicarEquipamientoCargado(resultados[3].value);
+        } else {
+            document.getElementById("equipamiento-grupos").innerHTML = `<div class="vacio">No se pudo cargar el equipamiento.<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="cargarEquipamiento()">Reintentar</button></div>`;
+        }
+        clientes.sort((a,b) => `${a.nombre} ${a.apellidos||""}`.localeCompare(`${b.nombre} ${b.apellidos||""}`));
+        actualizarFiltrosMusculares();
+        renderPaquetes();
+        renderCatalogo();
+        if (resultados[0].status === "rejected") document.getElementById("paquetes").innerHTML = '<div class="vacio">No se pudieron cargar los paquetes. Recarga la página.</div>';
+        iniciarFlujoRecomendadoDesdeUrl();
+    }
+
+    function aplicarEquipamientoCargado(datos) {
+        equipamientoCatalogo = datos.catalogo || [];
+        equipamientoSeleccionado = new Set(datos.seleccionados || []);
+        equipamientoGuardado = new Set(datos.seleccionados || []);
+        equipamientoPendiente = datos.pendientes_generacion || [];
+        renderEquipamiento();
+        actualizarBotonGenerar();
+    }
+
+    async function cargarEquipamiento() {
+        const cont = document.getElementById("equipamiento-grupos");
+        cont.innerHTML = '<span>Cargando equipamiento...</span>';
         try {
-            let equipamiento;
-            [paquetes, catalogo, clientes, equipamiento] = await Promise.all([
-                apiFetch("/paquetes-rutina/"),
-                apiFetch("/tipos-ejercicio/?solo_activos=true"),
-                apiFetch("/clientes/"),
-                apiFetch("/equipamiento-gimnasio"),
-            ]);
-            equipamientoCatalogo = equipamiento.catalogo || [];
-            equipamientoSeleccionado = new Set(equipamiento.seleccionados || []);
-            clientes.sort((a,b) => `${a.nombre} ${a.apellidos||""}`.localeCompare(`${b.nombre} ${b.apellidos||""}`));
-            renderEquipamiento();
-            renderPaquetes();
+            aplicarEquipamientoCargado(await apiFetch("/equipamiento-gimnasio"));
+            actualizarFiltrosMusculares();
             renderCatalogo();
-            iniciarFlujoRecomendadoDesdeUrl();
-        } catch (e) { showError(e.message); }
+            renderPaquetes();
+        } catch (e) {
+            cont.innerHTML = `<div class="vacio">${esc(e.message)}<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="cargarEquipamiento()">Reintentar</button></div>`;
+        }
+    }
+
+    function actualizarFiltrosMusculares() {
+        const gruposEquipo = new Set(equipamientoCatalogo.flatMap(e => e.grupos_musculares || []));
+        const gruposCatalogo = new Set(catalogo.map(e => e.grupo_muscular).filter(Boolean));
+        const llenar = (id, grupos, texto) => {
+            const select = document.getElementById(id), valor = select.value;
+            select.innerHTML = `<option value="">${texto}</option>` + [...grupos].sort().map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
+            select.value = valor;
+        };
+        llenar("fil-grupo-equipo", gruposEquipo, "Todos los grupos musculares");
+        llenar("fil-grupo-catalogo", gruposCatalogo, "Todos los grupos musculares");
     }
 
     function equipoDisponible(ejercicio) {
@@ -216,15 +261,30 @@
 
     function renderEquipamiento() {
         const cont = document.getElementById("equipamiento-grupos");
-        const grupos = equipamientoCatalogo.reduce((acc, equipo) => {
+        const buscar = document.getElementById("buscar-equipo")?.value.trim().toLowerCase() || "";
+        const grupoMuscular = document.getElementById("fil-grupo-equipo")?.value || "";
+        const filtrados = equipamientoCatalogo.filter(equipo =>
+            (!buscar || `${equipo.nombre} ${equipo.categoria} ${(equipo.grupos_musculares||[]).join(" ")}`.toLowerCase().includes(buscar)) &&
+            (!grupoMuscular || (equipo.grupos_musculares||[]).includes(grupoMuscular))
+        );
+        const grupos = filtrados.reduce((acc, equipo) => {
             (acc[equipo.categoria] ||= []).push(equipo);
             return acc;
         }, {});
+        if (!filtrados.length) { cont.innerHTML = '<div class="vacio">No hay equipamiento con este filtro.</div>'; return; }
         cont.innerHTML = Object.entries(grupos).map(([categoria, equipos]) => `<div class="equipamiento-grupo"><strong>${esc(categoria)}</strong>${equipos.map(e => `<label class="equipo-check"><input type="checkbox" ${equipamientoSeleccionado.has(e.codigo) ? "checked" : ""} onchange="alternarEquipo('${esc(e.codigo)}',this.checked)"><span>${esc(e.nombre)}</span></label>`).join("")}</div>`).join("");
+    }
+
+    function actualizarBotonGenerar() {
+        const boton = document.getElementById("btn-generar-rutinas");
+        const sinGuardar = [...equipamientoSeleccionado].some(c => !equipamientoGuardado.has(c)) || [...equipamientoGuardado].some(c => !equipamientoSeleccionado.has(c));
+        boton.disabled = sinGuardar || !equipamientoPendiente.length;
+        boton.textContent = sinGuardar ? "Guardar antes de generar" : equipamientoPendiente.length ? `Generar más rutinas (${equipamientoPendiente.length})` : "Sin rutinas nuevas pendientes";
     }
 
     function alternarEquipo(codigo, marcado) {
         if (marcado) equipamientoSeleccionado.add(codigo); else equipamientoSeleccionado.delete(codigo);
+        actualizarBotonGenerar();
         renderCatalogo();
         renderPaquetes();
     }
@@ -232,16 +292,29 @@
     function marcarTodoEquipamiento(marcar) {
         equipamientoSeleccionado = new Set(marcar ? equipamientoCatalogo.map(e => e.codigo) : []);
         renderEquipamiento();
+        actualizarBotonGenerar();
         renderCatalogo();
         renderPaquetes();
     }
 
     async function guardarEquipamiento() {
         try {
-            await apiFetch("/equipamiento-gimnasio", {method:"PUT", body:JSON.stringify({equipos:[...equipamientoSeleccionado]})});
+            const respuesta = await apiFetch("/equipamiento-gimnasio", {method:"PUT", body:JSON.stringify({equipos:[...equipamientoSeleccionado]})});
+            equipamientoGuardado = new Set(respuesta.seleccionados || []);
+            equipamientoPendiente = respuesta.pendientes_generacion || [];
+            actualizarBotonGenerar();
             showSuccess("Equipamiento guardado. El catálogo y las rutinas ya están adaptados.");
             renderCatalogo();
             renderPaquetes();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function generarRutinasEquipamiento() {
+        if (!equipamientoPendiente.length) return;
+        try {
+            const respuesta = await apiFetch("/equipamiento-gimnasio/generar-rutinas", {method:"POST"});
+            showSuccess(`${respuesta.mensaje}. Paquetes agregados: ${respuesta.paquetes_creados}.`);
+            await cargar();
         } catch (e) { showError(e.message); }
     }
 
@@ -252,8 +325,16 @@
     function renderCatalogo() {
         const input = document.getElementById("buscar-ejercicio");
         if (!input) return;
+        if (!catalogoCargado) { document.getElementById("catalogo-grid").innerHTML = '<div class="vacio">No se pudo cargar el catálogo. Recarga la página para evitar crear rutinas incompletas.</div>'; return; }
         const buscar = input.value.trim().toLowerCase();
-        const filas = catalogo.filter(e => !buscar || `${e.nombre} ${e.grupo_muscular||""} ${e.categoria||""}`.toLowerCase().includes(buscar));
+        const grupo = document.getElementById("fil-grupo-catalogo")?.value || "";
+        const disponibilidad = document.getElementById("fil-disponibilidad")?.value || "";
+        const filas = catalogo.filter(e => {
+            const disponible = equipoDisponible(e);
+            return (!buscar || `${e.nombre} ${e.grupo_muscular||""} ${e.categoria||""} ${nombreEquipo(e.equipamiento)}`.toLowerCase().includes(buscar)) &&
+                (!grupo || e.grupo_muscular === grupo) &&
+                (!disponibilidad || (disponibilidad === "disponibles" ? disponible : !disponible));
+        });
         const cont = document.getElementById("catalogo-grid");
         if (!filas.length) { cont.innerHTML = '<div class="vacio">No hay ejercicios. Crea el catálogo que usarás al armar los paquetes.</div>'; return; }
         cont.innerHTML = filas.map(e => {
@@ -261,7 +342,7 @@
             const alternativas = disponible ? [] : alternativasPara(e);
             return `<article class="ejercicio-card ${disponible ? "" : "no-disponible"}">
             ${e.imagen_url ? `<img class="ejercicio-img" src="${urlFoto(e.imagen_url)}" alt="${esc(e.nombre)}">` : '<div class="ejercicio-img">Ejercicio</div>'}
-            <div class="ejercicio-info"><h3>${esc(e.nombre)}</h3><p>${esc(e.grupo_muscular || "Sin grupo")} · ${esc(etiqueta(e.nivel || "todos"))}<br>${esc(nombreEquipo(e.equipamiento))}</p>
+            <div class="ejercicio-info"><h3>${esc(e.nombre)}</h3><span class="estado-ejercicio ${disponible ? "disponible" : "bloqueado"}">${disponible ? "✓ Disponible" : "□ No disponible"}</span><p>${esc(e.grupo_muscular || "Sin grupo")} · ${esc(etiqueta(e.nivel || "todos"))}<br>${esc(nombreEquipo(e.equipamiento))}</p>
             ${disponible ? "" : `<div class="aviso-equipo">Falta: ${esc(nombreEquipo(e.equipamiento))}</div><div class="alternativas-equipo">${alternativas.length ? `Puedes usar: ${alternativas.map(a => esc(a.nombre)).join(", ")}` : "Crea una variante con peso libre o peso corporal."}</div>`}
             <div class="paquete-actions"><button class="btn btn-secondary btn-sm" onclick="abrirEjercicioCatalogo(${e.id})">Editar</button><button class="btn btn-danger btn-sm" onclick="desactivarEjercicioCatalogo(${e.id})">Desactivar</button></div></div>
         </article>`;
@@ -306,6 +387,7 @@
     }
 
     function renderPaquetes() {
+        if (!catalogoCargado) { document.getElementById("paquetes").innerHTML = '<div class="vacio">Esperando el catálogo de ejercicios. Recarga la página.</div>'; return; }
         const texto = document.getElementById("buscar").value.trim().toLowerCase();
         const nivel = document.getElementById("fil-nivel").value;
         const objetivo = document.getElementById("fil-objetivo").value;
@@ -322,7 +404,7 @@
             const edad = p.edad_min !== null || p.edad_max !== null ? `${p.edad_min ?? 0}–${p.edad_max ?? "+"} años` : "Cualquier edad";
             return `<article class="paquete-card">
                 <div class="paquete-top"><h3>${esc(p.nombre)}</h3><span class="etiqueta">${esc(etiqueta(p.etapa))}</span></div>
-                <div class="etiquetas"><span class="etiqueta">${esc(etiqueta(p.nivel))}</span><span class="etiqueta">${esc(etiqueta(p.objetivo))}</span><span class="etiqueta">${esc(etiqueta(p.genero_recomendado))}</span></div>
+                <div class="etiquetas"><span class="etiqueta">${esc(etiqueta(p.nivel))}</span><span class="etiqueta">${esc(etiqueta(p.objetivo))}</span><span class="etiqueta">${esc(etiqueta(p.genero_recomendado))}</span>${p.equipamiento_origen ? `<span class="etiqueta">${esc(nombreEquipo(p.equipamiento_origen))}</span>` : ""}</div>
                 <p class="paquete-desc">${esc(p.descripcion || "Sin indicaciones adicionales")}</p>
                 <div class="paquete-resumen"><div><strong>${p.dias.length}</strong>días</div><div><strong>${ejercicios}</strong>ejercicios</div><div><strong>${p.duracion_semanas}</strong>semanas</div></div>
                 <div class="dias-preview">${esc(edad)} · ${p.dias.map(d => esc(d.nombre)).join(" · ") || "Sin días configurados"}</div>

@@ -27,6 +27,7 @@ from backend.main import (
     crear_reserva_sala,
     crear_venta,
     eliminar_pago_membresia,
+    generar_rutinas_por_equipamiento,
     registrar_compra,
     registrar_entrada,
     registrar_salida,
@@ -342,6 +343,22 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(rutina.dias[0].ejercicios[0].nombre, "Sentadilla")
         paquete.dias[0].ejercicios[0].nombre = "Modificado"
         self.assertEqual(rutina.dias[0].ejercicios[0].nombre, "Sentadilla")
+
+    def test_equipamiento_nuevo_genera_paquete_una_sola_vez(self):
+        self.gym1.equipamiento_disponible = "saco_boxeo"
+        self.db.commit()
+
+        primera = generar_rutinas_por_equipamiento(db=self.db, usuario=self.admin1)
+        segunda = generar_rutinas_por_equipamiento(db=self.db, usuario=self.admin1)
+
+        self.assertEqual(primera["paquetes_creados"], 1)
+        self.assertEqual(segunda["paquetes_creados"], 0)
+        paquete = self.db.query(models.PaqueteRutina).filter_by(
+            gimnasio_id=self.gym1.id,
+            equipamiento_origen="saco_boxeo",
+        ).one()
+        self.assertTrue(paquete.dias[0].ejercicios)
+        self.assertTrue(all(e.tipo_ejercicio.equipamiento == "saco_boxeo" for e in paquete.dias[0].ejercicios))
 
     def test_renombrar_catalogo_actualiza_rutinas_y_paquetes_enlazados(self):
         catalogo = models.TipoEjercicio(
