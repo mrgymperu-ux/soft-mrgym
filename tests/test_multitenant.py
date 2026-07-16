@@ -12,6 +12,8 @@ from starlette.requests import Request
 
 from backend import auth, models, schemas
 from backend.main import (
+    EJERCICIOS_GENERABLES_EQUIPO,
+    EQUIPAMIENTO_GIMNASIO,
     _cliente_membresia_del_gym,
     _cerrar_asistencias_vencidas,
     _configuracion_del_gym,
@@ -359,6 +361,14 @@ class MultiTenantTest(unittest.TestCase):
         ).one()
         self.assertTrue(paquete.dias[0].ejercicios)
         self.assertTrue(all(e.tipo_ejercicio.equipamiento == "saco_boxeo" for e in paquete.dias[0].ejercicios))
+
+    def test_todas_las_maquinas_tienen_ejercicios_generables(self):
+        maquinas = {
+            codigo for codigo, _nombre, categoria in EQUIPAMIENTO_GIMNASIO
+            if categoria.startswith("Máquinas") or categoria == "Cardio"
+        }
+
+        self.assertFalse(maquinas - set(EJERCICIOS_GENERABLES_EQUIPO))
 
     def test_renombrar_catalogo_actualiza_rutinas_y_paquetes_enlazados(self):
         catalogo = models.TipoEjercicio(
