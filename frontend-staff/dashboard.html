@@ -22,12 +22,16 @@
         .grafica-head p { font-size:.7em;color:var(--color-texto-secundario);margin:0; }
         .leyenda { display:flex;gap:12px;flex-wrap:wrap;font-size:.68em;color:var(--color-texto-secundario); }
         .leyenda i { display:inline-block;width:8px;height:8px;margin-right:4px; }
-        .barras { height:220px;display:flex;align-items:flex-end;gap:8px;padding:12px 4px 0;background:repeating-linear-gradient(to top,var(--color-borde) 0 1px,transparent 1px 25%); }
-        .mes-barras { flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:28px; }
-        .par-barras { flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px; }
+        .barras-grafica { display:grid;grid-template-columns:46px minmax(0,1fr);height:220px; }
+        .barras-eje-y { height:190px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding-right:7px;border-right:1px solid var(--color-borde);font-size:.61em;color:var(--color-texto-secundario); }
+        .barras-wrap { min-width:0;height:220px; }
+        .barras { height:190px;display:flex;align-items:flex-end;gap:8px;padding:0 4px;position:relative;background:repeating-linear-gradient(to top,var(--color-borde) 0 1px,transparent 1px 25%); }
+        .mes-barras { position:relative;z-index:1;flex:1;height:100%;display:flex;justify-content:flex-end;align-items:center;min-width:28px; }
+        .par-barras { height:100%;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px; }
         .barra { width:38%;max-width:18px;min-height:1px;transition:height .25s; }
         .barra.ingreso { background:#45B9EC; }.barra.egreso { background:#EE7D77; }.barra.membresia { background:#7BC785; }.barra.producto { background:#FDBA4D; }
-        .mes-label { font-size:.62em;color:var(--color-texto-secundario);margin-top:6px; }
+        .barras-curva { position:absolute;z-index:2;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible; }
+        .barras-labels { display:grid;grid-template-columns:repeat(12,1fr);font-size:.61em;color:var(--color-texto-secundario);text-align:center;margin-top:6px; }
         .linea-grafica { display:grid;grid-template-columns:46px minmax(0,1fr);height:220px; }
         .linea-eje-y { height:190px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding:0 7px 0 0;border-right:1px solid var(--color-borde);font-size:.61em;color:var(--color-texto-secundario); }
         .linea-wrap { min-width:0;height:220px;position:relative; }
@@ -43,7 +47,7 @@
         .donut-fila i { display:inline-block;width:8px;height:8px;margin-right:6px; }
         .cargando { grid-column:1/-1;padding:50px;text-align:center;color:var(--color-texto-secundario); }
         @media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.dashboard-grid{grid-template-columns:1fr}.grafica-card.ancha{grid-column:auto}}
-        @media(max-width:560px){.header{align-items:flex-start}.kpis{grid-template-columns:1fr 1fr;gap:8px}.kpi{padding:12px}.kpi strong{font-size:1.15em}.grafica-card{padding:12px}.barras{gap:2px}.donut-layout{flex-direction:column;gap:12px}.dashboard-filtro{width:100%}.dashboard-filtro select{flex:1}.linea-grafica{grid-template-columns:38px minmax(0,1fr)}.linea-eje-y{padding-right:5px;font-size:.56em}}
+        @media(max-width:560px){.header{align-items:flex-start}.kpis{grid-template-columns:1fr 1fr;gap:8px}.kpi{padding:12px}.kpi strong{font-size:1.15em}.grafica-card{padding:12px}.barras{gap:2px}.donut-layout{flex-direction:column;gap:12px}.dashboard-filtro{width:100%}.dashboard-filtro select{flex:1}.linea-grafica,.barras-grafica{grid-template-columns:38px minmax(0,1fr)}.linea-eje-y,.barras-eje-y{padding-right:5px;font-size:.56em}}
     </style>
 </head>
 <body>
@@ -66,9 +70,26 @@
         sel.innerHTML = Array.from({length:6},(_,i)=>actual-i).map(a=>`<option>${a}</option>`).join("");
     }
     function moneda(valor, simbolo) { return `${simbolo} ${Number(valor||0).toLocaleString("es-PE",{minimumFractionDigits:0,maximumFractionDigits:0})}`; }
-    function barraDoble(serieA, serieB, claseA, claseB) {
-        const max = Math.max(...serieA,...serieB,1);
-        return `<div class="barras">${MESES.map((mes,i)=>`<div class="mes-barras"><div class="par-barras"><div class="barra ${claseA}" style="height:${serieA[i]/max*100}%" title="${mes}: ${serieA[i]}"></div><div class="barra ${claseB}" style="height:${serieB[i]/max*100}%" title="${mes}: ${serieB[i]}"></div></div><span class="mes-label">${mes}</span></div>`).join("")}</div>`;
+    function barraDoble(serieA, serieB, claseA, claseB, meta=null) {
+        const maxDato = Math.max(...serieA,...serieB,...(meta||[]),0);
+        const magnitud = maxDato > 0 ? Math.pow(10,Math.floor(Math.log10(maxDato))) : 1;
+        const normalizado = maxDato / magnitud;
+        const factor = normalizado <= 1 ? 1 : normalizado <= 2 ? 2 : normalizado <= 5 ? 5 : 10;
+        const maxEscala = Math.max(factor*magnitud,4);
+        const formatoEje = v => v >= 1000 ? `${(v/1000).toLocaleString("es-PE",{maximumFractionDigits:1})}k` : v.toLocaleString("es-PE",{maximumFractionDigits:1});
+        const niveles=[maxEscala,maxEscala*.75,maxEscala*.5,maxEscala*.25,0];
+        let curvaMeta="";
+        if (meta) {
+            const w=600,h=190,margenY=5;
+            const puntos=meta.map((v,i)=>({x:(i+.5)*w/12,y:h-margenY-(v/maxEscala*(h-margenY*2))}));
+            let ruta=`M ${puntos[0].x},${puntos[0].y}`;
+            for(let i=0;i<puntos.length-1;i++){
+                const p0=puntos[i-1]||puntos[i],p1=puntos[i],p2=puntos[i+1],p3=puntos[i+2]||p2;
+                ruta+=` C ${p1.x+(p2.x-p0.x)/6},${p1.y+(p2.y-p0.y)/6} ${p2.x-(p3.x-p1.x)/6},${p2.y-(p3.y-p1.y)/6} ${p2.x},${p2.y}`;
+            }
+            curvaMeta=`<svg class="barras-curva" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${ruta}" fill="none" stroke="#795FC5" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round"/>${puntos.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#795FC5"><title>${MESES[i]} · Meta: ${meta[i]}</title></circle>`).join("")}</svg>`;
+        }
+        return `<div class="barras-grafica"><div class="barras-eje-y">${niveles.map(v=>`<span>${formatoEje(v)}</span>`).join("")}</div><div class="barras-wrap"><div class="barras">${MESES.map((mes,i)=>`<div class="mes-barras"><div class="par-barras"><div class="barra ${claseA}" style="height:${serieA[i]/maxEscala*100}%" title="${mes}: ${serieA[i]}"></div><div class="barra ${claseB}" style="height:${serieB[i]/maxEscala*100}%" title="${mes}: ${serieB[i]}"></div></div></div>`).join("")}${curvaMeta}</div><div class="barras-labels">${MESES.map(m=>`<span>${m}</span>`).join("")}</div></div></div>`;
     }
     let secuenciaLinea = 0;
     function graficaLinea(valores, color) {
@@ -107,7 +128,7 @@
                 <section class="grafica-card ancha"><div class="grafica-head"><div><h2>Balance mensual</h2><p>Ingresos y egresos registrados</p></div><div class="leyenda"><span><i style="background:#45B9EC"></i>Ingresos</span><span><i style="background:#EE7D77"></i>Egresos</span></div></div>${barraDoble(d.ingresos,d.egresos,'ingreso','egreso')}</section>
                 <section class="grafica-card"><div class="grafica-head"><div><h2>Nuevos clientes</h2><p>Altas registradas por mes</p></div></div>${graficaLinea(d.altas_clientes,'#F5A93B')}</section>
                 <section class="grafica-card"><div class="grafica-head"><div><h2>Estado de clientes</h2><p>Situación actual</p></div></div><div class="donut-layout">${donut([d.clientes_con_membresia,d.clientes_sin_membresia],['#57BDEB','#DDE5EA'],totalClientes,'clientes')}<div class="donut-detalle"><div class="donut-fila"><span><i style="background:#57BDEB"></i>Con membresía</span><strong>${d.clientes_con_membresia}</strong></div><div class="donut-fila"><span><i style="background:#DDE5EA"></i>Sin membresía</span><strong>${d.clientes_sin_membresia}</strong></div></div></div></section>
-                <section class="grafica-card ancha"><div class="grafica-head"><div><h2>Ventas mensuales</h2><p>Ingresos por membresías y productos</p></div><div class="leyenda"><span><i style="background:#7BC785"></i>Membresías</span><span><i style="background:#FDBA4D"></i>Productos</span></div></div>${barraDoble(d.ingresos_membresias,d.ingresos_productos,'membresia','producto')}</section>
+                <section class="grafica-card ancha"><div class="grafica-head"><div><h2>Ventas mensuales</h2><p>Ingresos por membresías y productos comparados con la meta</p></div><div class="leyenda"><span><i style="background:#7BC785"></i>Membresías</span><span><i style="background:#FDBA4D"></i>Productos</span><span><i style="background:#795FC5"></i>Meta de membresías</span></div></div>${barraDoble(d.ingresos_membresias,d.ingresos_productos,'membresia','producto',d.metas_membresias||Array(12).fill(0))}</section>
                 <section class="grafica-card"><div class="grafica-head"><div><h2>Accesos al gimnasio</h2><p>Asistencias por mes</p></div></div>${graficaLinea(d.accesos,'#44B7EA')}</section>
                 <section class="grafica-card"><div class="grafica-head"><div><h2>Composición de ingresos</h2><p>Distribución anual</p></div></div><div class="donut-layout">${donut(composicion,['#62C879','#52B9E8','#F7BD52'],totalComp,'total',v=>moneda(v,d.moneda))}<div class="donut-detalle"><div class="donut-fila"><span><i style="background:#62C879"></i>Membresías</span><strong>${moneda(composicion[0],d.moneda)}</strong></div><div class="donut-fila"><span><i style="background:#52B9E8"></i>Productos</span><strong>${moneda(composicion[1],d.moneda)}</strong></div><div class="donut-fila"><span><i style="background:#F7BD52"></i>Otros</span><strong>${moneda(composicion[2],d.moneda)}</strong></div></div></div></section>
             </div>`;

@@ -2502,6 +2502,7 @@ def get_dashboard_empresarial(
     altas_clientes = [0] * 12
     accesos = [0] * 12
     membresias_vendidas = [0] * 12
+    metas_membresias = [0.0] * 12
 
     pagos = db.query(models.PagoMembresia.fecha_pago, models.PagoMembresia.monto).join(
         models.ClienteMembresia,
@@ -2561,6 +2562,13 @@ def get_dashboard_empresarial(
     ).all():
         membresias_vendidas[fecha_inicio.month - 1] += 1
 
+    for mes, meta in db.query(models.MetaMensual.mes, models.MetaMensual.meta_membresias).filter(
+        models.MetaMensual.gimnasio_id == gid,
+        models.MetaMensual.anio == anio,
+    ).all():
+        if 1 <= mes <= 12:
+            metas_membresias[mes - 1] = round(float(meta or 0), 2)
+
     clientes_activos = db.query(func.count(models.Cliente.id)).filter(
         models.Cliente.gimnasio_id == gid,
         models.Cliente.activo == True,
@@ -2589,6 +2597,7 @@ def get_dashboard_empresarial(
         "altas_clientes": altas_clientes,
         "accesos": accesos,
         "membresias_vendidas": membresias_vendidas,
+        "metas_membresias": metas_membresias,
         "clientes_activos": clientes_activos,
         "clientes_con_membresia": clientes_con_membresia,
         "clientes_sin_membresia": max(clientes_activos - clientes_con_membresia, 0),
