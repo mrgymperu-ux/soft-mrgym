@@ -4056,6 +4056,8 @@ def pagar_saldo_membresia(
         raise HTTPException(status_code=400, detail=f"El monto ({datos.monto}) supera el saldo pendiente ({saldo_actual})")
 
     nuevo_pagado = round(min(pagado_actual + datos.monto, precio), 2)
+    if nuevo_pagado < precio - 0.01 and not datos.fecha_proximo_pago:
+        raise HTTPException(status_code=400, detail="Indica la fecha del proximo pago mientras exista saldo pendiente")
     cm.monto_pagado = nuevo_pagado
     metodo_pago = datos.metodo_pago.value if hasattr(datos.metodo_pago, "value") else datos.metodo_pago
     cm.metodo_pago = metodo_pago or cm.metodo_pago
@@ -4088,13 +4090,34 @@ def eliminar_pago_membresia(
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_administrador),
 ):
-    """Corrige un ingreso eliminando solo el pago elegido, nunca toda la membresia."""
+    """Corrige un ingreso eliminando solo el ultimo pago de la membresia."""
     pago = _pago_membresia_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago de membresia no encontrado")
     cm = pago.cliente_membresia
+    ultimo_id = db.query(models.PagoMembresia.id).filter(
+        models.PagoMembresia.cliente_membresia_id == cm.id,
+    ).order_by(
+        models.PagoMembresia.fecha_pago.desc(),
+        models.PagoMembresia.id.desc(),
+    ).first()
+    if not ultimo_id or ultimo_id[0] != pago.id:
+        raise HTTPException(status_code=400, detail="Solo se puede borrar el ultimo pago registrado")
     cm.monto_pagado = round(max((cm.monto_pagado or 0.0) - pago.monto, 0.0), 2)
     db.delete(pago)
+    db.flush()
+    pago_anterior = db.query(models.PagoMembresia).filter(
+        models.PagoMembresia.cliente_membresia_id == cm.id,
+    ).order_by(
+        models.PagoMembresia.fecha_pago.desc(),
+        models.PagoMembresia.id.desc(),
+    ).first()
+    precio = float(cm.membresia.precio or 0.0) if cm.membresia else 0.0
+    cm.fecha_pago_saldo = (
+        pago_anterior.fecha_proximo_pago
+        if cm.monto_pagado < precio - 0.01 and pago_anterior
+        else None
+    )
     db.commit()
     return {"message": "Pago de membresia eliminado", "monto_pagado": cm.monto_pagado}
 
