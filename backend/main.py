@@ -7786,7 +7786,12 @@ def marcar_asistencia_desde_portal(
     if not gimnasio or gimnasio.latitud is None or gimnasio.longitud is None:
         raise HTTPException(status_code=409, detail="El gimnasio aun no configuro la ubicacion para marcar asistencia")
     if datos.precision_metros is not None and datos.precision_metros > 250:
-        raise HTTPException(status_code=400, detail="La ubicacion del celular es poco precisa. Activa la ubicacion exacta e intenta nuevamente")
+        raise HTTPException(
+            status_code=400,
+            detail=(f"La ubicacion del celular aun tiene una precision aproximada de "
+                    f"{int(round(datos.precision_metros))} metros. Activa la ubicacion precisa, "
+                    "acercate a una ventana e intenta nuevamente"),
+        )
 
     hoy = hoy_lima()
     membresia = db.query(models.ClienteMembresia).filter(

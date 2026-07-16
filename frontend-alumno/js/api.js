@@ -424,9 +424,9 @@ async function intentarAsistenciaAutomatica(resumen) {
     if (!navigator.geolocation) return;
     const ultimoIntento = Number(sessionStorage.getItem("alumno_auto_asistencia_intento") || 0);
     if (Date.now() - ultimoIntento < 5 * 60 * 1000) return;
-    sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now()));
-
-    navigator.geolocation.getCurrentPosition(async posicion => {
+    try {
+        const posicion = await obtenerUbicacionPrecisa({ tiempoMaximo: 25000, precisionObjetivo: 80 });
+        sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now()));
         try {
             const resultado = await apiFetch("/portal-alumno/marcar-asistencia", {
                 method: "POST",
@@ -448,7 +448,46 @@ async function intentarAsistenciaAutomatica(resumen) {
         } catch (_) {
             // Si esta fuera de la geocerca, no se registra ni se interrumpe el acceso de lectura.
         }
-    }, () => {}, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+    } catch (_) {
+        // La lectura puede mejorar al moverse cerca de una ventana; se permite reintentar pronto.
+        sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now() - 4 * 60 * 1000));
+    }
+}
+
+/** Conserva la mejor lectura mientras el GPS del celular gana precision. */
+function obtenerUbicacionPrecisa({ tiempoMaximo = 25000, precisionObjetivo = 80 } = {}) {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+            reject(new Error("Este celular no permite comprobar tu ubicacion"));
+            return;
+        }
+        let mejorPosicion = null;
+        let finalizado = false;
+        let vigilancia = null;
+        let temporizador = null;
+
+        const terminar = (posicion, error) => {
+            if (finalizado) return;
+            finalizado = true;
+            if (temporizador) clearTimeout(temporizador);
+            if (vigilancia != null) navigator.geolocation.clearWatch(vigilancia);
+            if (posicion) resolve(posicion);
+            else reject(error || new Error("No se pudo obtener tu ubicacion"));
+        };
+
+        temporizador = setTimeout(() => {
+            if (mejorPosicion) terminar(mejorPosicion);
+            else terminar(null, Object.assign(new Error("La ubicacion tardo demasiado"), { code: 3 }));
+        }, tiempoMaximo);
+
+        vigilancia = navigator.geolocation.watchPosition(posicion => {
+            const precision = Number(posicion.coords.accuracy);
+            if (!mejorPosicion || precision < Number(mejorPosicion.coords.accuracy)) mejorPosicion = posicion;
+            if (precision <= precisionObjetivo) terminar(posicion);
+        }, error => {
+            if (error?.code === 1) terminar(null, error);
+        }, { enableHighAccuracy: true, timeout: tiempoMaximo, maximumAge: 0 });
+    });
 }
 
 async function inicializarAccesoPortal() {
