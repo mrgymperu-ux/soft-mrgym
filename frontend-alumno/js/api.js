@@ -423,7 +423,7 @@ async function intentarAsistenciaAutomatica(resumen) {
     if (!resumen || resumen.asistencia_hoy || resumen.pago_vencido || !resumen.sin_pagos_pendientes || !resumen.asistencia_ubicacion_configurada) return;
     if (!navigator.geolocation) return;
     const ultimoIntento = Number(sessionStorage.getItem("alumno_auto_asistencia_intento") || 0);
-    if (Date.now() - ultimoIntento < 5 * 60 * 1000) return;
+    if (Date.now() - ultimoIntento < 60 * 1000) return;
     try {
         const posicion = await obtenerUbicacionPrecisa({ tiempoMaximo: 25000, precisionObjetivo: 80 });
         sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now()));
@@ -450,7 +450,7 @@ async function intentarAsistenciaAutomatica(resumen) {
         }
     } catch (_) {
         // La lectura puede mejorar al moverse cerca de una ventana; se permite reintentar pronto.
-        sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now() - 4 * 60 * 1000));
+        sessionStorage.setItem("alumno_auto_asistencia_intento", String(Date.now()));
     }
 }
 
@@ -490,6 +490,51 @@ function obtenerUbicacionPrecisa({ tiempoMaximo = 25000, precisionObjetivo = 80 
     });
 }
 
+let _modalPermisoUbicacionVisible = false;
+
+function mostrarPrimerPermisoUbicacion(resumen) {
+    if (_modalPermisoUbicacionVisible || document.getElementById("modal-permiso-ubicacion") || sessionStorage.getItem("alumno_permiso_ubicacion_pospuesto") === "1") return;
+    _modalPermisoUbicacionVisible = true;
+    const modal = document.createElement("div");
+    modal.id = "modal-permiso-ubicacion";
+    modal.style.cssText = "position:fixed;inset:0;z-index:12000;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:20px";
+    modal.innerHTML = `<div style="width:min(420px,100%);background:var(--card-bg,#fff);color:var(--text-color,#263238);border-radius:16px;padding:24px;box-shadow:0 20px 55px rgba(0,0,0,.25);font-family:inherit">
+        <h2 style="font-size:1.15rem;margin:0 0 10px">Activa tu ubicación</h2>
+        <p style="font-size:.92rem;line-height:1.45;margin:0 0 18px">La usaremos únicamente para marcar tu asistencia automáticamente cuando estés dentro del gimnasio. Después de permitirla no tendrás que pulsar ningún botón.</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button type="button" data-accion="despues" style="border:0;background:#e5e7eb;color:#374151;padding:10px 14px;cursor:pointer">Ahora no</button>
+            <button type="button" data-accion="permitir" style="border:0;background:#218c5b;color:#fff;padding:10px 16px;font-weight:700;cursor:pointer">Permitir ubicación</button>
+        </div>
+    </div>`;
+    const cerrar = () => { modal.remove(); _modalPermisoUbicacionVisible = false; };
+    modal.querySelector('[data-accion="despues"]').addEventListener("click", () => {
+        sessionStorage.setItem("alumno_permiso_ubicacion_pospuesto", "1");
+        cerrar();
+    });
+    modal.querySelector('[data-accion="permitir"]').addEventListener("click", () => {
+        sessionStorage.removeItem("alumno_permiso_ubicacion_pospuesto");
+        cerrar();
+        intentarAsistenciaAutomatica(resumen);
+    });
+    document.body.appendChild(modal);
+}
+
+async function gestionarAsistenciaAutomatica(resumen) {
+    if (!resumen || resumen.asistencia_hoy || resumen.pago_vencido || !resumen.sin_pagos_pendientes || !resumen.asistencia_ubicacion_configurada) return;
+    if (!navigator.geolocation) return;
+    if (!navigator.permissions?.query) {
+        intentarAsistenciaAutomatica(resumen);
+        return;
+    }
+    try {
+        const permiso = await navigator.permissions.query({ name: "geolocation" });
+        if (permiso.state === "granted") intentarAsistenciaAutomatica(resumen);
+        else if (permiso.state === "prompt") mostrarPrimerPermisoUbicacion(resumen);
+    } catch (_) {
+        intentarAsistenciaAutomatica(resumen);
+    }
+}
+
 async function inicializarAccesoPortal() {
     if (!getToken() || /login\.html$/.test(window.location.pathname)) return;
     try {
@@ -497,15 +542,16 @@ async function inicializarAccesoPortal() {
         if (!resumen) return;
         _guardarCachePortal("/portal-alumno/resumen", resumen, false);
         if (aplicarBloqueoPagoVencido(resumen)) return;
-        intentarAsistenciaAutomatica(resumen);
+        gestionarAsistenciaAutomatica(resumen);
     } catch (_) {}
 }
 
 setTimeout(inicializarAccesoPortal, 0);
 window.addEventListener("mrgym:cache-update", evento => {
     if (evento.detail?.path !== "/portal-alumno/resumen" || !evento.detail.data) return;
-    if (!aplicarBloqueoPagoVencido(evento.detail.data)) intentarAsistenciaAutomatica(evento.detail.data);
+    if (!aplicarBloqueoPagoVencido(evento.detail.data)) gestionarAsistenciaAutomatica(evento.detail.data);
 });
+setInterval(inicializarAccesoPortal, 60 * 1000);
 setTimeout(_consultarVersionPortal, 80);
 setInterval(_consultarVersionPortal, 15000);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") _consultarVersionPortal(); });

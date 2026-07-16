@@ -5,12 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Configuracion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="js/tema.js"></script>
     <style>
         .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .config-section { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); padding: 24px; }
         .config-section h3 { margin: 0 0 20px; font-size: 1em; padding-bottom: 12px; border-bottom: 1px solid var(--color-borde); }
+        .busqueda-mapa { display:grid; grid-template-columns:1fr auto; gap:8px; margin-bottom:10px; }
+        #mapa-ubicacion { height:310px; width:100%; border:1px solid var(--color-borde); border-radius:10px; margin:10px 0 12px; background:#e8ecef; z-index:1; }
+        .ayuda-mapa { font-size:.78em; color:var(--color-texto-secundario); margin:-4px 0 10px; }
         @media (max-width: 900px) { .config-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 520px) { .busqueda-mapa { grid-template-columns:1fr; } #mapa-ubicacion { height:280px; } }
     </style>
 </head>
 <body>
@@ -58,6 +64,13 @@
                     <div class="form-group"><label>Longitud</label><input type="number" id="c-longitud" step="any" readonly></div>
                 </div>
                 <div class="form-group"><label>Radio permitido (metros)</label><input type="number" id="c-radio-asistencia" min="20" max="2000" step="10" value="150"></div>
+                <label>Buscar por dirección</label>
+                <div class="busqueda-mapa">
+                    <input type="search" id="c-buscar-direccion" placeholder="Ej. Av. Arequipa 1234, Lima" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarDireccionGimnasio()}">
+                    <button class="btn btn-secondary" type="button" onclick="buscarDireccionGimnasio()">Buscar</button>
+                </div>
+                <div id="mapa-ubicacion" aria-label="Mapa para ajustar la ubicación del gimnasio"></div>
+                <p class="ayuda-mapa">Toca el mapa o arrastra el marcador hasta la entrada exacta del gimnasio.</p>
                 <div id="estado-ubicacion" style="font-size:.8em;color:var(--color-texto-secundario);margin-bottom:12px;">Ubicación pendiente de configurar.</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <button class="btn btn-secondary" type="button" onclick="obtenerUbicacionGimnasio()">Usar mi ubicación actual</button>
@@ -186,7 +199,9 @@
         document.getElementById("c-direccion").value = config.direccion || "";
         document.getElementById("c-latitud").value = config.latitud ?? "";
         document.getElementById("c-longitud").value = config.longitud ?? "";
+        document.getElementById("c-buscar-direccion").value = config.direccion || "";
         document.getElementById("c-radio-asistencia").value = config.radio_asistencia_metros || 150;
+        inicializarMapaUbicacion(config.latitud, config.longitud);
         document.getElementById("estado-ubicacion").textContent = config.latitud != null && config.longitud != null
             ? "Ubicación configurada. Puedes actualizarla cuando lo necesites."
             : "Ubicación pendiente de configurar.";
@@ -337,18 +352,95 @@
         } catch (e) { showError(e.message); }
     }
 
+    let mapaUbicacion = null;
+    let marcadorUbicacion = null;
+    let circuloUbicacion = null;
+
+    function establecerPuntoGimnasio(latitud, longitud, acercar = true) {
+        const lat = Number(latitud);
+        const lon = Number(longitud);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        document.getElementById("c-latitud").value = lat.toFixed(7);
+        document.getElementById("c-longitud").value = lon.toFixed(7);
+        if (!mapaUbicacion || typeof L === "undefined") return;
+        if (!marcadorUbicacion) {
+            marcadorUbicacion = L.marker([lat, lon], { draggable: true }).addTo(mapaUbicacion);
+            marcadorUbicacion.on("dragend", () => {
+                const punto = marcadorUbicacion.getLatLng();
+                establecerPuntoGimnasio(punto.lat, punto.lng, false);
+                document.getElementById("estado-ubicacion").textContent = "Punto ajustado en el mapa. Pulsa Guardar ubicación.";
+            });
+        } else marcadorUbicacion.setLatLng([lat, lon]);
+        const radio = Number(document.getElementById("c-radio-asistencia").value) || 150;
+        if (!circuloUbicacion) circuloUbicacion = L.circle([lat, lon], { radius: radio, color: "#2f855a", fillOpacity: .12 }).addTo(mapaUbicacion);
+        else circuloUbicacion.setLatLng([lat, lon]).setRadius(radio);
+        if (acercar) mapaUbicacion.setView([lat, lon], 18);
+    }
+
+    function inicializarMapaUbicacion(latitud, longitud) {
+        const contenedor = document.getElementById("mapa-ubicacion");
+        if (!contenedor || mapaUbicacion) return;
+        if (typeof L === "undefined") {
+            contenedor.innerHTML = '<div style="padding:20px;text-align:center;">No se pudo cargar el mapa. Revisa la conexión e intenta nuevamente.</div>';
+            return;
+        }
+        mapaUbicacion = L.map(contenedor).setView([-9.19, -75.0152], 5);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 20, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(mapaUbicacion);
+        mapaUbicacion.on("click", evento => {
+            establecerPuntoGimnasio(evento.latlng.lat, evento.latlng.lng, false);
+            document.getElementById("estado-ubicacion").textContent = "Punto seleccionado en el mapa. Pulsa Guardar ubicación.";
+        });
+        document.getElementById("c-radio-asistencia").addEventListener("input", () => {
+            if (circuloUbicacion) circuloUbicacion.setRadius(Number(document.getElementById("c-radio-asistencia").value) || 150);
+        });
+        if (latitud != null && longitud != null) establecerPuntoGimnasio(latitud, longitud, true);
+        setTimeout(() => mapaUbicacion.invalidateSize(), 100);
+    }
+
+    async function buscarDireccionGimnasio() {
+        const direccion = document.getElementById("c-buscar-direccion").value.trim();
+        if (!direccion) { showError("Escribe una dirección para buscarla"); return; }
+        const estado = document.getElementById("estado-ubicacion");
+        estado.textContent = "Buscando dirección...";
+        try {
+            const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=pe&accept-language=es&q=${encodeURIComponent(direccion)}`;
+            const respuesta = await fetch(url, { headers: { "Accept": "application/json" } });
+            if (!respuesta.ok) throw new Error("No se pudo consultar el mapa");
+            const resultados = await respuesta.json();
+            if (!resultados.length) throw new Error("No encontramos esa dirección. Agrega distrito y ciudad");
+            establecerPuntoGimnasio(resultados[0].lat, resultados[0].lon, true);
+            document.getElementById("c-direccion").value = direccion;
+            estado.textContent = "Dirección encontrada. Ajusta el marcador si es necesario y guarda la ubicación.";
+        } catch (error) { estado.textContent = "No se encontró la dirección."; showError(error.message); }
+    }
+
+    // Espera varias lecturas y conserva la mas precisa antes de ubicar el marcador.
     function obtenerUbicacionGimnasio() {
         const estado = document.getElementById("estado-ubicacion");
         if (!navigator.geolocation) { showError("Este dispositivo no permite obtener la ubicación"); return; }
-        estado.textContent = "Obteniendo ubicación exacta...";
-        navigator.geolocation.getCurrentPosition(posicion => {
-            document.getElementById("c-latitud").value = posicion.coords.latitude.toFixed(7);
-            document.getElementById("c-longitud").value = posicion.coords.longitude.toFixed(7);
-            estado.textContent = `Ubicación encontrada con precisión aproximada de ${Math.round(posicion.coords.accuracy)} metros. Pulsa Guardar ubicación.`;
-        }, error => {
-            estado.textContent = "No se pudo obtener la ubicación.";
-            showError(error.code === 1 ? "Permite el acceso a la ubicación en el navegador" : "No se pudo obtener una ubicación precisa");
-        }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+        estado.textContent = "Obteniendo la mejor ubicación disponible...";
+        let mejor = null;
+        let finalizado = false;
+        let vigilancia = null;
+        const terminar = (error = null) => {
+            if (finalizado) return;
+            finalizado = true;
+            if (vigilancia != null) navigator.geolocation.clearWatch(vigilancia);
+            clearTimeout(limite);
+            if (mejor) {
+                establecerPuntoGimnasio(mejor.coords.latitude, mejor.coords.longitude, true);
+                estado.textContent = `Ubicación encontrada con precisión aproximada de ${Math.round(mejor.coords.accuracy)} metros. Ajusta el marcador y guarda.`;
+            } else {
+                estado.textContent = "No se pudo obtener la ubicación.";
+                showError(error?.code === 1 ? "Permite el acceso a la ubicación precisa" : "No se pudo obtener una ubicación precisa");
+            }
+        };
+        const limite = setTimeout(() => terminar(), 25000);
+        vigilancia = navigator.geolocation.watchPosition(posicion => {
+            if (!mejor || posicion.coords.accuracy < mejor.coords.accuracy) mejor = posicion;
+            estado.textContent = `Afinando ubicación... precisión actual: ${Math.round(mejor.coords.accuracy)} metros`;
+            if (mejor.coords.accuracy <= 40) terminar();
+        }, error => { if (error.code === 1) terminar(error); }, { enableHighAccuracy: true, timeout: 25000, maximumAge: 0 });
     }
 
     async function guardarUbicacionGimnasio() {
@@ -357,7 +449,8 @@
         const radio = parseFloat(document.getElementById("c-radio-asistencia").value) || 150;
         if (!Number.isFinite(latitud) || !Number.isFinite(longitud)) { showError("Primero obtén la ubicación del gimnasio"); return; }
         try {
-            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ latitud, longitud, radio_asistencia_metros: radio }) });
+            const direccion = document.getElementById("c-buscar-direccion").value.trim() || null;
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ latitud, longitud, radio_asistencia_metros: radio, direccion }) });
             configuracionCache = null;
             document.getElementById("estado-ubicacion").textContent = "Ubicación guardada correctamente.";
             showSuccess("Ubicación para asistencias guardada");
