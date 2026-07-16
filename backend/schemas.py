@@ -1457,6 +1457,7 @@ class ConfiguracionBase(BaseModel):
     clausulas_contrato: Optional[str] = None
     medidas_campos_visibles: Optional[str] = None
     medidas_valores_visibles: Optional[str] = None
+    equipamiento_disponible: Optional[str] = None
 
 
 class ConfiguracionUpdate(ConfiguracionBase):
@@ -1466,6 +1467,10 @@ class ConfiguracionUpdate(ConfiguracionBase):
 class Configuracion(ConfiguracionBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class EquipamientoGimnasioUpdate(BaseModel):
+    equipos: List[str] = Field(default_factory=list)
 
 
 # ==================================================================

@@ -105,6 +105,7 @@ class Gimnasio(Base):
     clausulas_contrato = Column(Text, nullable=True)
     medidas_campos_visibles = Column(Text, nullable=True)
     medidas_valores_visibles = Column(Text, nullable=True)
+    equipamiento_disponible = Column(Text, nullable=True)  # CSV de equipos habilitados para crear rutinas
 
     plan = relationship("PlanSaas", back_populates="gimnasios")
     suscripcion_saas = relationship(

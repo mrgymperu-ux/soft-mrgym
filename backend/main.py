@@ -474,6 +474,7 @@ def _migrar_columnas_nuevas():
             ("latitud", "FLOAT"),
             ("longitud", "FLOAT"),
             ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
+            ("equipamiento_disponible", "TEXT"),
         ],
         "cliente_membresias": [("monto_pagado", "FLOAT DEFAULT 0.0"), ("vendido_por_id", "INTEGER"), ("fecha_pago_saldo", "DATE"), ("metodo_pago", "VARCHAR DEFAULT 'efectivo'")],
         "clientes": [
@@ -780,6 +781,7 @@ def startup_event():
     _sembrar_gimnasio_default()  # garantiza que exista el gimnasio 1 y asigna data existente
     _sembrar_puestos_iniciales()
     _sembrar_ejercicios_catalogo()
+    _normalizar_equipamiento_ejercicios()
     _sembrar_paquetes_rutina_iniciales()
     _sembrar_alimentos_iniciales()
     _sembrar_alimentos_expansion_lima()
@@ -796,12 +798,6 @@ def _sembrar_ejercicios_catalogo():
     """Precarga el catalogo de ejercicios con categoria, equipamiento, nivel, genero y objetivo para sugerencia automatica."""
     db = SessionLocal()
     try:
-        existentes_count = db.query(models.TipoEjercicio).count()
-        # Solo saltar si ya hay ejercicios CON categoria poblada (no
-        # solo los del catalogo viejo que no la tienen).
-        con_categoria = db.query(models.TipoEjercicio).filter(models.TipoEjercicio.categoria.isnot(None)).count()
-        if con_categoria >= 60:
-            return  # ya sembrado
         _EJERCICIOS = [
             # CALENTAMIENTO
             ("Saltos de tijera", "Cuerpo completo", "calentamiento", "sin_equipo", "principiante", "todos", "bajar_peso"),
@@ -878,6 +874,18 @@ def _sembrar_ejercicios_catalogo():
             ("Sentadilla con banda elastica", "Piernas", "funcional", "banda", "principiante", "femenino", "tonificar"),
             ("Caminata lateral con banda", "Gluteos", "funcional", "banda", "principiante", "femenino", "tonificar"),
             ("Pull apart con banda", "Espalda", "funcional", "banda", "principiante", "todos", "tonificar"),
+            ("Remo en TRX", "Espalda", "funcional", "trx", "principiante", "todos", "tonificar"),
+            ("Sentadilla asistida en TRX", "Piernas", "funcional", "trx", "principiante", "todos", "tonificar"),
+            ("Caminata en caminadora", "Piernas", "cardio", "caminadora", "principiante", "todos", "bajar_peso"),
+            ("Intervalos en caminadora", "Piernas", "cardio", "caminadora", "intermedio", "todos", "bajar_peso"),
+            ("Bicicleta estatica", "Piernas", "cardio", "bicicleta_estatica", "principiante", "todos", "bajar_peso"),
+            ("Eliptica", "Cuerpo completo", "cardio", "eliptica", "principiante", "todos", "bajar_peso"),
+            ("Escaladora", "Piernas", "cardio", "escaladora", "intermedio", "todos", "tonificar"),
+            ("Remo ergometro", "Cuerpo completo", "cardio", "remo_cardio", "intermedio", "todos", "rendimiento"),
+            ("Golpes rectos al saco", "Cuerpo completo", "cardio", "saco_boxeo", "principiante", "todos", "bajar_peso"),
+            ("Combinaciones al saco", "Cuerpo completo", "cardio", "saco_boxeo", "intermedio", "todos", "rendimiento"),
+            ("Trabajo de pera de boxeo", "Hombros", "cardio", "pera_boxeo", "intermedio", "todos", "rendimiento"),
+            ("Sombra de boxeo", "Cuerpo completo", "cardio", "sin_equipo", "principiante", "todos", "bajar_peso"),
             # ESTIRAMIENTO
             ("Estiramiento de cuadriceps de pie", "Piernas", "estiramiento", "sin_equipo", "principiante", "todos", "flexibilidad"),
             ("Estiramiento de isquiotibiales", "Piernas", "estiramiento", "colchoneta", "principiante", "todos", "flexibilidad"),
@@ -888,18 +896,50 @@ def _sembrar_ejercicios_catalogo():
             ("Estiramiento de cadera con pelota", "Piernas", "estiramiento", "pelota", "principiante", "femenino", "flexibilidad"),
             ("Estiramiento de pantorrilla en step", "Piernas", "estiramiento", "step", "principiante", "todos", "flexibilidad"),
         ]
-        nombres_existentes = {t.nombre for t in db.query(models.TipoEjercicio).all()}
         nuevos = 0
-        for nombre, grupo, cat, equip, nivel, genero, obj in _EJERCICIOS:
-            if nombre in nombres_existentes:
-                continue
-            db.add(models.TipoEjercicio(
-                nombre=nombre, grupo_muscular=grupo, categoria=cat,
-                equipamiento=equip, nivel=nivel, genero_recomendado=genero, objetivo=obj,
-            ))
-            nuevos += 1
+        for gimnasio in db.query(models.Gimnasio).filter(models.Gimnasio.activo == True).all():
+            nombres_existentes = {t.nombre for t in db.query(models.TipoEjercicio).filter(models.TipoEjercicio.gimnasio_id == gimnasio.id).all()}
+            for nombre, grupo, cat, equip, nivel, genero, obj in _EJERCICIOS:
+                if nombre in nombres_existentes:
+                    continue
+                db.add(models.TipoEjercicio(
+                    nombre=nombre, grupo_muscular=grupo, categoria=cat,
+                    equipamiento=equip, nivel=nivel, genero_recomendado=genero, objetivo=obj,
+                    gimnasio_id=gimnasio.id,
+                ))
+                nuevos += 1
         if nuevos:
             db.commit()
+    finally:
+        db.close()
+
+
+def _normalizar_equipamiento_ejercicios():
+    """Convierte etiquetas antiguas y genericas en equipos seleccionables."""
+    db = SessionLocal()
+    try:
+        for ejercicio in db.query(models.TipoEjercicio).all():
+            nombre = (ejercicio.nombre or "").lower()
+            equipo = ejercicio.equipamiento or "sin_equipo"
+            if equipo == "barra":
+                equipo = "barra_dominadas" if "dominada" in nombre else "barra_discos"
+            elif equipo == "banda": equipo = "bandas_elasticas"
+            elif equipo == "pelota": equipo = "balon_medicinal" if "wall ball" in nombre else "fitball"
+            elif equipo == "cuerda": equipo = "cuerda_batida" if "battle" in nombre else "cuerda_saltar"
+            elif equipo == "mancuernas" and "kettlebell" in nombre: equipo = "kettlebell"
+            elif equipo == "maquina":
+                if "jalon" in nombre or "polea" in nombre: equipo = "poleas"
+                elif "press" in nombre and "pecho" in nombre: equipo = "press_pecho_maquina"
+                elif "remo" in nombre: equipo = "remo_maquina"
+                elif "prensa" in nombre: equipo = "prensa_piernas"
+                elif "extension de cuadriceps" in nombre: equipo = "extension_cuadriceps"
+                elif "curl de femoral" in nombre: equipo = "curl_femoral"
+                elif "hip thrust" in nombre: equipo = "hip_thrust_maquina"
+                elif "abduccion" in nombre or "aduccion" in nombre: equipo = "abductores_aductores"
+                elif "pantorrilla" in nombre or "talones" in nombre: equipo = "pantorrilla_maquina"
+                else: equipo = "multiestacion"
+            ejercicio.equipamiento = equipo
+        db.commit()
     finally:
         db.close()
 
@@ -4840,6 +4880,8 @@ def listar_tipos_ejercicio(
 
 @app.post("/tipos-ejercicio/", response_model=schemas.TipoEjercicio, tags=["Entrenamientos"])
 def crear_tipo_ejercicio(datos: schemas.TipoEjercicioCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    if datos.equipamiento and datos.equipamiento != "sin_equipo" and datos.equipamiento not in EQUIPAMIENTO_CODIGOS:
+        raise HTTPException(status_code=400, detail="El equipamiento indicado no existe en el inventario")
     db_te = models.TipoEjercicio(**datos.model_dump(), gimnasio_id=get_gid(usuario))
     db.add(db_te)
     db.commit()
@@ -4853,6 +4895,9 @@ def actualizar_tipo_ejercicio(tipo_id: int, datos: schemas.TipoEjercicioUpdate, 
     if not te:
         raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
     cambios = datos.model_dump(exclude_unset=True)
+    equipo_nuevo = cambios.get("equipamiento")
+    if equipo_nuevo and equipo_nuevo != "sin_equipo" and equipo_nuevo not in EQUIPAMIENTO_CODIGOS:
+        raise HTTPException(status_code=400, detail="El equipamiento indicado no existe en el inventario")
     nombre_nuevo = cambios.get("nombre")
     if nombre_nuevo is not None:
         nombre_nuevo = nombre_nuevo.strip()
@@ -5204,14 +5249,24 @@ def _validar_dias_paquete(datos_dias, db: Session, usuario):
         if ejercicio.tipo_ejercicio_id is not None
     }
     if ids:
-        validos = {
-            fila[0] for fila in db.query(models.TipoEjercicio.id).filter(
+        ejercicios_catalogo = db.query(models.TipoEjercicio).filter(
                 models.TipoEjercicio.gimnasio_id == gid,
                 models.TipoEjercicio.id.in_(ids),
             ).all()
-        }
+        validos = {ejercicio.id for ejercicio in ejercicios_catalogo}
         if validos != ids:
             raise HTTPException(status_code=400, detail="Uno o mas ejercicios no pertenecen a este gimnasio")
+        gimnasio = _configuracion_del_gym(db, usuario)
+        disponibles = _equipamiento_disponible_gym(gimnasio)
+        no_disponibles = [
+            ejercicio.nombre for ejercicio in ejercicios_catalogo
+            if (ejercicio.equipamiento or "sin_equipo") not in disponibles
+        ]
+        if no_disponibles:
+            raise HTTPException(
+                status_code=400,
+                detail="Falta equipamiento para: " + ", ".join(sorted(no_disponibles)),
+            )
     return [
         models.PaqueteRutinaDia(
             nombre=dia.nombre,
@@ -5316,6 +5371,17 @@ def asignar_paquete_rutina(
         raise HTTPException(status_code=404, detail="Paquete de rutina no encontrado")
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    disponibles = _equipamiento_disponible_gym(_configuracion_del_gym(db, usuario))
+    incompatibles = sorted({
+        ej.nombre for dia in paquete.dias for ej in dia.ejercicios
+        if ej.tipo_ejercicio and (ej.tipo_ejercicio.equipamiento or "sin_equipo") not in disponibles
+    })
+    if incompatibles:
+        raise HTTPException(
+            status_code=400,
+            detail="Adapta el paquete antes de asignarlo. Falta equipamiento para: " + ", ".join(incompatibles),
+        )
 
     dias = [
         models.RutinaDia(
@@ -7036,6 +7102,107 @@ def eliminar_medida(medida_id: int, db: Session = Depends(get_db), usuario: mode
 # ==================================================================
 # CONFIGURACION
 # ==================================================================
+
+EQUIPAMIENTO_GIMNASIO = [
+    # Pesos libres
+    ("mancuernas", "Mancuernas", "Pesos libres"),
+    ("barra_discos", "Barras y discos", "Pesos libres"),
+    ("barra_olimpica", "Barras olímpicas", "Pesos libres"),
+    ("barra_ez", "Barra Z / EZ", "Pesos libres"),
+    ("barra_hexagonal", "Barra hexagonal", "Pesos libres"),
+    ("kettlebell", "Kettlebells", "Pesos libres"),
+    ("banco_plano", "Banco plano", "Pesos libres"),
+    ("banco_inclinado", "Banco inclinable", "Pesos libres"),
+    ("rack_sentadillas", "Rack para sentadillas", "Pesos libres"),
+    ("jaula_potencia", "Jaula de potencia", "Pesos libres"),
+    ("landmine", "Landmine", "Pesos libres"),
+    ("barra_dominadas", "Barra de dominadas", "Pesos libres"),
+    ("paralelas", "Barras paralelas", "Pesos libres"),
+    # Maquinas de fuerza
+    ("multiestacion", "Multiestación", "Máquinas de fuerza"),
+    ("poleas", "Polea alta y baja", "Máquinas de fuerza"),
+    ("smith", "Máquina Smith", "Máquinas de fuerza"),
+    ("hack_sentadilla", "Hack squat", "Máquinas de fuerza"),
+    ("sentadilla_pendular", "Sentadilla pendular", "Máquinas de fuerza"),
+    ("press_pecho_maquina", "Press de pecho", "Máquinas de fuerza"),
+    ("remo_maquina", "Remo sentado", "Máquinas de fuerza"),
+    ("prensa_piernas", "Prensa de piernas", "Máquinas de fuerza"),
+    ("extension_cuadriceps", "Extensión de cuádriceps", "Máquinas de fuerza"),
+    ("curl_femoral", "Curl femoral", "Máquinas de fuerza"),
+    ("hip_thrust_maquina", "Hip thrust", "Máquinas de fuerza"),
+    ("abductores_aductores", "Abductores / aductores", "Máquinas de fuerza"),
+    ("pantorrilla_maquina", "Pantorrilla", "Máquinas de fuerza"),
+    ("press_hombros_maquina", "Press de hombros", "Máquinas de fuerza"),
+    ("pec_deck", "Pec deck / aperturas", "Máquinas de fuerza"),
+    ("deltoide_posterior", "Deltoide posterior", "Máquinas de fuerza"),
+    ("biceps_maquina", "Bíceps / predicador", "Máquinas de fuerza"),
+    ("triceps_maquina", "Tríceps", "Máquinas de fuerza"),
+    ("gluteo_maquina", "Patada de glúteo", "Máquinas de fuerza"),
+    ("abdominal_maquina", "Abdominales", "Máquinas de fuerza"),
+    ("lumbar_maquina", "Extensión lumbar", "Máquinas de fuerza"),
+    # Cardio
+    ("caminadora", "Caminadora", "Cardio"),
+    ("bicicleta_estatica", "Bicicleta estática", "Cardio"),
+    ("eliptica", "Elíptica", "Cardio"),
+    ("escaladora", "Escaladora", "Cardio"),
+    ("remo_cardio", "Remo ergómetro", "Cardio"),
+    ("bicicleta_spinning", "Bicicletas de spinning", "Cardio"),
+    ("air_bike", "Air bike", "Cardio"),
+    ("ski_erg", "Ski erg", "Cardio"),
+    # Funcional y accesorios
+    ("bandas_elasticas", "Bandas elásticas", "Funcional y accesorios"),
+    ("trx", "TRX / suspensión", "Funcional y accesorios"),
+    ("step", "Steps", "Funcional y accesorios"),
+    ("cajon", "Cajón pliométrico", "Funcional y accesorios"),
+    ("colchoneta", "Colchonetas", "Funcional y accesorios"),
+    ("cuerda_saltar", "Cuerdas para saltar", "Funcional y accesorios"),
+    ("cuerda_batida", "Cuerdas de batalla", "Funcional y accesorios"),
+    ("fitball", "Pelotas de estabilidad", "Funcional y accesorios"),
+    ("balon_medicinal", "Balones medicinales", "Funcional y accesorios"),
+    ("bosu", "BOSU", "Funcional y accesorios"),
+    ("foam_roller", "Rodillos de espuma", "Funcional y accesorios"),
+    ("discos_deslizantes", "Discos deslizantes", "Funcional y accesorios"),
+    ("escalera_agilidad", "Escalera de agilidad", "Funcional y accesorios"),
+    ("conos", "Conos", "Funcional y accesorios"),
+    ("vallas", "Vallas de entrenamiento", "Funcional y accesorios"),
+    ("chaleco_lastrado", "Chalecos lastrados", "Funcional y accesorios"),
+    ("trineo", "Trineo de empuje", "Funcional y accesorios"),
+    ("rueda_abdominal", "Rueda abdominal", "Funcional y accesorios"),
+    ("agarres_polea", "Agarres y manijas para polea", "Funcional y accesorios"),
+    ("tobilleras_polea", "Tobilleras para polea", "Funcional y accesorios"),
+    # Boxeo
+    ("saco_boxeo", "Saco de boxeo", "Boxeo"),
+    ("pera_boxeo", "Pera de boxeo", "Boxeo"),
+    ("paos_boxeo", "Paos / manoplas", "Boxeo"),
+]
+EQUIPAMIENTO_CODIGOS = {item[0] for item in EQUIPAMIENTO_GIMNASIO}
+
+
+def _equipamiento_disponible_gym(gimnasio: models.Gimnasio) -> set:
+    return {"sin_equipo"} | {
+        codigo.strip() for codigo in (gimnasio.equipamiento_disponible or "").split(",")
+        if codigo.strip() in EQUIPAMIENTO_CODIGOS
+    }
+
+
+@app.get("/equipamiento-gimnasio", tags=["Entrenamientos"])
+def obtener_equipamiento_gimnasio(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
+    gimnasio = _configuracion_del_gym(db, usuario)
+    return {
+        "catalogo": [{"codigo": c, "nombre": n, "categoria": cat} for c, n, cat in EQUIPAMIENTO_GIMNASIO],
+        "seleccionados": sorted(_equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}),
+    }
+
+
+@app.put("/equipamiento-gimnasio", tags=["Entrenamientos"])
+def guardar_equipamiento_gimnasio(datos: schemas.EquipamientoGimnasioUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    desconocidos = set(datos.equipos) - EQUIPAMIENTO_CODIGOS
+    if desconocidos:
+        raise HTTPException(status_code=400, detail="Hay equipamiento no reconocido")
+    gimnasio = _configuracion_del_gym(db, usuario)
+    gimnasio.equipamiento_disponible = ",".join(sorted(set(datos.equipos)))
+    db.commit()
+    return {"seleccionados": sorted(set(datos.equipos))}
 
 @app.get("/configuracion/", response_model=schemas.Configuracion, tags=["Configuracion"])
 def obtener_configuracion(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff_o_profesor)):
