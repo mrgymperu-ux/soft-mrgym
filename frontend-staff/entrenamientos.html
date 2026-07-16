@@ -81,14 +81,15 @@
             <button class="btn btn-primary" id="accion-rutinas" onclick="abrirPaquete()">+ Nuevo paquete</button>
         </div>
 
-        <section class="equipamiento-panel">
-            <div class="equipamiento-cabecera"><div><h2>Equipamiento disponible</h2><p>Marca lo que tiene el gimnasio. Los ejercicios que no puedas realizar se bloquearán y mostrarán alternativas.</p></div>
-                <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button></div>
-            </div>
-            <div id="equipamiento-grupos" class="equipamiento-grupos"><span>Cargando equipamiento...</span></div>
-        </section>
-
-        <div class="subtabs"><button class="subtab activo" onclick="cambiarVistaRutinas('paquetes',this)">Paquetes de rutinas</button><button class="subtab" onclick="cambiarVistaRutinas('catalogo',this)">Catálogo de ejercicios</button></div>
+        <div class="subtabs"><button class="subtab" onclick="cambiarVistaRutinas('equipamiento',this)">Equipamiento</button><button class="subtab activo" onclick="cambiarVistaRutinas('paquetes',this)">Paquetes de rutinas</button><button class="subtab" onclick="cambiarVistaRutinas('catalogo',this)">Catálogo de ejercicios</button></div>
+        <div id="vista-equipamiento" style="display:none;">
+            <section class="equipamiento-panel">
+                <div class="equipamiento-cabecera"><div><h2>Equipamiento disponible</h2><p>Marca lo que tiene el gimnasio. Los ejercicios que no puedas realizar se bloquearán y mostrarán alternativas.</p></div>
+                    <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button></div>
+                </div>
+                <div id="equipamiento-grupos" class="equipamiento-grupos"><span>Cargando equipamiento...</span></div>
+            </section>
+        </div>
         <div id="vista-paquetes">
             <div class="filtros-rutina">
                 <input id="buscar" type="search" placeholder="Buscar paquete..." oninput="renderPaquetes()">
@@ -175,9 +176,11 @@
     function cambiarVistaRutinas(vista, boton) {
         document.querySelectorAll(".subtab").forEach(b => b.classList.remove("activo"));
         boton.classList.add("activo");
+        document.getElementById("vista-equipamiento").style.display = vista === "equipamiento" ? "block" : "none";
         document.getElementById("vista-paquetes").style.display = vista === "paquetes" ? "block" : "none";
         document.getElementById("vista-catalogo").style.display = vista === "catalogo" ? "block" : "none";
         const accion = document.getElementById("accion-rutinas");
+        accion.style.display = vista === "equipamiento" ? "none" : "";
         accion.textContent = vista === "paquetes" ? "+ Nuevo paquete" : "+ Nuevo ejercicio";
         accion.onclick = vista === "paquetes" ? () => abrirPaquete() : () => abrirEjercicioCatalogo();
         if (vista === "catalogo") renderCatalogo();

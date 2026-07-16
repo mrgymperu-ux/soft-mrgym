@@ -2481,6 +2481,124 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     )
 
 
+@app.get("/dashboard/empresarial", tags=["Dashboard"])
+def get_dashboard_empresarial(
+    anio: Optional[int] = Query(None, ge=2000, le=2100),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Indicadores anuales reales para el dashboard de gestión."""
+    anio = anio or hoy_lima().year
+    gid = get_gid(usuario)
+    desde_fecha = date(anio, 1, 1)
+    hasta_fecha = date(anio + 1, 1, 1)
+    desde_dt = datetime(anio, 1, 1)
+    hasta_dt = datetime(anio + 1, 1, 1)
+
+    membresias = [0.0] * 12
+    productos = [0.0] * 12
+    otros = [0.0] * 12
+    egresos = [0.0] * 12
+    altas_clientes = [0] * 12
+    accesos = [0] * 12
+    membresias_vendidas = [0] * 12
+
+    pagos = db.query(models.PagoMembresia.fecha_pago, models.PagoMembresia.monto).join(
+        models.ClienteMembresia,
+        models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id,
+    ).join(
+        models.Cliente,
+        models.Cliente.id == models.ClienteMembresia.cliente_id,
+    ).filter(
+        models.Cliente.gimnasio_id == gid,
+        models.PagoMembresia.fecha_pago >= desde_dt,
+        models.PagoMembresia.fecha_pago < hasta_dt,
+    ).all()
+    for pago in pagos:
+        membresias[pago.fecha_pago.month - 1] += float(pago.monto or 0)
+
+    for fecha_venta, total in db.query(models.Venta.fecha_venta, models.Venta.total).filter(
+        models.Venta.gimnasio_id == gid,
+        models.Venta.fecha_venta >= desde_dt,
+        models.Venta.fecha_venta < hasta_dt,
+    ).all():
+        productos[fecha_venta.month - 1] += float(total or 0)
+
+    for fecha_ingreso, monto in db.query(models.OtroIngreso.fecha, models.OtroIngreso.monto).filter(
+        models.OtroIngreso.gimnasio_id == gid,
+        models.OtroIngreso.fecha >= desde_dt,
+        models.OtroIngreso.fecha < hasta_dt,
+    ).all():
+        otros[fecha_ingreso.month - 1] += float(monto or 0)
+
+    for fecha_gasto, monto in db.query(models.Gasto.fecha, models.Gasto.monto).filter(
+        models.Gasto.gimnasio_id == gid,
+        models.Gasto.fecha >= desde_dt,
+        models.Gasto.fecha < hasta_dt,
+    ).all():
+        egresos[fecha_gasto.month - 1] += float(monto or 0)
+
+    for fecha_registro, in db.query(models.Cliente.fecha_registro).filter(
+        models.Cliente.gimnasio_id == gid,
+        models.Cliente.fecha_registro >= desde_dt,
+        models.Cliente.fecha_registro < hasta_dt,
+    ).all():
+        altas_clientes[fecha_registro.month - 1] += 1
+
+    for fecha_entrada, in db.query(models.Asistencia.fecha_hora_entrada).filter(
+        models.Asistencia.gimnasio_id == gid,
+        models.Asistencia.fecha_hora_entrada >= desde_dt,
+        models.Asistencia.fecha_hora_entrada < hasta_dt,
+    ).all():
+        accesos[fecha_entrada.month - 1] += 1
+
+    for fecha_inicio, in db.query(models.ClienteMembresia.fecha_inicio).join(
+        models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id,
+    ).filter(
+        models.Cliente.gimnasio_id == gid,
+        models.ClienteMembresia.fecha_inicio >= desde_fecha,
+        models.ClienteMembresia.fecha_inicio < hasta_fecha,
+    ).all():
+        membresias_vendidas[fecha_inicio.month - 1] += 1
+
+    clientes_activos = db.query(func.count(models.Cliente.id)).filter(
+        models.Cliente.gimnasio_id == gid,
+        models.Cliente.activo == True,
+    ).scalar() or 0
+    clientes_con_membresia = len(db.query(models.ClienteMembresia.cliente_id).join(
+        models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id,
+    ).filter(
+        models.Cliente.gimnasio_id == gid,
+        models.Cliente.activo == True,
+        models.ClienteMembresia.activo == True,
+        (models.ClienteMembresia.fecha_fin.is_(None)) | (models.ClienteMembresia.fecha_fin >= hoy_lima()),
+    ).distinct().all())
+
+    ingresos = [round(membresias[i] + productos[i] + otros[i], 2) for i in range(12)]
+    egresos = [round(valor, 2) for valor in egresos]
+    moneda = db.query(models.Gimnasio.moneda).filter(models.Gimnasio.id == gid).scalar() or "S/"
+    return {
+        "anio": anio,
+        "moneda": moneda,
+        "ingresos": ingresos,
+        "egresos": egresos,
+        "balance": [round(ingresos[i] - egresos[i], 2) for i in range(12)],
+        "ingresos_membresias": [round(v, 2) for v in membresias],
+        "ingresos_productos": [round(v, 2) for v in productos],
+        "otros_ingresos": [round(v, 2) for v in otros],
+        "altas_clientes": altas_clientes,
+        "accesos": accesos,
+        "membresias_vendidas": membresias_vendidas,
+        "clientes_activos": clientes_activos,
+        "clientes_con_membresia": clientes_con_membresia,
+        "clientes_sin_membresia": max(clientes_activos - clientes_con_membresia, 0),
+        "total_ingresos": round(sum(ingresos), 2),
+        "total_egresos": round(sum(egresos), 2),
+        "total_balance": round(sum(ingresos) - sum(egresos), 2),
+        "total_accesos": sum(accesos),
+    }
+
+
 # ==================================================================
 # CLIENTES
 # ==================================================================
