@@ -28,8 +28,10 @@
         .barra { width:38%;max-width:18px;min-height:1px;transition:height .25s; }
         .barra.ingreso { background:#45B9EC; }.barra.egreso { background:#EE7D77; }.barra.membresia { background:#7BC785; }.barra.producto { background:#FDBA4D; }
         .mes-label { font-size:.62em;color:var(--color-texto-secundario);margin-top:6px; }
-        .linea-wrap { height:220px;position:relative;background:repeating-linear-gradient(to top,var(--color-borde) 0 1px,transparent 1px 25%); }
-        .linea-wrap svg { width:100%;height:190px;overflow:visible; }
+        .linea-grafica { display:grid;grid-template-columns:46px minmax(0,1fr);height:220px; }
+        .linea-eje-y { height:190px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;padding:0 7px 0 0;border-right:1px solid var(--color-borde);font-size:.61em;color:var(--color-texto-secundario); }
+        .linea-wrap { min-width:0;height:220px;position:relative; }
+        .linea-wrap svg { width:100%;height:190px;overflow:visible;background:repeating-linear-gradient(to top,var(--color-borde) 0 1px,transparent 1px 25%); }
         .linea-labels { display:grid;grid-template-columns:repeat(12,1fr);font-size:.61em;color:var(--color-texto-secundario);text-align:center; }
         .donut-layout { display:flex;align-items:center;justify-content:center;gap:28px;min-height:220px; }
         .donut { width:155px;height:155px;border-radius:50%;position:relative;flex-shrink:0; }
@@ -41,7 +43,7 @@
         .donut-fila i { display:inline-block;width:8px;height:8px;margin-right:6px; }
         .cargando { grid-column:1/-1;padding:50px;text-align:center;color:var(--color-texto-secundario); }
         @media(max-width:900px){.kpis{grid-template-columns:1fr 1fr}.dashboard-grid{grid-template-columns:1fr}.grafica-card.ancha{grid-column:auto}}
-        @media(max-width:560px){.header{align-items:flex-start}.kpis{grid-template-columns:1fr 1fr;gap:8px}.kpi{padding:12px}.kpi strong{font-size:1.15em}.grafica-card{padding:12px}.barras{gap:2px}.donut-layout{flex-direction:column;gap:12px}.dashboard-filtro{width:100%}.dashboard-filtro select{flex:1}}
+        @media(max-width:560px){.header{align-items:flex-start}.kpis{grid-template-columns:1fr 1fr;gap:8px}.kpi{padding:12px}.kpi strong{font-size:1.15em}.grafica-card{padding:12px}.barras{gap:2px}.donut-layout{flex-direction:column;gap:12px}.dashboard-filtro{width:100%}.dashboard-filtro select{flex:1}.linea-grafica{grid-template-columns:38px minmax(0,1fr)}.linea-eje-y{padding-right:5px;font-size:.56em}}
     </style>
 </head>
 <body>
@@ -71,10 +73,24 @@
     let secuenciaLinea = 0;
     function graficaLinea(valores, color) {
         const idGradiente = `relleno-linea-${++secuenciaLinea}`;
-        const max=Math.max(...valores,1), w=600, h=175;
-        const puntos=valores.map((v,i)=>`${i*w/11},${h-(v/max*(h-16))}`).join(" ");
-        const area=`0,${h} ${puntos} ${w},${h}`;
-        return `<div class="linea-wrap"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><defs><linearGradient id="${idGradiente}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><polygon points="${area}" fill="url(#${idGradiente})"/><polyline points="${puntos}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>${valores.map((v,i)=>`<circle cx="${i*w/11}" cy="${h-(v/max*(h-16))}" r="4" fill="${color}"><title>${MESES[i]}: ${v}</title></circle>`).join("")}</svg><div class="linea-labels">${MESES.map(m=>`<span>${m}</span>`).join("")}</div></div>`;
+        const maxDato = Math.max(...valores, 0);
+        const magnitud = maxDato > 0 ? Math.pow(10, Math.floor(Math.log10(maxDato))) : 1;
+        const normalizado = maxDato / magnitud;
+        const factor = normalizado <= 1 ? 1 : normalizado <= 2 ? 2 : normalizado <= 5 ? 5 : 10;
+        const maxEscala = Math.max(factor * magnitud, 4);
+        const w=600, h=175, margen=7;
+        const puntos = valores.map((v,i) => ({x:margen+i*(w-margen*2)/11, y:h-margen-(v/maxEscala*(h-margen*2))}));
+        let curva = `M ${puntos[0].x},${puntos[0].y}`;
+        for (let i=0;i<puntos.length-1;i++) {
+            const p0=puntos[i-1]||puntos[i], p1=puntos[i], p2=puntos[i+1], p3=puntos[i+2]||p2;
+            const cp1x=p1.x+(p2.x-p0.x)/6, cp1y=p1.y+(p2.y-p0.y)/6;
+            const cp2x=p2.x-(p3.x-p1.x)/6, cp2y=p2.y-(p3.y-p1.y)/6;
+            curva += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+        }
+        const area = `${curva} L ${puntos[puntos.length-1].x},${h} L ${puntos[0].x},${h} Z`;
+        const formatoEje = v => v >= 1000 ? `${(v/1000).toLocaleString("es-PE",{maximumFractionDigits:1})}k` : v.toLocaleString("es-PE",{maximumFractionDigits:1});
+        const niveles = [maxEscala,maxEscala*.75,maxEscala*.5,maxEscala*.25,0];
+        return `<div class="linea-grafica"><div class="linea-eje-y">${niveles.map(v=>`<span>${formatoEje(v)}</span>`).join("")}</div><div class="linea-wrap"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><defs><linearGradient id="${idGradiente}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${idGradiente})"/><path d="${curva}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${puntos.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}"><title>${MESES[i]}: ${valores[i]}</title></circle>`).join("")}</svg><div class="linea-labels">${MESES.map(m=>`<span>${m}</span>`).join("")}</div></div></div>`;
     }
     function donut(valores, colores, total, centro, formato=v=>v) {
         let acumulado=0;
