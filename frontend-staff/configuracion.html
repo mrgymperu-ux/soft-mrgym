@@ -457,10 +457,16 @@
                     <code style="font-size:0.75em;word-break:break-all;color:var(--color-primario);">${url}</code>
                     <div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
                         <button class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText('${url}');showSuccess('URL copiada')">Copiar URL</button>
+                        <button class="btn btn-sm" onclick="compartirPortalWhatsApp('${url}')" style="background:#25D366;color:#fff;">Compartir por WhatsApp</button>
                         <a class="btn btn-sm" href="${API_BASE_URL}/gym/${slug}/qr.svg?portal=alumno" download="qr-${slug}.svg" style="text-decoration:none;">Descargar QR</a>
                     </div>
                 </div>`;
         } catch(e) { qrDiv.innerHTML = `<p style="color:red;">${e.message}</p>`; }
+    }
+
+    function compartirPortalWhatsApp(url) {
+        const mensaje = `Accede al portal de alumnos del gimnasio desde este enlace:\n\n${url}\n\nIngresa con tu DNI. En el primer acceso podrás crear tu contraseña y agregar la aplicación a la pantalla de inicio.`;
+        window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, "_blank", "noopener,noreferrer");
     }
 
     /* ====== Logo del gimnasio ====== */

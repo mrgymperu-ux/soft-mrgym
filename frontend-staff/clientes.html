@@ -158,7 +158,8 @@
                         <p id="ficha-celular" style="margin:4px 0 0;font-size:0.88em;"></p>
                         <p id="ficha-cumple" style="margin:2px 0 0;color:#636E72;font-size:0.82em;"></p>
                     </div>
-                    <div style="margin-left:auto;display:flex;gap:8px;">
+                    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-sm" id="btn-whatsapp-portal" onclick="enviarPortalAlumnoWhatsApp()" style="background:#25D366;color:#fff;">WhatsApp: enviar portal</button>
                         <button class="btn btn-secondary btn-sm" onclick="abrirModalEditar()">✏️ Editar</button>
                         <button class="btn btn-danger btn-sm" id="btn-eliminar-ficha" onclick="eliminarClienteActual()" style="display:none;">🗑️ Eliminar</button>
                     </div>
@@ -1509,6 +1510,31 @@
             await apiFetch(`/clientes/${clienteActual.id}/reset-password`, { method: "POST" });
             showSuccess("El alumno deberá crear una nueva contraseña al ingresar");
         } catch (e) { showError(e.message); }
+    }
+
+    async function enviarPortalAlumnoWhatsApp() {
+        if (!clienteActual) return;
+        if (!clienteActual.telefono) {
+            showInfo("Este alumno no tiene un celular registrado.");
+            return;
+        }
+        let slug = sessionStorage.getItem("gimnasio_slug") || "";
+        if (!slug) {
+            try {
+                const gimnasio = await apiFetch("/gym-actual/");
+                slug = gimnasio?.slug || "";
+                if (slug) sessionStorage.setItem("gimnasio_slug", slug);
+            } catch (e) {}
+        }
+        if (!slug) {
+            showError("No se pudo obtener el enlace del portal del alumno.");
+            return;
+        }
+        const nombre = clienteActual.nombre || "";
+        const urlPortal = `${window.location.origin}/alumno/login.html?gym=${encodeURIComponent(slug)}`;
+        const mensaje = `Hola ${nombre}, este es el acceso al portal de alumnos de tu gimnasio:\n\n${urlPortal}\n\nIngresa con tu DNI. Si es tu primer acceso, el sistema te pedirá crear tu contraseña.`;
+        const urlWhatsApp = linkWhatsApp(clienteActual.telefono, mensaje);
+        if (urlWhatsApp) window.open(urlWhatsApp, "_blank", "noopener,noreferrer");
     }
 
     async function eliminarClienteActual() {
