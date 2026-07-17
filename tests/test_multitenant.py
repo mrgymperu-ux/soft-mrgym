@@ -28,6 +28,7 @@ from backend.main import (
     crear_concepto_ingreso,
     crear_paquete_rutina,
     crear_reserva_sala,
+    crear_usuario,
     crear_venta,
     consultar_auditoria,
     eliminar_pago_membresia,
@@ -163,6 +164,24 @@ class MultiTenantTest(unittest.TestCase):
                 ),
                 _request("/counter/login"), self.db,
             )
+
+    def test_crear_staff_counter_no_requiere_password_visible(self):
+        self.plan_saas.max_usuarios_staff = 0
+        self.db.commit()
+        nuevo = crear_usuario(
+            schemas.UsuarioCreate(
+                nombre_completo="Recepcion Counter",
+                username="recepcion-counter",
+                rol="staff",
+                es_administrador=False,
+                zonas_permitidas="clientes,sistema",
+            ),
+            db=self.db,
+            usuario_admin=self.admin1,
+        )
+        self.assertTrue(nuevo.password_hash)
+        self.assertNotEqual(nuevo.password_hash, "")
+        self.assertEqual(nuevo.zonas_permitidas, "clientes,sistema")
 
     def test_auditoria_no_expone_eventos_de_otro_gimnasio(self):
         self.db.add_all([

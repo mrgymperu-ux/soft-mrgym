@@ -11,7 +11,7 @@ const NAV_ITEMS = [
             { href: "clientes.html", icono: "👥", texto: "Clientes", zona: "clientes" },
             { href: "pagos.html",     icono: "💳", texto: "Pagos",    zona: "pagos" },
             { href: "asistencias.html", icono: "✅", texto: "Asistencias", zona: "asistencias" },
-            { href: "movimientos.html", icono: "🔁", texto: "Movimientos", zona: null },
+            { href: "movimientos.html", icono: "🔁", texto: "Movimientos", zona: "sistema" },
         ],
     },
     {
@@ -45,11 +45,11 @@ const NAV_ITEMS = [
     {
         seccion: "Sistema",
         items: [
-            { href: "dashboard.html", icono: "📊", texto: "Dashboard", zona: null },
-            { href: "resumen.html",   icono: "📈", texto: "Resumen", zona: null },
-            { href: "ingresos.html",  icono: "💰", texto: "Ingresos", zona: null },
-            { href: "egresos.html",   icono: "📤", texto: "Egresos",  zona: null },
-            { href: "reportes.html", icono: "📊", texto: "Reportes", zona: null, soloExportar: true },
+            { href: "dashboard.html", icono: "📊", texto: "Dashboard", zona: "sistema" },
+            { href: "resumen.html",   icono: "📈", texto: "Resumen", zona: "sistema" },
+            { href: "ingresos.html",  icono: "💰", texto: "Ingresos", zona: "sistema" },
+            { href: "egresos.html",   icono: "📤", texto: "Egresos",  zona: "sistema" },
+            { href: "reportes.html", icono: "📊", texto: "Reportes", zona: "sistema", soloExportar: true },
             { href: "metas.html", icono: "🎯", texto: "Metas y Comisiones", zona: "metas", soloAdmin: true },
             { href: "configuracion.html", icono: "⚙️", texto: "Configuracion", zona: "configuracion" },
             { href: "auditoria.html", icono: "🛡️", texto: "Auditoria", zona: null, soloAdmin: true },

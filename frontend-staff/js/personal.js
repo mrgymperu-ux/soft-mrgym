@@ -33,7 +33,7 @@ const ZONAS_DISPONIBLES = [
     ["ventas","Ventas"], ["venta_rapida","Venta Rápida"], ["asistencias","Asistencias"],
     ["agenda","Agenda"], ["entrenamientos","Rutinas"],
     ["nutricion","Nutrición"], ["retos","Retos"], ["planilla","Planilla"], ["pagos","Pagos"],
-    ["configuracion","Configuración"],
+    ["sistema","SISTEMA"], ["configuracion","Configuración"],
 ];
 
 function etiqueta() { return ETIQUETAS[PERSONAL_TIPO]; }
@@ -72,11 +72,6 @@ function inyectarModalesPersonal() {
         ${esStaffPage() ? `
         <div id="bloque-staff">
             <div class="form-group"><label>Username *</label><input type="text" id="u-username" placeholder="ej: recepcion1"></div>
-            <div class="form-group">
-                <label id="label-pass">Contraseña *</label>
-                <input type="password" id="u-password" placeholder="••••••••">
-                <small id="hint-pass" style="color:#636E72;display:none;">Dejar en blanco para no cambiar la contraseña.</small>
-            </div>
             <div class="form-group" style="border-top:1px solid var(--color-borde);padding-top:14px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="u-es-admin" onchange="onToggleAdmin()" style="width:auto;"> Administrador (acceso total, incluye Usuarios y Metas/Comisiones)</label>
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;"><input type="checkbox" id="u-puede-eliminar" style="width:auto;"> Puede eliminar registros (clientes, membresías, productos)</label>
@@ -98,6 +93,29 @@ function inyectarModalesPersonal() {
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
             <button class="btn btn-primary" onclick="guardarPersonal()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal PIN Counter -->
+<div id="modal-pin-counter" class="modal">
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Crear PIN</h3>
+            <button class="modal-close" onclick="cerrarModalPinCounter()">✕</button>
+        </div>
+        <p id="pin-counter-trabajador" style="margin:0 0 14px;color:#636E72;"></p>
+        <div class="form-group">
+            <label>PIN de 6 dígitos *</label>
+            <input type="password" id="pin-counter-valor" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="Ejemplo: 482615">
+        </div>
+        <div class="form-group">
+            <label>Confirmar PIN *</label>
+            <input type="password" id="pin-counter-confirmacion" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="Repite el PIN">
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" onclick="cerrarModalPinCounter()">Cancelar</button>
+            <button class="btn btn-primary" onclick="guardarPinCounter()">Crear PIN</button>
         </div>
     </div>
 </div>
@@ -272,19 +290,38 @@ async function cargarPersonal() {
         <td>
             ${esAdministrador()
                 ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">✏️ Editar</button>
-                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="configurarPinCounter(${f.id})">PIN Counter</button>` : ""}`
+                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalPinCounter(${f.id})">Crear PIN</button>` : ""}`
                 : '<span style="color:#636E72;font-size:0.8em;">Solo lectura</span>'}
         </td>
     </tr>`).join("");
 }
 
-async function configurarPinCounter(usuarioId) {
-    const pin = prompt("Nuevo PIN de 6 digitos para este trabajador:");
-    if (pin === null) return;
-    if (!/^\d{6}$/.test(pin)) { showError("El PIN debe tener exactamente 6 digitos"); return; }
+let pinCounterUsuarioId = null;
+
+function abrirModalPinCounter(usuarioId) {
+    const usuario = usuariosCache.find(u => u.id === usuarioId);
+    pinCounterUsuarioId = usuarioId;
+    document.getElementById("pin-counter-trabajador").textContent = usuario ? `Trabajador: ${usuario.nombre_completo}` : "";
+    document.getElementById("pin-counter-valor").value = "";
+    document.getElementById("pin-counter-confirmacion").value = "";
+    document.getElementById("modal-pin-counter").classList.add("active");
+    document.getElementById("pin-counter-valor").focus();
+}
+
+function cerrarModalPinCounter() {
+    document.getElementById("modal-pin-counter").classList.remove("active");
+    pinCounterUsuarioId = null;
+}
+
+async function guardarPinCounter() {
+    const pin = document.getElementById("pin-counter-valor").value.trim();
+    const confirmacion = document.getElementById("pin-counter-confirmacion").value.trim();
+    if (!/^\d{6}$/.test(pin)) { showError("El PIN debe tener exactamente 6 dígitos"); return; }
+    if (pin !== confirmacion) { showError("Los PIN no coinciden"); return; }
     try {
-        await apiFetch(`/usuarios/${usuarioId}/pin-counter`, { method: "PUT", body: JSON.stringify({ pin }) });
-        showSuccess("PIN Counter actualizado");
+        await apiFetch(`/usuarios/${pinCounterUsuarioId}/pin-counter`, { method: "PUT", body: JSON.stringify({ pin }) });
+        cerrarModalPinCounter();
+        showSuccess("PIN creado correctamente");
     } catch (e) { showError(e.message); }
 }
 
@@ -299,13 +336,9 @@ function limpiarFormulario() {
     document.getElementById("u-fecha-nacimiento").value = "";
     if (esStaffPage()) {
         document.getElementById("u-username").value = "";
-        document.getElementById("u-password").value = "";
         document.getElementById("u-es-admin").checked = false;
         document.getElementById("u-puede-eliminar").checked = false;
         document.getElementById("u-puede-exportar").checked = false;
-        document.getElementById("label-pass").textContent = "Contraseña *";
-        document.getElementById("hint-pass").style.display = "none";
-        document.getElementById("u-password").placeholder = "••••••••";
         renderZonasChips("");
         onToggleAdmin();
     } else {
@@ -333,8 +366,6 @@ function abrirModalEditar(id) {
 
         document.getElementById("u-nombre").value = usuario.nombre_completo;
         document.getElementById("u-username").value = usuario.username;
-        document.getElementById("u-password").placeholder = "Dejar en blanco para no cambiar";
-        document.getElementById("hint-pass").style.display = "block";
         document.getElementById("u-es-admin").checked = !!usuario.es_administrador;
         document.getElementById("u-puede-eliminar").checked = !!usuario.puede_eliminar;
         document.getElementById("u-puede-exportar").checked = !!usuario.puede_exportar;
@@ -380,12 +411,10 @@ async function guardarPersonal() {
     }
 
     // Validaciones previas para no dejar datos a medias
-    let username = "", pass = "", codigo = "";
+    let username = "", codigo = "";
     if (esStaffPage()) {
         username = document.getElementById("u-username").value.trim();
-        pass = document.getElementById("u-password").value;
         if (!username) { showError("El username es obligatorio"); return; }
-        if (!editando && !pass) { showError("La contraseña es obligatoria para nuevo personal"); return; }
     } else {
         codigo = document.getElementById("u-codigo-acceso").value.trim();
         if (!codigo) { showError("El código de acceso es obligatorio para profesores"); return; }
@@ -422,12 +451,9 @@ async function guardarPersonal() {
                 puede_exportar: document.getElementById("u-puede-exportar").checked,
                 zonas_permitidas: zonasSeleccionadas,
             };
-            if (pass) datosUsuario.password = pass;
-
             if (editando && editando.usuario) {
                 await apiFetch(`/usuarios/${editando.usuario.id}`, { method: "PUT", body: JSON.stringify(datosUsuario) });
             } else {
-                datosUsuario.password = pass;
                 await apiFetch("/usuarios/", { method: "POST", body: JSON.stringify(datosUsuario) });
             }
         } else {

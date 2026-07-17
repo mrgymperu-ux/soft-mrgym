@@ -311,8 +311,9 @@ _ZONA_POR_PREFIJO = {
     "retos": "retos", "clases": "agenda", "reservas-sala": "agenda",
     "planilla": "planilla", "pagos-planilla": "planilla",
     "servicios": "pagos", "cargos-servicio": "pagos", "pagos-servicio": "pagos",
-    "ingresos": "pagos", "egresos": "pagos", "gastos": "pagos",
-    "conceptos-ingreso": "pagos", "otros-ingresos": "pagos",
+    "dashboard": "sistema", "reportes": "sistema",
+    "ingresos": "sistema", "egresos": "sistema", "gastos": "sistema",
+    "conceptos-ingreso": "sistema", "otros-ingresos": "sistema",
     "usuarios": "usuarios", "empleados": "usuarios", "puestos": "usuarios",
     "configuracion": "configuracion", "gym-actual": "configuracion",
     "metas": "metas", "comisiones": "metas",
@@ -356,7 +357,7 @@ def requiere_staff_o_profesor(request: Request, usuario: models.Usuario = Depend
 ZONAS_DISPONIBLES = [
     "clientes", "membresias", "productos", "ventas", "venta_rapida",
     "asistencias", "agenda", "entrenamientos", "nutricion",
-    "retos", "planilla", "pagos", "usuarios", "configuracion", "metas",
+    "retos", "planilla", "pagos", "sistema", "usuarios", "configuracion", "metas",
 ]
 
 

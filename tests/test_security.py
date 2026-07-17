@@ -30,6 +30,15 @@ def test_password_staff_exige_longitud_minima():
         )
 
 
+def test_password_staff_es_opcional_para_flujo_counter():
+    usuario = schemas.UsuarioCreate(
+        nombre_completo="Recepcion Counter",
+        username="recepcion-counter",
+        rol="staff",
+    )
+    assert usuario.password is None
+
+
 def test_password_segura_exige_letras_y_numeros():
     with pytest.raises(ValueError):
         auth.validar_password_segura("sololetrasseguras")

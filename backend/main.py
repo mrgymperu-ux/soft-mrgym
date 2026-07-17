@@ -2380,10 +2380,13 @@ def crear_usuario(datos: schemas.UsuarioCreate, db: Session = Depends(get_db), u
     a un empleado_id, ese Empleado debe existir y, para un usuario
     con rol PROFESOR, debe ser de tipo PROFESOR_DE_SALA.
     """
-    try:
-        auth.validar_password_segura(datos.password)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    import secrets
+    password_interna = datos.password or secrets.token_urlsafe(32)
+    if datos.password:
+        try:
+            auth.validar_password_segura(datos.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if datos.rol == models.RolUsuario.STAFF:
         _validar_limite_plan(db, usuario_admin, "usuarios_staff")
     existente = db.query(models.Usuario).filter(models.Usuario.username == datos.username).first()
@@ -2406,7 +2409,7 @@ def crear_usuario(datos: schemas.UsuarioCreate, db: Session = Depends(get_db), u
     db_usuario = models.Usuario(
         nombre_completo=datos.nombre_completo,
         username=datos.username,
-        password_hash=auth.hash_password(datos.password),
+        password_hash=auth.hash_password(password_interna),
         rol=datos.rol,
         empleado_id=datos.empleado_id,
         es_administrador=datos.es_administrador,

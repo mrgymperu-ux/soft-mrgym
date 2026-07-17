@@ -52,7 +52,9 @@ class UsuarioBase(BaseModel):
 
 
 class UsuarioCreate(UsuarioBase):
-    password: str = Field(min_length=10, max_length=128)
+    # En el flujo Counter el trabajador entra con un PIN. La contrasena
+    # queda opcional para conservar compatibilidad con el login tradicional.
+    password: Optional[str] = Field(default=None, min_length=10, max_length=128)
 
 
 class UsuarioUpdate(BaseModel):
