@@ -49,8 +49,8 @@ from backend.main import (
 )
 
 
-def _request(path: str) -> Request:
-    return Request({"type": "http", "method": "GET", "path": path, "headers": [], "query_string": b""})
+def _request(path: str, method: str = "GET") -> Request:
+    return Request({"type": "http", "method": method, "path": path, "headers": [], "query_string": b""})
 
 
 class MultiTenantTest(unittest.TestCase):
@@ -283,6 +283,12 @@ class MultiTenantTest(unittest.TestCase):
         self.assertIs(auth.requiere_staff(_request("/clientes/"), self.staff1), self.staff1)
         with self.assertRaises(HTTPException) as error:
             auth.requiere_staff(_request("/ventas/"), self.staff1)
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
+        self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)
+        with self.assertRaises(HTTPException) as error:
+            auth.requiere_staff(_request("/configuracion/", method="PUT"), self.staff1)
         self.assertEqual(error.exception.status_code, 403)
 
     def test_venta_usa_precio_del_servidor(self):

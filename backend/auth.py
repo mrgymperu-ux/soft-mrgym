@@ -325,6 +325,10 @@ def _validar_zona_de_ruta(request: Request, usuario: models.Usuario):
     if usuario.es_administrador:
         return
     prefijo = request.url.path.strip("/").split("/", 1)[0]
+    # Los modulos necesitan leer moneda, marca y preferencias generales.
+    # La zona Configuracion protege las modificaciones, no esta lectura comun.
+    if request.method.upper() == "GET" and prefijo in {"configuracion", "gym-actual"}:
+        return
     zona = _ZONA_POR_PREFIJO.get(prefijo)
     if not zona:
         return
