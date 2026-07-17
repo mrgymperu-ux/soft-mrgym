@@ -15,8 +15,8 @@
         .leyenda-item { display:flex;align-items:center;gap:5px; }
         .leyenda-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
 
-        .grilla-wrap { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:auto; }
-        .grilla { display:grid;min-width:1020px;transition:grid-template-columns .2s ease; }
+        .grilla-wrap { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:hidden;min-height:540px; }
+        .grilla { display:grid;width:70%;min-width:714px;transition:grid-template-columns .2s ease; }
         .grilla-header-hueco { border-bottom:1px solid color-mix(in srgb,var(--color-primario) 75%,white);background:color-mix(in srgb,var(--color-primario) 75%,white); }
         .grilla-header-dia { padding:10px 4px;text-align:center;font-size:0.8em;font-weight:600;color:#fff;background:color-mix(in srgb,var(--color-primario) 75%,white);border-bottom:1px solid color-mix(in srgb,var(--color-primario) 75%,white);border-left:1px solid rgba(255,255,255,.24); }
         .grilla-header-dia.hoy { color:#fff;background:color-mix(in srgb,var(--color-primario) 75%,black);border-left-color:color-mix(in srgb,var(--color-primario) 75%,black); }
@@ -48,7 +48,7 @@
         .repetir-dias { display:flex;gap:6px;flex-wrap:wrap;margin-top:6px; }
         .chip-dia { border:1px solid var(--color-borde);border-radius:8px;padding:6px 10px;font-size:0.8em;cursor:pointer;user-select:none;color:var(--color-texto); }
         .chip-dia.activo { background:var(--color-primario);color:#fff;border-color:var(--color-primario); }
-        @media (max-width:768px) { .grilla{min-width:760px}.celda-agregar{opacity:.72}.semana-nav{gap:6px}.semana-nav button{padding:7px 9px;} }
+        @media (max-width:768px) { .grilla-wrap{overflow:auto;min-height:0}.grilla{width:532px;min-width:532px}.celda-agregar{opacity:.72}.semana-nav{gap:6px}.semana-nav button{padding:7px 9px;} }
     </style>
 </head>
 <body>
@@ -301,8 +301,9 @@
 
         // columna de horas
         html += `<div class="col-horas" style="height:${alturaTotal}px;">`;
-        for (let h = HORA_INICIO; h <= HORA_FIN; h++) {
-            const top = offsetsHora[h - HORA_INICIO];
+        for (let h = HORA_INICIO; h < HORA_FIN; h++) {
+            const indice = h - HORA_INICIO;
+            const top = offsetsHora[indice] + altosHora[indice] / 2;
             html += `<span class="hora-label" style="top:${top}px;">${h}:00</span>`;
         }
         html += `</div>`;
