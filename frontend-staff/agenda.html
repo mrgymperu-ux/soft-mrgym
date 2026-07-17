@@ -17,9 +17,9 @@
 
         .grilla-wrap { background:var(--color-blanco);border-radius:var(--radio);box-shadow:var(--sombra);overflow:auto; }
         .grilla { display:grid;min-width:1020px;transition:grid-template-columns .2s ease; }
-        .grilla-header-hueco { border-bottom:1px solid var(--color-borde); }
-        .grilla-header-dia { padding:10px 4px;text-align:center;font-size:0.8em;font-weight:600;border-bottom:1px solid var(--color-borde);border-left:1px solid var(--color-borde); }
-        .grilla-header-dia.hoy { color:#fff;background:var(--color-primario);border-left-color:var(--color-primario); }
+        .grilla-header-hueco { border-bottom:1px solid color-mix(in srgb,var(--color-primario) 75%,white);background:color-mix(in srgb,var(--color-primario) 75%,white); }
+        .grilla-header-dia { padding:10px 4px;text-align:center;font-size:0.8em;font-weight:600;color:#fff;background:color-mix(in srgb,var(--color-primario) 75%,white);border-bottom:1px solid color-mix(in srgb,var(--color-primario) 75%,white);border-left:1px solid rgba(255,255,255,.24); }
+        .grilla-header-dia.hoy { color:#fff;background:color-mix(in srgb,var(--color-primario) 75%,black);border-left-color:color-mix(in srgb,var(--color-primario) 75%,black); }
         .grilla-header-dia .num { display:block;font-size:1.2em;font-weight:bold;margin-top:2px; }
 
         .col-horas { position:relative; }
