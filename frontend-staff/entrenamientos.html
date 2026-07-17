@@ -203,7 +203,7 @@
         catalogo = resultados[1].status === "fulfilled" ? resultados[1].value : [];
         catalogoCargado = resultados[1].status === "fulfilled";
         clientes = resultados[2].status === "fulfilled" ? resultados[2].value : [];
-        if (resultados[3].status === "fulfilled") {
+        if (resultados[3].status === "fulfilled" && resultados[3].value && Array.isArray(resultados[3].value.catalogo)) {
             aplicarEquipamientoCargado(resultados[3].value);
         } else {
             document.getElementById("equipamiento-grupos").innerHTML = `<div class="vacio">No se pudo cargar el equipamiento.<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="cargarEquipamiento()">Reintentar</button></div>`;
@@ -216,7 +216,7 @@
         iniciarFlujoRecomendadoDesdeUrl();
     }
 
-    function aplicarEquipamientoCargado(datos) {
+    function aplicarEquipamientoCargado(datos = {}) {
         equipamientoCatalogo = datos.catalogo || [];
         equipamientoSeleccionado = new Set(datos.seleccionados || []);
         equipamientoGuardado = new Set(datos.seleccionados || []);
