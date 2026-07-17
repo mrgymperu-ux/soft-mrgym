@@ -284,6 +284,9 @@ class MultiTenantTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             auth.requiere_staff(_request("/ventas/"), self.staff1)
         self.assertEqual(error.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as error_equipo:
+            auth.requiere_staff(_request("/equipamiento-gimnasio"), self.staff1)
+        self.assertEqual(error_equipo.exception.status_code, 403)
 
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)

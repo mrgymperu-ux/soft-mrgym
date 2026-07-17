@@ -306,6 +306,7 @@ _ZONA_POR_PREFIJO = {
     "ventas": "ventas", "asistencias": "asistencias", "asistencias-empleado": "asistencias",
     "progreso": "progreso", "medidas": "progreso",
     "tipos-ejercicio": "entrenamientos", "rutinas": "entrenamientos", "paquetes-rutina": "entrenamientos",
+    "equipamiento-gimnasio": "entrenamientos",
     "rutina-dias": "entrenamientos", "rutina-ejercicios": "entrenamientos",
     "nutricion": "nutricion", "alimentos": "nutricion", "paquetes-nutricion": "nutricion",
     "retos": "retos", "clases": "agenda", "reservas-sala": "agenda",
