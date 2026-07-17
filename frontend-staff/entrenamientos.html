@@ -319,7 +319,13 @@
     }
 
     function alternativasPara(ejercicio) {
-        return catalogo.filter(e => e.id !== ejercicio.id && equipoDisponible(e) && e.grupo_muscular && e.grupo_muscular === ejercicio.grupo_muscular).slice(0, 3);
+        return catalogo
+            .filter(e => e.id !== ejercicio.id && equipoDisponible(e) && e.grupo_muscular && e.grupo_muscular === ejercicio.grupo_muscular)
+            .sort((a,b) =>
+                Number(b.categoria === ejercicio.categoria) - Number(a.categoria === ejercicio.categoria) ||
+                Number((b.equipamiento || "sin_equipo") === "sin_equipo") - Number((a.equipamiento || "sin_equipo") === "sin_equipo") ||
+                a.nombre.localeCompare(b.nombre)
+            ).slice(0, 3);
     }
 
     function renderCatalogo() {
@@ -408,8 +414,8 @@
                 <p class="paquete-desc">${esc(p.descripcion || "Sin indicaciones adicionales")}</p>
                 <div class="paquete-resumen"><div><strong>${p.dias.length}</strong>días</div><div><strong>${ejercicios}</strong>ejercicios</div><div><strong>${p.duracion_semanas}</strong>semanas</div></div>
                 <div class="dias-preview">${esc(edad)} · ${p.dias.map(d => esc(d.nombre)).join(" · ") || "Sin días configurados"}</div>
-                ${incompatibles.length ? `<div class="aviso-equipo">Adapta ${incompatibles.length} ejercicio${incompatibles.length === 1 ? "" : "s"}: falta equipamiento.</div>` : ""}
-                <div class="paquete-actions"><button class="btn btn-primary btn-sm" onclick="abrirAsignar(${p.id})" ${incompatibles.length ? 'disabled title="Primero adapta los ejercicios sin equipamiento"' : ""}>Asignar</button><button class="btn btn-secondary btn-sm" onclick="abrirPaquete(${p.id})">${incompatibles.length ? "Adaptar" : "Editar"}</button><button class="btn btn-danger btn-sm" onclick="desactivarPaquete(${p.id})">Desactivar</button></div>
+                ${incompatibles.length ? `<div class="aviso-equipo">Se adaptarán automáticamente ${incompatibles.length} ejercicio${incompatibles.length === 1 ? "" : "s"} al equipamiento disponible.</div>` : ""}
+                <div class="paquete-actions"><button class="btn btn-primary btn-sm" onclick="abrirAsignar(${p.id})">Asignar</button><button class="btn btn-secondary btn-sm" onclick="abrirPaquete(${p.id})">Editar</button><button class="btn btn-danger btn-sm" onclick="desactivarPaquete(${p.id})">Desactivar</button></div>
             </article>`;
         }).join("");
     }
@@ -418,7 +424,7 @@
         const ordenado = [...catalogo].sort((a,b) => Number(equipoDisponible(b)) - Number(equipoDisponible(a)) || a.nombre.localeCompare(b.nombre));
         return '<option value="">Texto libre</option>' + ordenado.map(e => {
             const disponible = equipoDisponible(e), actual = e.id === seleccionado;
-            return `<option value="${e.id}" ${actual ? "selected" : ""} ${!disponible && !actual ? "disabled" : ""}>${esc(e.nombre)}${e.grupo_muscular ? " · " + esc(e.grupo_muscular) : ""}${disponible ? "" : ` · falta ${esc(nombreEquipo(e.equipamiento))}`}</option>`;
+            return `<option value="${e.id}" ${actual ? "selected" : ""}>${esc(e.nombre)}${e.grupo_muscular ? " · " + esc(e.grupo_muscular) : ""}${disponible ? "" : ` · se adaptará (falta ${esc(nombreEquipo(e.equipamiento))})`}</option>`;
         }).join("");
     }
 

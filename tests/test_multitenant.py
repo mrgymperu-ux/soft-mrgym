@@ -460,6 +460,59 @@ class MultiTenantTest(unittest.TestCase):
         self.assertTrue(paquete.dias[0].ejercicios)
         self.assertTrue(all(e.tipo_ejercicio.equipamiento == "saco_boxeo" for e in paquete.dias[0].ejercicios))
 
+    def test_asignar_paquete_adapta_ejercicio_a_variante_sin_equipo(self):
+        original = models.TipoEjercicio(
+            gimnasio_id=self.gym1.id,
+            nombre="Press de pecho en maquina",
+            grupo_muscular="Pecho",
+            categoria="fuerza",
+            equipamiento="press_pecho_maquina",
+            nivel="principiante",
+            objetivo="tonificar",
+            activo=True,
+        )
+        alternativa = models.TipoEjercicio(
+            gimnasio_id=self.gym1.id,
+            nombre="Flexiones de pecho",
+            grupo_muscular="Pecho",
+            categoria="fuerza",
+            equipamiento="sin_equipo",
+            nivel="principiante",
+            objetivo="tonificar",
+            activo=True,
+        )
+        self.db.add_all([original, alternativa])
+        self.db.flush()
+        paquete = models.PaqueteRutina(
+            gimnasio_id=self.gym1.id,
+            nombre="Pecho adaptable",
+            dias=[models.PaqueteRutinaDia(
+                nombre="Dia 1",
+                ejercicios=[models.PaqueteRutinaEjercicio(
+                    tipo_ejercicio_id=original.id,
+                    nombre=original.nombre,
+                    series=3,
+                    repeticiones="12",
+                )],
+            )],
+        )
+        self.db.add(paquete)
+        self.gym1.equipamiento_disponible = ""
+        self.db.commit()
+
+        rutina = asignar_paquete_rutina(
+            paquete.id,
+            schemas.AsignarPaqueteRutina(cliente_id=self.cliente1.id),
+            db=self.db,
+            usuario=self.admin1,
+        )
+
+        ejercicio_asignado = rutina.dias[0].ejercicios[0]
+        self.assertEqual(ejercicio_asignado.tipo_ejercicio_id, alternativa.id)
+        self.assertEqual(ejercicio_asignado.nombre, alternativa.nombre)
+        self.assertIn(original.nombre, ejercicio_asignado.notas)
+        self.assertEqual(paquete.dias[0].ejercicios[0].tipo_ejercicio_id, original.id)
+
     def test_todas_las_maquinas_tienen_ejercicios_generables(self):
         maquinas = {
             codigo for codigo, _nombre, categoria in EQUIPAMIENTO_GIMNASIO

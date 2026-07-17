@@ -930,6 +930,15 @@ def _sembrar_ejercicios_catalogo():
             ("Fondos en paralelas", "Triceps", "fuerza", "sin_equipo", "avanzado", "masculino", "ganar_masa"),
             ("Press en maquina de pecho", "Pecho", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
             ("Remo en maquina", "Espalda", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            # Variantes corporales y con maquina por grupo. Permiten que
+            # una plantilla se adapte sin perder el objetivo muscular.
+            ("Remo isometrico con autocarga", "Espalda", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Flexiones pica para hombros", "Hombros", "fuerza", "sin_equipo", "intermedio", "todos", "ganar_masa"),
+            ("Curl de biceps con autorresistencia", "Biceps", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Extension de triceps con autorresistencia", "Triceps", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Press de hombros en maquina", "Hombros", "fuerza", "press_hombros_maquina", "principiante", "todos", "tonificar"),
+            ("Curl de biceps en maquina", "Biceps", "fuerza", "biceps_maquina", "principiante", "todos", "tonificar"),
+            ("Extension de triceps en maquina", "Triceps", "fuerza", "triceps_maquina", "principiante", "todos", "tonificar"),
             # FUERZA - TREN INFERIOR
             ("Sentadilla con barra", "Piernas", "fuerza", "barra", "intermedio", "todos", "ganar_masa"),
             ("Sentadilla copa con mancuerna", "Piernas", "fuerza", "mancuernas", "principiante", "todos", "tonificar"),
@@ -945,6 +954,10 @@ def _sembrar_ejercicios_catalogo():
             ("Elevacion de talones (pantorrilla)", "Piernas", "fuerza", "maquina", "principiante", "todos", "tonificar"),
             ("Sentadilla bulgara", "Piernas", "fuerza", "mancuernas", "avanzado", "todos", "ganar_masa"),
             ("Patada de gluteo en polea", "Gluteos", "fuerza", "maquina", "principiante", "femenino", "tonificar"),
+            ("Sentadilla con peso corporal", "Piernas", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Zancadas alternas sin peso", "Piernas", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Puente de gluteos", "Gluteos", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Patada de gluteo sin equipo", "Gluteos", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
             # CORE
             ("Plancha frontal", "Core", "fuerza", "colchoneta", "principiante", "todos", "tonificar"),
             ("Plancha lateral", "Core", "fuerza", "colchoneta", "intermedio", "todos", "tonificar"),
@@ -955,10 +968,14 @@ def _sembrar_ejercicios_catalogo():
             ("Elevacion de piernas", "Core", "fuerza", "colchoneta", "intermedio", "todos", "tonificar"),
             ("Bicicleta abdominal", "Core", "fuerza", "colchoneta", "principiante", "todos", "bajar_peso"),
             ("Pelota entre rodillas squeeze", "Core", "fuerza", "pelota", "principiante", "femenino", "tonificar"),
+            ("Plancha frontal sin equipo", "Core", "fuerza", "sin_equipo", "principiante", "todos", "tonificar"),
+            ("Crunch abdominal en maquina", "Core", "fuerza", "abdominal_maquina", "principiante", "todos", "tonificar"),
             # FUNCIONAL
             ("Kettlebell swing", "Cuerpo completo", "funcional", "mancuernas", "intermedio", "todos", "bajar_peso"),
             ("Thruster con mancuernas", "Cuerpo completo", "funcional", "mancuernas", "intermedio", "todos", "ganar_masa"),
             ("Clean and press con mancuerna", "Cuerpo completo", "funcional", "mancuernas", "avanzado", "todos", "ganar_masa"),
+            ("Circuito corporal completo", "Cuerpo completo", "funcional", "sin_equipo", "principiante", "todos", "bajar_peso"),
+            ("Circuito en multiestacion", "Cuerpo completo", "funcional", "multiestacion", "principiante", "todos", "ganar_masa"),
             ("Battle ropes", "Cuerpo completo", "funcional", "cuerda", "intermedio", "todos", "bajar_peso"),
             ("Wall ball con pelota", "Cuerpo completo", "funcional", "pelota", "intermedio", "todos", "tonificar"),
             ("Sentadilla con banda elastica", "Piernas", "funcional", "banda", "principiante", "femenino", "tonificar"),
@@ -5915,17 +5932,6 @@ def _validar_dias_paquete(datos_dias, db: Session, usuario):
         validos = {ejercicio.id for ejercicio in ejercicios_catalogo}
         if validos != ids:
             raise HTTPException(status_code=400, detail="Uno o mas ejercicios no pertenecen a este gimnasio")
-        gimnasio = _configuracion_del_gym(db, usuario)
-        disponibles = _equipamiento_disponible_gym(gimnasio)
-        no_disponibles = [
-            ejercicio.nombre for ejercicio in ejercicios_catalogo
-            if (ejercicio.equipamiento or "sin_equipo") not in disponibles
-        ]
-        if no_disponibles:
-            raise HTTPException(
-                status_code=400,
-                detail="Falta equipamiento para: " + ", ".join(sorted(no_disponibles)),
-            )
     return [
         models.PaqueteRutinaDia(
             nombre=dia.nombre,
@@ -5934,6 +5940,36 @@ def _validar_dias_paquete(datos_dias, db: Session, usuario):
         )
         for dia in datos_dias
     ]
+
+
+def _alternativa_ejercicio_disponible(
+    db: Session,
+    ejercicio: models.TipoEjercicio,
+    disponibles: set,
+) -> Optional[models.TipoEjercicio]:
+    """Busca un equivalente realizable sin modificar la plantilla original."""
+    if (ejercicio.equipamiento or "sin_equipo") in disponibles:
+        return ejercicio
+    candidatos = db.query(models.TipoEjercicio).filter(
+        models.TipoEjercicio.gimnasio_id == ejercicio.gimnasio_id,
+        models.TipoEjercicio.activo == True,
+        models.TipoEjercicio.id != ejercicio.id,
+        models.TipoEjercicio.grupo_muscular == ejercicio.grupo_muscular,
+        models.TipoEjercicio.equipamiento.in_(disponibles),
+    ).all()
+    if not candidatos:
+        return None
+
+    def puntuacion(candidato):
+        return (
+            (50 if candidato.categoria == ejercicio.categoria else 0)
+            + (30 if (candidato.equipamiento or "sin_equipo") == "sin_equipo" else 0)
+            + (15 if candidato.objetivo == ejercicio.objetivo else 0)
+            + (10 if candidato.nivel == ejercicio.nivel else 0)
+            + (5 if candidato.genero_recomendado == ejercicio.genero_recomendado else 0)
+        )
+
+    return sorted(candidatos, key=lambda c: (-puntuacion(c), c.nombre))[0]
 
 
 def _validar_perfil_paquete(datos):
@@ -6032,32 +6068,36 @@ def asignar_paquete_rutina(
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
     disponibles = _equipamiento_disponible_gym(_configuracion_del_gym(db, usuario))
-    incompatibles = sorted({
-        ej.nombre for dia in paquete.dias for ej in dia.ejercicios
-        if ej.tipo_ejercicio and (ej.tipo_ejercicio.equipamiento or "sin_equipo") not in disponibles
-    })
-    if incompatibles:
+    dias = []
+    sin_alternativa = []
+    for dia in paquete.dias:
+        ejercicios_adaptados = []
+        for ejercicio_paquete in dia.ejercicios:
+            original = ejercicio_paquete.tipo_ejercicio
+            elegido = _alternativa_ejercicio_disponible(db, original, disponibles) if original else None
+            if original and not elegido:
+                sin_alternativa.append(original.nombre)
+                continue
+            fue_adaptado = bool(original and elegido and elegido.id != original.id)
+            notas = ejercicio_paquete.notas
+            if fue_adaptado:
+                aviso = f"Adaptado automaticamente de: {original.nombre}"
+                notas = f"{notas}\n{aviso}" if notas else aviso
+            ejercicios_adaptados.append(models.RutinaEjercicio(
+                tipo_ejercicio_id=elegido.id if elegido else ejercicio_paquete.tipo_ejercicio_id,
+                nombre=elegido.nombre if elegido else ejercicio_paquete.nombre,
+                series=ejercicio_paquete.series,
+                repeticiones=ejercicio_paquete.repeticiones,
+                peso=ejercicio_paquete.peso,
+                notas=notas,
+            ))
+        dias.append(models.RutinaDia(nombre=dia.nombre, orden=dia.orden, ejercicios=ejercicios_adaptados))
+
+    if sin_alternativa:
         raise HTTPException(
             status_code=400,
-            detail="Adapta el paquete antes de asignarlo. Falta equipamiento para: " + ", ".join(incompatibles),
+            detail="No existe una alternativa disponible para: " + ", ".join(sorted(set(sin_alternativa))),
         )
-
-    dias = [
-        models.RutinaDia(
-            nombre=dia.nombre,
-            orden=dia.orden,
-            ejercicios=[
-                models.RutinaEjercicio(
-                    tipo_ejercicio_id=ej.tipo_ejercicio_id,
-                    nombre=ej.nombre,
-                    series=ej.series,
-                    repeticiones=ej.repeticiones,
-                    peso=ej.peso,
-                    notas=ej.notas,
-                ) for ej in dia.ejercicios
-            ],
-        ) for dia in paquete.dias
-    ]
     rutina = models.Rutina(
         gimnasio_id=get_gid(usuario),
         cliente_id=cliente.id,
