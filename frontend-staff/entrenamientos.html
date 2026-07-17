@@ -57,6 +57,10 @@
         .equipamiento-grupo strong { display:block;font-size:.78em;margin-bottom:7px; }
         .equipo-check { display:flex;align-items:center;gap:7px;font-size:.78em;padding:4px 0;cursor:pointer; }
         .equipo-check input { width:16px;height:16px;accent-color:var(--color-primario); }
+        .equipo-check.guardado { color:#277849;font-weight:600; }
+        .equipo-check.guardado input { accent-color:#20a35a; }
+        .equipo-check.pendiente { color:#9B6A15; }
+        .equipo-check.pendiente input { accent-color:#d99a18; }
         .aviso-equipo { font-size:.73em;color:#a45b14;background:#fff4df;border-radius:6px;padding:6px;margin:5px 0; }
         .alternativas-equipo { font-size:.71em;color:var(--color-texto-secundario);margin:5px 0 8px; }
         .estado-ejercicio { display:inline-block;font-size:.68em;font-weight:700;padding:3px 7px;margin-bottom:7px;border:1px solid var(--color-borde); }
@@ -90,7 +94,7 @@
         <div id="vista-equipamiento" style="display:none;">
             <section class="equipamiento-panel">
                 <div class="equipamiento-cabecera"><div><h2>Equipamiento disponible</h2><p>Marca lo que tiene el gimnasio. Los ejercicios que no puedas realizar se bloquearán y mostrarán alternativas.</p></div>
-                    <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button><button class="btn btn-primary btn-sm" id="btn-generar-rutinas" onclick="generarRutinasEquipamiento()" disabled>Generar más rutinas</button></div>
+                    <div class="equipamiento-acciones"><button class="btn btn-secondary btn-sm" onclick="abrirEquipoPersonalizado()">+ Equipo personalizado</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(true)">Marcar todo</button><button class="btn btn-secondary btn-sm" onclick="marcarTodoEquipamiento(false)">Limpiar</button><button class="btn btn-primary btn-sm" onclick="guardarEquipamiento()">Guardar</button><button class="btn btn-primary btn-sm" id="btn-generar-rutinas" onclick="generarRutinasEquipamiento()" disabled>Generar más rutinas</button></div>
                 </div>
                 <div class="equipamiento-filtros"><input id="buscar-equipo" type="search" placeholder="Buscar máquina, mancuerna, soga, saco..." oninput="renderEquipamiento()"><select id="fil-grupo-equipo" onchange="renderEquipamiento()"><option value="">Todos los grupos musculares</option></select></div>
                 <div id="equipamiento-grupos" class="equipamiento-grupos"><span>Cargando equipamiento...</span></div>
@@ -110,6 +114,17 @@
             <div id="catalogo-grid" class="catalogo-grid"></div>
         </div>
     </main>
+</div>
+
+<div id="modal-equipo-personalizado" class="modal">
+    <div class="modal-content" style="max-width:520px;">
+        <div class="modal-header"><h3 class="modal-title">Agregar equipo personalizado</h3><button class="modal-close" onclick="cerrarModal('modal-equipo-personalizado')">✕</button></div>
+        <p style="font-size:.82em;color:var(--color-texto-secundario);margin-top:0;">Úsalo cuando la máquina o accesorio no exista en el catálogo general.</p>
+        <div class="form-group"><label>Nombre del equipo *</label><input id="ep-nombre" maxlength="100" placeholder="Ej. Máquina de glúteo vertical"></div>
+        <div class="form-group"><label>Categoría</label><input id="ep-categoria" maxlength="80" value="Equipamiento personalizado" placeholder="Ej. Máquinas · Piernas"></div>
+        <div class="form-group"><label>Grupos musculares</label><input id="ep-grupos" placeholder="Ej. Glúteos, Piernas"><small>Sepáralos con comas. Esto ayuda a filtrar ejercicios y alternativas.</small></div>
+        <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModal('modal-equipo-personalizado')">Cancelar</button><button class="btn btn-primary" onclick="guardarEquipoPersonalizado()">Agregar y marcar disponible</button></div>
+    </div>
 </div>
 
 <div id="modal-ejercicio" class="modal">
@@ -272,7 +287,11 @@
             return acc;
         }, {});
         if (!filtrados.length) { cont.innerHTML = '<div class="vacio">No hay equipamiento con este filtro.</div>'; return; }
-        cont.innerHTML = Object.entries(grupos).map(([categoria, equipos]) => `<div class="equipamiento-grupo"><strong>${esc(categoria)}</strong>${equipos.map(e => `<label class="equipo-check"><input type="checkbox" ${equipamientoSeleccionado.has(e.codigo) ? "checked" : ""} onchange="alternarEquipo('${esc(e.codigo)}',this.checked)"><span>${esc(e.nombre)}</span></label>`).join("")}</div>`).join("");
+        cont.innerHTML = Object.entries(grupos).map(([categoria, equipos]) => `<div class="equipamiento-grupo"><strong>${esc(categoria)}</strong>${equipos.map(e => {
+            const seleccionado = equipamientoSeleccionado.has(e.codigo);
+            const estado = seleccionado ? (equipamientoGuardado.has(e.codigo) ? "guardado" : "pendiente") : "";
+            return `<label class="equipo-check ${estado}"><input type="checkbox" ${seleccionado ? "checked" : ""} onchange="alternarEquipo('${esc(e.codigo)}',this.checked)"><span>${esc(e.nombre)}${e.personalizado ? " · Propio" : ""}</span></label>`;
+        }).join("")}</div>`).join("");
     }
 
     function actualizarBotonGenerar() {
@@ -302,10 +321,35 @@
             const respuesta = await apiFetch("/equipamiento-gimnasio", {method:"PUT", body:JSON.stringify({equipos:[...equipamientoSeleccionado]})});
             equipamientoGuardado = new Set(respuesta.seleccionados || []);
             equipamientoPendiente = respuesta.pendientes_generacion || [];
+            renderEquipamiento();
             actualizarBotonGenerar();
             showSuccess("Equipamiento guardado. El catálogo y las rutinas ya están adaptados.");
             renderCatalogo();
             renderPaquetes();
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirEquipoPersonalizado() {
+        document.getElementById("ep-nombre").value = "";
+        document.getElementById("ep-categoria").value = "Equipamiento personalizado";
+        document.getElementById("ep-grupos").value = "";
+        document.getElementById("modal-equipo-personalizado").classList.add("active");
+        setTimeout(() => document.getElementById("ep-nombre").focus(), 50);
+    }
+
+    async function guardarEquipoPersonalizado() {
+        const nombre = document.getElementById("ep-nombre").value.trim();
+        if (!nombre) return showError("Ingresa el nombre del equipo");
+        const categoria = document.getElementById("ep-categoria").value.trim() || "Equipamiento personalizado";
+        const grupos_musculares = document.getElementById("ep-grupos").value.split(",").map(g => g.trim()).filter(Boolean);
+        try {
+            const respuesta = await apiFetch("/equipamiento-gimnasio/personalizado", {method:"POST", body:JSON.stringify({nombre,categoria,grupos_musculares})});
+            aplicarEquipamientoCargado(respuesta);
+            actualizarFiltrosMusculares();
+            cerrarModal("modal-equipo-personalizado");
+            renderCatalogo();
+            renderPaquetes();
+            showSuccess(`${respuesta.creado.nombre} fue agregado y quedó disponible.`);
         } catch (e) { showError(e.message); }
     }
 

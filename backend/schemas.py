@@ -1533,6 +1533,12 @@ class EquipamientoGimnasioUpdate(BaseModel):
     equipos: List[str] = Field(default_factory=list)
 
 
+class EquipamientoPersonalizadoCreate(BaseModel):
+    nombre: str = Field(min_length=2, max_length=100)
+    categoria: str = Field(default="Otros", min_length=2, max_length=80)
+    grupos_musculares: List[str] = Field(default_factory=list)
+
+
 # ==================================================================
 # 13. DASHBOARD
 # ==================================================================

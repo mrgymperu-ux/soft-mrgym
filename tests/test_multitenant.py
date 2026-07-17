@@ -25,14 +25,17 @@ from backend.main import (
     asignar_paquete_rutina,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
+    crear_equipamiento_personalizado,
     crear_concepto_ingreso,
     crear_paquete_rutina,
     crear_reserva_sala,
+    crear_tipo_ejercicio,
     crear_usuario,
     crear_venta,
     consultar_auditoria,
     eliminar_pago_membresia,
     generar_rutinas_por_equipamiento,
+    obtener_equipamiento_gimnasio,
     registrar_compra,
     registrar_entrada,
     registrar_salida,
@@ -459,6 +462,35 @@ class MultiTenantTest(unittest.TestCase):
         ).one()
         self.assertTrue(paquete.dias[0].ejercicios)
         self.assertTrue(all(e.tipo_ejercicio.equipamiento == "saco_boxeo" for e in paquete.dias[0].ejercicios))
+
+    def test_equipamiento_personalizado_es_privado_y_admite_ejercicios(self):
+        respuesta = crear_equipamiento_personalizado(
+            schemas.EquipamientoPersonalizadoCreate(
+                nombre="Maquina exclusiva Uno",
+                categoria="Maquinas especiales",
+                grupos_musculares=["Gluteos", "Piernas"],
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        codigo = respuesta["creado"]["codigo"]
+
+        self.assertIn(codigo, respuesta["seleccionados"])
+        self.assertTrue(respuesta["creado"]["personalizado"])
+        catalogo_otro_gym = obtener_equipamiento_gimnasio(db=self.db, usuario=models.Usuario(gimnasio_id=self.gym2.id))
+        self.assertNotIn(codigo, {item["codigo"] for item in catalogo_otro_gym["catalogo"]})
+
+        ejercicio = crear_tipo_ejercicio(
+            schemas.TipoEjercicioCreate(
+                nombre="Patada en maquina exclusiva",
+                grupo_muscular="Gluteos",
+                equipamiento=codigo,
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertEqual(ejercicio.gimnasio_id, self.gym1.id)
+        self.assertEqual(ejercicio.equipamiento, codigo)
 
     def test_asignar_paquete_adapta_ejercicio_a_variante_sin_equipo(self):
         original = models.TipoEjercicio(

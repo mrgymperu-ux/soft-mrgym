@@ -110,6 +110,7 @@ class Gimnasio(Base):
     medidas_campos_visibles = Column(Text, nullable=True)
     medidas_valores_visibles = Column(Text, nullable=True)
     equipamiento_disponible = Column(Text, nullable=True)  # CSV de equipos habilitados para crear rutinas
+    equipamiento_personalizado = Column(Text, nullable=True)  # JSON de equipos propios del gimnasio
 
     plan = relationship("PlanSaas", back_populates="gimnasios")
     suscripcion_saas = relationship(

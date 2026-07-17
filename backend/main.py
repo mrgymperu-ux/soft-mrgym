@@ -22,6 +22,7 @@ import io
 import asyncio
 import time
 import logging
+import json
 import urllib.request
 import unicodedata
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -554,6 +555,7 @@ def _migrar_columnas_nuevas():
             ("longitud", "FLOAT"),
             ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
             ("equipamiento_disponible", "TEXT"),
+            ("equipamiento_personalizado", "TEXT"),
             ("logo_datos", "BLOB"),
             ("logo_tipo", "VARCHAR"),
             ("logo_oscuro_datos", "BLOB"),
@@ -5547,7 +5549,8 @@ def listar_tipos_ejercicio(
 
 @app.post("/tipos-ejercicio/", response_model=schemas.TipoEjercicio, tags=["Entrenamientos"])
 def crear_tipo_ejercicio(datos: schemas.TipoEjercicioCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    if datos.equipamiento and datos.equipamiento != "sin_equipo" and datos.equipamiento not in EQUIPAMIENTO_CODIGOS:
+    gimnasio = _configuracion_del_gym(db, usuario)
+    if datos.equipamiento and datos.equipamiento != "sin_equipo" and datos.equipamiento not in _codigos_equipamiento_gym(gimnasio):
         raise HTTPException(status_code=400, detail="El equipamiento indicado no existe en el inventario")
     db_te = models.TipoEjercicio(**datos.model_dump(), gimnasio_id=get_gid(usuario))
     db.add(db_te)
@@ -5563,7 +5566,8 @@ def actualizar_tipo_ejercicio(tipo_id: int, datos: schemas.TipoEjercicioUpdate, 
         raise HTTPException(status_code=404, detail="Ejercicio no encontrado")
     cambios = datos.model_dump(exclude_unset=True)
     equipo_nuevo = cambios.get("equipamiento")
-    if equipo_nuevo and equipo_nuevo != "sin_equipo" and equipo_nuevo not in EQUIPAMIENTO_CODIGOS:
+    gimnasio = _configuracion_del_gym(db, usuario)
+    if equipo_nuevo and equipo_nuevo != "sin_equipo" and equipo_nuevo not in _codigos_equipamiento_gym(gimnasio):
         raise HTTPException(status_code=400, detail="El equipamiento indicado no existe en el inventario")
     nombre_nuevo = cambios.get("nombre")
     if nombre_nuevo is not None:
@@ -8004,10 +8008,38 @@ EQUIPAMIENTO_GRUPOS = {
 EQUIPAMIENTO_POR_CODIGO = {codigo: (nombre, categoria) for codigo, nombre, categoria in EQUIPAMIENTO_GIMNASIO}
 
 
+def _equipamiento_personalizado_gym(gimnasio: models.Gimnasio) -> list:
+    try:
+        elementos = json.loads(gimnasio.equipamiento_personalizado or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(elementos, list):
+        return []
+    return [
+        item for item in elementos
+        if isinstance(item, dict) and item.get("codigo") and item.get("nombre")
+    ]
+
+
+def _codigos_equipamiento_gym(gimnasio: models.Gimnasio) -> set:
+    return EQUIPAMIENTO_CODIGOS | {
+        item["codigo"] for item in _equipamiento_personalizado_gym(gimnasio)
+    }
+
+
+def _catalogo_equipamiento_gym(gimnasio: models.Gimnasio) -> list:
+    catalogo = [
+        {"codigo": c, "nombre": n, "categoria": cat, "grupos_musculares": EQUIPAMIENTO_GRUPOS.get(c, ["Cuerpo completo"]), "personalizado": False}
+        for c, n, cat in EQUIPAMIENTO_GIMNASIO
+    ]
+    return catalogo + [dict(item, personalizado=True) for item in _equipamiento_personalizado_gym(gimnasio)]
+
+
 def _equipamiento_disponible_gym(gimnasio: models.Gimnasio) -> set:
+    codigos_validos = _codigos_equipamiento_gym(gimnasio)
     return {"sin_equipo"} | {
         codigo.strip() for codigo in (gimnasio.equipamiento_disponible or "").split(",")
-        if codigo.strip() in EQUIPAMIENTO_CODIGOS
+        if codigo.strip() in codigos_validos
     }
 
 
@@ -8026,10 +8058,7 @@ def obtener_equipamiento_gimnasio(db: Session = Depends(get_db), usuario: models
     gimnasio = _configuracion_del_gym(db, usuario)
     seleccionados = _equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}
     return {
-        "catalogo": [
-            {"codigo": c, "nombre": n, "categoria": cat, "grupos_musculares": EQUIPAMIENTO_GRUPOS.get(c, ["Cuerpo completo"])}
-            for c, n, cat in EQUIPAMIENTO_GIMNASIO
-        ],
+        "catalogo": _catalogo_equipamiento_gym(gimnasio),
         "seleccionados": sorted(seleccionados),
         "pendientes_generacion": _equipos_pendientes_generacion(db, gimnasio.id, seleccionados),
     }
@@ -8037,16 +8066,55 @@ def obtener_equipamiento_gimnasio(db: Session = Depends(get_db), usuario: models
 
 @app.put("/equipamiento-gimnasio", tags=["Entrenamientos"])
 def guardar_equipamiento_gimnasio(datos: schemas.EquipamientoGimnasioUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    desconocidos = set(datos.equipos) - EQUIPAMIENTO_CODIGOS
+    gimnasio = _configuracion_del_gym(db, usuario)
+    desconocidos = set(datos.equipos) - _codigos_equipamiento_gym(gimnasio)
     if desconocidos:
         raise HTTPException(status_code=400, detail="Hay equipamiento no reconocido")
-    gimnasio = _configuracion_del_gym(db, usuario)
     seleccionados = set(datos.equipos)
     gimnasio.equipamiento_disponible = ",".join(sorted(seleccionados))
     db.commit()
     return {
         "seleccionados": sorted(seleccionados),
         "pendientes_generacion": _equipos_pendientes_generacion(db, gimnasio.id, seleccionados),
+    }
+
+
+@app.post("/equipamiento-gimnasio/personalizado", tags=["Entrenamientos"])
+def crear_equipamiento_personalizado(datos: schemas.EquipamientoPersonalizadoCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    gimnasio = _configuracion_del_gym(db, usuario)
+    personalizados = _equipamiento_personalizado_gym(gimnasio)
+    nombre = " ".join(datos.nombre.strip().split())
+    if any(item["nombre"].casefold() == nombre.casefold() for item in _catalogo_equipamiento_gym(gimnasio)):
+        raise HTTPException(status_code=400, detail="Ese equipamiento ya existe en el catalogo")
+
+    nombre_ascii = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode("ascii").lower()
+    base = "_".join("".join(c if c.isalnum() else " " for c in nombre_ascii).split()) or "equipo"
+    codigo_base = f"personalizado_{base}"[:80]
+    codigo = codigo_base
+    usados = _codigos_equipamiento_gym(gimnasio)
+    numero = 2
+    while codigo in usados:
+        codigo = f"{codigo_base[:75]}_{numero}"
+        numero += 1
+
+    grupos = list(dict.fromkeys(" ".join(g.strip().split()) for g in datos.grupos_musculares if g.strip()))
+    item = {
+        "codigo": codigo,
+        "nombre": nombre,
+        "categoria": " ".join(datos.categoria.strip().split()) or "Otros",
+        "grupos_musculares": grupos or ["Cuerpo completo"],
+    }
+    personalizados.append(item)
+    gimnasio.equipamiento_personalizado = json.dumps(personalizados, ensure_ascii=False)
+    seleccionados = _equipamiento_disponible_gym(gimnasio) - {"sin_equipo"}
+    seleccionados.add(codigo)
+    gimnasio.equipamiento_disponible = ",".join(sorted(seleccionados))
+    db.commit()
+    return {
+        "catalogo": _catalogo_equipamiento_gym(gimnasio),
+        "seleccionados": sorted(seleccionados),
+        "pendientes_generacion": _equipos_pendientes_generacion(db, gimnasio.id, seleccionados),
+        "creado": dict(item, personalizado=True),
     }
 
 
