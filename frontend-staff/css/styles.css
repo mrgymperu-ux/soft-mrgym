@@ -184,6 +184,7 @@ table thead th,
 .login-logo .logo-icon { font-size: 2.4em; }
 .login-logo h1 { margin: 8px 0 0; font-size: 1.3em; font-weight: 600; letter-spacing: -0.01em; }
 .login-card .btn-primary { width: 100%; padding: 12px; font-size: 0.95em; margin-top: 8px; }
+.pin-counter-input { -webkit-text-security: disc; }
 
 .form-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .form-row label { width:170px; flex-shrink:0; font-size:0.85em; font-weight:600; }

@@ -107,11 +107,11 @@ function inyectarModalesPersonal() {
         <p id="pin-counter-trabajador" style="margin:0 0 14px;color:#636E72;"></p>
         <div class="form-group">
             <label>PIN de 6 dígitos *</label>
-            <input type="password" id="pin-counter-valor" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="Ejemplo: 482615">
+            <input type="text" id="pin-counter-valor" class="pin-counter-input" inputmode="numeric" maxlength="6" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Ejemplo: 482615">
         </div>
         <div class="form-group">
             <label>Confirmar PIN *</label>
-            <input type="password" id="pin-counter-confirmacion" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="Repite el PIN">
+            <input type="text" id="pin-counter-confirmacion" class="pin-counter-input" inputmode="numeric" maxlength="6" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Repite el PIN">
         </div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalPinCounter()">Cancelar</button>

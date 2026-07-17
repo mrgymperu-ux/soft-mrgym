@@ -15,7 +15,7 @@
         <div id="alert-container"></div>
         <div id="counter-login" style="display:none;">
             <div class="form-group"><label>Trabajador</label><select id="counter-usuario"></select></div>
-            <div class="form-group"><label>PIN personal</label><input type="password" id="counter-pin" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6 digitos"></div>
+            <div class="form-group"><label>PIN personal</label><input type="text" id="counter-pin" class="pin-counter-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="6 digitos"></div>
             <button type="button" class="btn btn-primary" id="btn-counter" onclick="ingresarCounter()">Ingresar al turno</button>
             <div style="text-align:center;margin-top:12px;"><button type="button" class="btn btn-sm btn-secondary" onclick="mostrarLoginNormal()">Acceso administrador</button></div>
         </div>
