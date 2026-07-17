@@ -291,6 +291,14 @@ class MultiTenantTest(unittest.TestCase):
             auth.requiere_staff(_request("/equipamiento-gimnasio"), self.staff1)
         self.assertEqual(error_equipo.exception.status_code, 403)
 
+        self.staff1.zonas_permitidas = "agenda"
+        self.assertIs(auth.requiere_staff(_request("/agenda/profesores"), self.staff1), self.staff1)
+        self.assertIs(auth.requiere_staff(_request("/agenda/conceptos-ingreso"), self.staff1), self.staff1)
+        self.assertIs(auth.requiere_staff(_request("/salas/"), self.staff1), self.staff1)
+        with self.assertRaises(HTTPException) as error_empleados:
+            auth.requiere_staff(_request("/empleados/"), self.staff1)
+        self.assertEqual(error_empleados.exception.status_code, 403)
+
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)
         with self.assertRaises(HTTPException) as error:

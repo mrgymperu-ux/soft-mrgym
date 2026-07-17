@@ -6676,6 +6676,34 @@ def listar_empleados(db: Session = Depends(get_db), usuario: models.Usuario = De
     return q(db, models.Empleado, usuario).filter(models.Empleado.activo == True).all()
 
 
+@app.get("/agenda/profesores", response_model=List[schemas.ProfesorMinimo], tags=["Agenda"])
+def listar_profesores_agenda(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Vista minima para Agenda; no expone sueldos ni datos privados de Personal."""
+    return (
+        q(db, models.Empleado, usuario)
+        .filter(
+            models.Empleado.activo == True,
+            models.Empleado.tipo == models.TipoEmpleado.PROFESOR_DE_SALA,
+        )
+        .order_by(models.Empleado.nombre_completo)
+        .all()
+    )
+
+
+@app.get("/agenda/conceptos-ingreso", response_model=List[schemas.ConceptoOtroIngreso], tags=["Agenda"])
+def listar_conceptos_agenda(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Conceptos habilitados para alquileres, sin abrir la zona financiera completa."""
+    return (
+        q(db, models.ConceptoOtroIngreso, usuario)
+        .filter(
+            models.ConceptoOtroIngreso.activo == True,
+            models.ConceptoOtroIngreso.mostrar_agenda == True,
+        )
+        .order_by(models.ConceptoOtroIngreso.nombre)
+        .all()
+    )
+
+
 # ---- Puestos / especialidades (catalogo editable) ----
 
 @app.get("/puestos/", response_model=List[schemas.Puesto], tags=["Personal"])

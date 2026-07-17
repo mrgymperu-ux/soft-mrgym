@@ -218,8 +218,7 @@
         moneda = config.moneda;
 
         if (!profesoresCache.length) {
-            const empleados = await apiFetch("/empleados/");
-            profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
+            profesoresCache = await apiFetch("/agenda/profesores");
         }
         renderLeyenda();
 
@@ -236,7 +235,7 @@
         [clasesSemana, reservasSemana, conceptosAgendaCache] = await Promise.all([
             apiFetch(`/clases/?desde=${desde}&hasta=${hasta}`),
             apiFetch(`/reservas-sala/?desde=${desde}&hasta=${hasta}`),
-            apiFetch("/conceptos-ingreso/?para_agenda=true"),
+            apiFetch("/agenda/conceptos-ingreso"),
         ]);
         await cargarSalasAgenda();
         if (!salaAgendaActual && salasCache.length) salaAgendaActual = salasCache[0].nombre;
@@ -461,8 +460,7 @@
         try { await cargarSalasAgenda(); }
         catch (e) { showError("No se pudo cargar las agendas, pero puedes continuar: " + e.message); }
         if (!profesoresCache.length) {
-            const empleados = await apiFetch("/empleados/");
-            profesoresCache = empleados.filter(e => e.tipo === "profesor_de_sala");
+            profesoresCache = await apiFetch("/agenda/profesores");
         }
         const sel = document.getElementById("f-profesor");
         sel.innerHTML = '<option value="">Seleccionar...</option>' +

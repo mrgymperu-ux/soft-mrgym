@@ -309,7 +309,7 @@ _ZONA_POR_PREFIJO = {
     "equipamiento-gimnasio": "entrenamientos",
     "rutina-dias": "entrenamientos", "rutina-ejercicios": "entrenamientos",
     "nutricion": "nutricion", "alimentos": "nutricion", "paquetes-nutricion": "nutricion",
-    "retos": "retos", "clases": "agenda", "reservas-sala": "agenda",
+    "retos": "retos", "agenda": "agenda", "clases": "agenda", "reservas-sala": "agenda", "salas": "agenda",
     "planilla": "planilla", "pagos-planilla": "planilla",
     "servicios": "pagos", "cargos-servicio": "pagos", "pagos-servicio": "pagos",
     "dashboard": "sistema", "reportes": "sistema",
