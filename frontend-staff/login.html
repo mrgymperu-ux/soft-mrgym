@@ -15,6 +15,13 @@
             <p style="color:#636E72;font-size:0.88em;margin-top:4px;">Panel de administracion</p>
         </div>
         <div id="alert-container"></div>
+        <div id="counter-login" style="display:none;">
+            <p style="font-size:.86rem;color:#636E72;margin-bottom:12px;">Dispositivo Counter vinculado. Selecciona tu perfil e ingresa tu PIN.</p>
+            <div class="form-group"><label>Trabajador</label><select id="counter-usuario"></select></div>
+            <div class="form-group"><label>PIN personal</label><input type="password" id="counter-pin" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6 digitos"></div>
+            <button type="button" class="btn btn-primary" id="btn-counter" onclick="ingresarCounter()">Ingresar al turno</button>
+            <div style="text-align:center;margin-top:12px;"><button type="button" class="btn btn-sm btn-secondary" onclick="mostrarLoginNormal()">Usar usuario y contrasena</button></div>
+        </div>
         <form id="form-login">
             <div class="form-group">
                 <label>Usuario</label>
@@ -32,6 +39,41 @@
     <script src="js/api.js"></script>
     <script>
         if (getToken()) window.location.href = "principal.html";
+
+        const tokenCounter = localStorage.getItem("softgym_counter_token");
+        if (tokenCounter) cargarCounter();
+
+        async function cargarCounter() {
+            try {
+                const usuarios = await obtenerUsuariosCounter(tokenCounter);
+                if (!usuarios.length) throw new Error("El administrador debe configurar el PIN de al menos un trabajador.");
+                document.getElementById("counter-usuario").innerHTML = usuarios.map(u => `<option value="${u.id}">${escapeHTML(u.nombre)}</option>`).join("");
+                document.getElementById("form-login").style.display = "none";
+                document.getElementById("counter-login").style.display = "block";
+                document.getElementById("counter-pin").focus();
+            } catch (e) {
+                localStorage.removeItem("softgym_counter_token");
+                document.getElementById("alert-container").innerHTML = `<div class="alert alert-error">${escapeHTML(e.message)}</div>`;
+            }
+        }
+
+        function mostrarLoginNormal() {
+            document.getElementById("counter-login").style.display = "none";
+            document.getElementById("form-login").style.display = "block";
+        }
+
+        async function ingresarCounter() {
+            const boton = document.getElementById("btn-counter");
+            boton.disabled = true;
+            try {
+                await loginCounter(tokenCounter, Number(document.getElementById("counter-usuario").value), document.getElementById("counter-pin").value);
+                window.location.href = "principal.html";
+            } catch (e) {
+                document.getElementById("alert-container").innerHTML = `<div class="alert alert-error">${escapeHTML(e.message)}</div>`;
+                document.getElementById("counter-pin").value = "";
+                boton.disabled = false;
+            }
+        }
 
         document.getElementById("form-login").addEventListener("submit", async (e) => {
             e.preventDefault();

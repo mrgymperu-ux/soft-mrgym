@@ -271,10 +271,21 @@ async function cargarPersonal() {
         <td><span class="badge ${f.activo ? "badge-success" : "badge-error"}">${f.activo ? "Activo" : "Inactivo"}</span></td>
         <td>
             ${esAdministrador()
-                ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">✏️ Editar</button>`
+                ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">✏️ Editar</button>
+                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="configurarPinCounter(${f.id})">PIN Counter</button>` : ""}`
                 : '<span style="color:#636E72;font-size:0.8em;">Solo lectura</span>'}
         </td>
     </tr>`).join("");
+}
+
+async function configurarPinCounter(usuarioId) {
+    const pin = prompt("Nuevo PIN de 6 digitos para este trabajador:");
+    if (pin === null) return;
+    if (!/^\d{6}$/.test(pin)) { showError("El PIN debe tener exactamente 6 digitos"); return; }
+    try {
+        await apiFetch(`/usuarios/${usuarioId}/pin-counter`, { method: "PUT", body: JSON.stringify({ pin }) });
+        showSuccess("PIN Counter actualizado");
+    } catch (e) { showError(e.message); }
 }
 
 // ==================================================================

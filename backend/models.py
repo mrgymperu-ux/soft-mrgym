@@ -188,6 +188,44 @@ class PagoSaas(Base):
     plan = relationship("PlanSaas")
 
 
+class WhatsAppConfiguracion(Base):
+    """Configuracion independiente del modulo WhatsApp de cada gimnasio."""
+    __tablename__ = "whatsapp_configuraciones"
+    __table_args__ = (UniqueConstraint("gimnasio_id", name="uq_whatsapp_config_gimnasio"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    estado = Column(String, nullable=False, default="no_conectado")
+    business_account_id = Column(String, nullable=True)
+    phone_number_id = Column(String, nullable=True)
+    numero_visible = Column(String, nullable=True)
+    nombre_verificado = Column(String, nullable=True)
+    bienvenida_automatica = Column(Boolean, nullable=False, default=False)
+    vencimientos_automaticos = Column(Boolean, nullable=False, default=False)
+    pagos_automaticos = Column(Boolean, nullable=False, default=False)
+    recuperacion_acceso = Column(Boolean, nullable=False, default=False)
+    consentimiento_confirmado = Column(Boolean, nullable=False, default=False)
+    conectado_en = Column(DateTime, nullable=True)
+    actualizado_en = Column(DateTime, nullable=False, default=ahora_lima, onupdate=ahora_lima)
+
+
+class WhatsAppMensaje(Base):
+    """Bitacora por tenant; no almacena tokens ni credenciales de Meta."""
+    __tablename__ = "whatsapp_mensajes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True, index=True)
+    direccion = Column(String, nullable=False)  # entrante | saliente
+    categoria = Column(String, nullable=False)  # servicio | utilidad | autenticacion | marketing
+    destinatario = Column(String, nullable=True)
+    plantilla = Column(String, nullable=True)
+    estado = Column(String, nullable=False, default="pendiente")
+    meta_message_id = Column(String, nullable=True, index=True)
+    error = Column(Text, nullable=True)
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima, index=True)
+
+
 # ==================================================================
 # 1. AUTENTICACION Y ROLES
 # ==================================================================
@@ -218,6 +256,7 @@ class Usuario(Base):
     email_verificado = Column(Boolean, default=False)
     sesion_version = Column(Integer, default=1)
     password_hash = Column(String, nullable=False)
+    pin_counter_hash = Column(String, nullable=True)
     rol = Column(Enum(RolUsuario), nullable=False)
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=ahora_lima)
@@ -287,6 +326,20 @@ class SesionUsuario(Base):
     creada_en = Column(DateTime, default=ahora_lima)
     ultima_actividad = Column(DateTime, default=ahora_lima)
     revocada_en = Column(DateTime, nullable=True)
+
+
+class DispositivoCounter(Base):
+    """Equipo compartido vinculado a un gimnasio mediante token revocable."""
+    __tablename__ = "dispositivos_counter"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    nombre = Column(String, nullable=False, default="Counter")
+    token_hash = Column(String, unique=True, nullable=False, index=True)
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+    ultimo_uso_en = Column(DateTime, nullable=True)
+    revocado_en = Column(DateTime, nullable=True)
 
 
 class EventoAuditoria(Base):

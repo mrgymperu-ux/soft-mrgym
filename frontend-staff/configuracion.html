@@ -84,6 +84,32 @@
                 <div id="suscripcion-gym"><p style="font-size:.85em;color:var(--color-texto-secundario);">Cargando...</p></div>
             </div>
 
+            <div class="config-section" id="seccion-counter">
+                <h3>Dispositivo Counter compartido</h3>
+                <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Vincula esta computadora al gimnasio. Luego cada trabajador ingresara seleccionando su perfil y usando su PIN personal.</p>
+                <div id="counter-estado" class="alert" style="margin-bottom:12px;">Esta computadora aun no esta vinculada.</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-primary" type="button" onclick="vincularEsteCounter()">Vincular esta computadora</button>
+                    <button class="btn btn-secondary" type="button" onclick="desvincularEsteCounter()">Desvincular localmente</button>
+                </div>
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin-top:10px;">Configura el PIN de cada trabajador desde Personal → Usuarios Staff.</p>
+            </div>
+
+            <div class="config-section" id="seccion-whatsapp">
+                <h3>WhatsApp Automatico</h3>
+                <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Modulo adicional conectado a la cuenta y facturacion de Meta de este gimnasio.</p>
+                <div id="whatsapp-estado" class="alert" style="margin-bottom:12px;">Consultando estado...</div>
+                <label style="display:block;margin:8px 0;"><input type="checkbox" id="wa-consentimiento"> Confirmo que el gimnasio cuenta con autorizacion para contactar a sus alumnos.</label>
+                <label style="display:block;margin:8px 0;"><input type="checkbox" id="wa-bienvenida"> Bienvenida y enlace al portal</label>
+                <label style="display:block;margin:8px 0;"><input type="checkbox" id="wa-vencimientos"> Recordatorios de vencimiento</label>
+                <label style="display:block;margin:8px 0;"><input type="checkbox" id="wa-pagos"> Confirmaciones de pago</label>
+                <label style="display:block;margin:8px 0;"><input type="checkbox" id="wa-recuperacion"> Recuperacion de acceso</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+                    <button class="btn btn-primary" type="button" onclick="guardarConfiguracionWhatsApp()">Guardar automatizaciones</button>
+                    <button class="btn btn-secondary" type="button" disabled title="Se habilitara al configurar la aplicacion de Meta">Conectar cuenta de Meta (proxima etapa)</button>
+                </div>
+            </div>
+
             <!-- QR para compartir con socios -->
             <div class="config-section">
                 <h3>📱 Compartir con Socios</h3>
@@ -427,6 +453,66 @@
     }
 
     /* ====== QR para compartir portal de socios ====== */
+    function actualizarEstadoCounter() {
+        const vinculado = Boolean(localStorage.getItem("softgym_counter_token"));
+        document.getElementById("counter-estado").textContent = vinculado
+            ? "Esta computadora esta vinculada. Al cerrar sesion se mostrara el acceso rapido por trabajador."
+            : "Esta computadora aun no esta vinculada.";
+    }
+
+    async function vincularEsteCounter() {
+        if (!(await confirmDialog("¿Vincular esta computadora como Counter compartido?"))) return;
+        try {
+            const resultado = await apiFetch("/counter/dispositivos", { method: "POST", body: JSON.stringify({ nombre: "Counter principal" }) });
+            localStorage.setItem("softgym_counter_token", resultado.dispositivo_token);
+            localStorage.setItem("softgym_counter_id", String(resultado.dispositivo_id));
+            actualizarEstadoCounter();
+            showSuccess("Computadora vinculada. Configura los PIN y cierra sesion para probar.");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function desvincularEsteCounter() {
+        const dispositivoId = localStorage.getItem("softgym_counter_id");
+        try {
+            if (dispositivoId) await apiFetch(`/counter/dispositivos/${dispositivoId}`, { method: "DELETE" });
+            localStorage.removeItem("softgym_counter_token");
+            localStorage.removeItem("softgym_counter_id");
+            actualizarEstadoCounter();
+            showSuccess("Dispositivo revocado y desvinculado");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarConfiguracionWhatsApp() {
+        try {
+            const c = await apiFetch("/whatsapp/configuracion");
+            document.getElementById("wa-consentimiento").checked = c.consentimiento_confirmado;
+            document.getElementById("wa-bienvenida").checked = c.bienvenida_automatica;
+            document.getElementById("wa-vencimientos").checked = c.vencimientos_automaticos;
+            document.getElementById("wa-pagos").checked = c.pagos_automaticos;
+            document.getElementById("wa-recuperacion").checked = c.recuperacion_acceso;
+            const conectado = c.estado === "conectado";
+            document.getElementById("whatsapp-estado").textContent = conectado
+                ? `Conectado: ${c.nombre_verificado || c.numero_visible || "cuenta de Meta"}`
+                : "Aun no conectado. Puedes preparar las automatizaciones; no se enviaran mensajes hasta vincular Meta.";
+        } catch (e) {
+            document.getElementById("whatsapp-estado").textContent = e.message;
+        }
+    }
+
+    async function guardarConfiguracionWhatsApp() {
+        try {
+            await apiFetch("/whatsapp/configuracion", { method: "PUT", body: JSON.stringify({
+                consentimiento_confirmado: document.getElementById("wa-consentimiento").checked,
+                bienvenida_automatica: document.getElementById("wa-bienvenida").checked,
+                vencimientos_automaticos: document.getElementById("wa-vencimientos").checked,
+                pagos_automaticos: document.getElementById("wa-pagos").checked,
+                recuperacion_acceso: document.getElementById("wa-recuperacion").checked,
+            }) });
+            showSuccess("Configuracion de WhatsApp guardada");
+            cargarConfiguracionWhatsApp();
+        } catch (e) { showError(e.message); }
+    }
+
     async function mostrarQR() {
         let slug = sessionStorage.getItem("gimnasio_slug");
         /* Si no hay slug en sessionStorage, obtenerlo del backend */
@@ -503,6 +589,8 @@
     }
 
     mostrarQR();
+    cargarConfiguracionWhatsApp();
+    actualizarEstadoCounter();
     cargarLogoActual();
     cargarSuscripcionGym();
 </script>

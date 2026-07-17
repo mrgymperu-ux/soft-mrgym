@@ -24,6 +24,7 @@ from backend.main import (
     _sembrar_datos_gimnasio_nuevo,
     asignar_paquete_rutina,
     actualizar_tipo_ejercicio,
+    actualizar_whatsapp_configuracion,
     crear_concepto_ingreso,
     crear_paquete_rutina,
     crear_reserva_sala,
@@ -38,6 +39,12 @@ from backend.main import (
     recomendar_paquetes_rutina_cliente,
     renovar_suscripcion_saas,
     guardar_recomendacion_rutina,
+    listar_whatsapp_mensajes,
+    listar_usuarios_counter,
+    login_counter,
+    obtener_whatsapp_configuracion,
+    configurar_pin_counter,
+    vincular_dispositivo_counter,
 )
 
 
@@ -104,6 +111,58 @@ class MultiTenantTest(unittest.TestCase):
         config.email = "gym@example.com"
         self.assertEqual(config.nombre, "Nuevo nombre")
         self.assertEqual(config.email_contacto, "gym@example.com")
+
+    def test_whatsapp_configuracion_y_mensajes_estan_aislados_por_gimnasio(self):
+        config = obtener_whatsapp_configuracion(db=self.db, usuario=self.admin1)
+        self.assertEqual(config.gimnasio_id, self.gym1.id)
+        actualizar_whatsapp_configuracion(
+            schemas.WhatsAppConfiguracionUpdate(
+                consentimiento_confirmado=True,
+                vencimientos_automaticos=True,
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.db.add_all([
+            models.WhatsAppMensaje(gimnasio_id=self.gym1.id, categoria="utilidad", direccion="saliente"),
+            models.WhatsAppMensaje(gimnasio_id=self.gym2.id, categoria="marketing", direccion="saliente"),
+        ])
+        self.db.commit()
+        mensajes = listar_whatsapp_mensajes(limite=100, db=self.db, usuario=self.admin1)
+        self.assertEqual(len(mensajes), 1)
+        self.assertEqual(mensajes[0].gimnasio_id, self.gym1.id)
+
+    def test_counter_vinculado_solo_lista_y_autentica_usuarios_del_gimnasio(self):
+        configurar_pin_counter(
+            self.staff1.id, schemas.CounterPinRequest(pin="123456"),
+            db=self.db, admin=self.admin1,
+        )
+        otro = models.Usuario(
+            gimnasio_id=self.gym2.id, nombre_completo="Staff Dos", username="staff-dos",
+            password_hash="test", pin_counter_hash=auth.hash_codigo_acceso("123456"),
+            rol=models.RolUsuario.STAFF, es_administrador=False,
+        )
+        self.db.add(otro)
+        self.db.commit()
+        vinculo = vincular_dispositivo_counter(
+            schemas.CounterVincularRequest(nombre="Counter prueba"), db=self.db, admin=self.admin1,
+        )
+        usuarios = listar_usuarios_counter(vinculo.dispositivo_token, db=self.db)
+        self.assertEqual([u.id for u in usuarios], [self.staff1.id])
+        sesion = login_counter(
+            schemas.CounterLoginRequest(
+                dispositivo_token=vinculo.dispositivo_token, usuario_id=self.staff1.id, pin="123456",
+            ),
+            _request("/counter/login"), self.db,
+        )
+        self.assertEqual(sesion.nombre, self.staff1.nombre_completo)
+        with self.assertRaises(HTTPException):
+            login_counter(
+                schemas.CounterLoginRequest(
+                    dispositivo_token=vinculo.dispositivo_token, usuario_id=otro.id, pin="123456",
+                ),
+                _request("/counter/login"), self.db,
+            )
 
     def test_auditoria_no_expone_eventos_de_otro_gimnasio(self):
         self.db.add_all([

@@ -137,6 +137,32 @@ class TokenResponse(BaseModel):
     debe_cambiar_password: bool = False
 
 
+class CounterVincularRequest(BaseModel):
+    nombre: str = Field(default="Counter", min_length=2, max_length=80)
+
+
+class CounterVincularResponse(BaseModel):
+    dispositivo_token: str
+    dispositivo_id: int
+    gimnasio_nombre: str
+
+
+class CounterUsuarioOut(BaseModel):
+    id: int
+    nombre: str
+    rol: str
+
+
+class CounterLoginRequest(BaseModel):
+    dispositivo_token: str = Field(min_length=32, max_length=256)
+    usuario_id: int
+    pin: str = Field(pattern=r"^\d{6}$")
+
+
+class CounterPinRequest(BaseModel):
+    pin: str = Field(pattern=r"^\d{6}$")
+
+
 # ==================================================================
 # 0. SAAS / MULTI-TENANT
 # ==================================================================
@@ -1696,3 +1722,44 @@ class Medida(MedidaBase):
     id: int
     cliente_id: int
     fecha: date
+
+
+# ==================================================================
+# 17. WHATSAPP BUSINESS (configuracion por gimnasio)
+# ==================================================================
+
+class WhatsAppConfiguracionUpdate(BaseModel):
+    bienvenida_automatica: Optional[bool] = None
+    vencimientos_automaticos: Optional[bool] = None
+    pagos_automaticos: Optional[bool] = None
+    recuperacion_acceso: Optional[bool] = None
+    consentimiento_confirmado: Optional[bool] = None
+
+
+class WhatsAppConfiguracionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    gimnasio_id: int
+    estado: str
+    numero_visible: Optional[str] = None
+    nombre_verificado: Optional[str] = None
+    bienvenida_automatica: bool
+    vencimientos_automaticos: bool
+    pagos_automaticos: bool
+    recuperacion_acceso: bool
+    consentimiento_confirmado: bool
+    conectado_en: Optional[datetime] = None
+    actualizado_en: datetime
+
+
+class WhatsAppMensajeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cliente_id: Optional[int] = None
+    direccion: str
+    categoria: str
+    destinatario: Optional[str] = None
+    plantilla: Optional[str] = None
+    estado: str
+    error: Optional[str] = None
+    creado_en: datetime

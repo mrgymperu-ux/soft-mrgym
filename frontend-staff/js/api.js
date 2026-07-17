@@ -181,6 +181,24 @@ async function login(username, password) {
     return data;
 }
 
+async function obtenerUsuariosCounter(dispositivoToken) {
+    const response = await fetch(`${API_BASE_URL}/counter/usuarios?dispositivo_token=${encodeURIComponent(dispositivoToken)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "No se pudo abrir el Counter");
+    return data;
+}
+
+async function loginCounter(dispositivoToken, usuarioId, pin) {
+    const response = await fetch(`${API_BASE_URL}/counter/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dispositivo_token: dispositivoToken, usuario_id: usuarioId, pin }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "No se pudo iniciar el turno");
+    guardarSesion(data.access_token, data.rol, data.nombre, data);
+    return data;
+}
+
 async function apiDescargarArchivo(path, nombreArchivoSugerido) {
     // Descarga autenticada (window.open/location.href NO envian el
     // header Authorization, asi que un endpoint protegido devolveria

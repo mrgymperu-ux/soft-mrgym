@@ -601,6 +601,7 @@ def _migrar_columnas_nuevas():
             ("email", "VARCHAR"),
             ("email_verificado", "BOOLEAN DEFAULT 0"),
             ("sesion_version", "INTEGER DEFAULT 1"),
+            ("pin_counter_hash", "VARCHAR"),
         ],
         "membresias": [
             ("duracion_meses", "INTEGER"),
@@ -1928,6 +1929,124 @@ def login_staff_profesor(datos: schemas.LoginRequest, request: Request, db: Sess
         zonas_permitidas=usuario.zonas_permitidas,
         gimnasio_id=usuario.gimnasio_id,
         gimnasio_slug=gym_slug,
+    )
+
+
+def _buscar_dispositivo_counter(db: Session, token: str):
+    import hashlib
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return db.query(models.DispositivoCounter).filter(
+        models.DispositivoCounter.token_hash == token_hash,
+        models.DispositivoCounter.revocado_en.is_(None),
+    ).first()
+
+
+@app.post("/counter/dispositivos", response_model=schemas.CounterVincularResponse, tags=["Counter"])
+def vincular_dispositivo_counter(
+    datos: schemas.CounterVincularRequest,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    import hashlib
+    import secrets
+    token = secrets.token_urlsafe(48)
+    dispositivo = models.DispositivoCounter(
+        gimnasio_id=admin.gimnasio_id,
+        nombre=datos.nombre.strip(),
+        token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        creado_por_id=admin.id,
+    )
+    db.add(dispositivo)
+    db.commit()
+    db.refresh(dispositivo)
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == admin.gimnasio_id).first()
+    return schemas.CounterVincularResponse(
+        dispositivo_token=token,
+        dispositivo_id=dispositivo.id,
+        gimnasio_nombre=gimnasio.nombre,
+    )
+
+
+@app.delete("/counter/dispositivos/{dispositivo_id}", tags=["Counter"])
+def revocar_dispositivo_counter(
+    dispositivo_id: int,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    dispositivo = db.query(models.DispositivoCounter).filter(
+        models.DispositivoCounter.id == dispositivo_id,
+        models.DispositivoCounter.gimnasio_id == admin.gimnasio_id,
+    ).first()
+    if not dispositivo:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    dispositivo.revocado_en = ahora_lima()
+    db.commit()
+    return {"message": "Dispositivo revocado"}
+
+
+@app.put("/usuarios/{usuario_id}/pin-counter", tags=["Counter"])
+def configurar_pin_counter(
+    usuario_id: int,
+    datos: schemas.CounterPinRequest,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.id == usuario_id,
+        models.Usuario.gimnasio_id == admin.gimnasio_id,
+        models.Usuario.activo == True,
+    ).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    usuario.pin_counter_hash = auth.hash_codigo_acceso(datos.pin)
+    db.commit()
+    return {"message": "PIN de Counter actualizado"}
+
+
+@app.get("/counter/usuarios", response_model=List[schemas.CounterUsuarioOut], tags=["Counter"])
+def listar_usuarios_counter(dispositivo_token: str, db: Session = Depends(get_db)):
+    dispositivo = _buscar_dispositivo_counter(db, dispositivo_token)
+    if not dispositivo:
+        raise HTTPException(status_code=401, detail="Dispositivo no vinculado o revocado")
+    usuarios = db.query(models.Usuario).filter(
+        models.Usuario.gimnasio_id == dispositivo.gimnasio_id,
+        models.Usuario.activo == True,
+        models.Usuario.pin_counter_hash.isnot(None),
+    ).order_by(models.Usuario.nombre_completo).all()
+    return [schemas.CounterUsuarioOut(id=u.id, nombre=u.nombre_completo, rol=u.rol.value) for u in usuarios]
+
+
+@app.post("/counter/login", response_model=schemas.TokenResponse, tags=["Counter"])
+def login_counter(datos: schemas.CounterLoginRequest, request: Request, db: Session = Depends(get_db)):
+    dispositivo = _buscar_dispositivo_counter(db, datos.dispositivo_token)
+    if not dispositivo:
+        raise HTTPException(status_code=401, detail="Dispositivo no vinculado o revocado")
+    clave = auth.clave_rate_limit(request, "counter", str(datos.usuario_id), str(dispositivo.id))
+    auth.exigir_intentos_disponibles(clave)
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.id == datos.usuario_id,
+        models.Usuario.gimnasio_id == dispositivo.gimnasio_id,
+        models.Usuario.activo == True,
+    ).first()
+    if not usuario or not auth.verificar_codigo_acceso(datos.pin, usuario.pin_counter_hash):
+        auth.login_rate_limiter.registrar_fallo(clave)
+        raise HTTPException(status_code=401, detail="Trabajador o PIN incorrecto")
+    auth.login_rate_limiter.limpiar(clave)
+    dispositivo.ultimo_uso_en = ahora_lima()
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == usuario.gimnasio_id).first()
+    sesion = _crear_sesion_usuario(db, usuario, request)
+    _evento_auditoria(db, "INICIO_SESION_COUNTER", request, usuario, f"dispositivo_id={dispositivo.id}")
+    token = auth.crear_access_token({
+        "sub": str(usuario.id), "tipo": "usuario", "rol": usuario.rol.value,
+        "gimnasio_id": usuario.gimnasio_id, "sv": usuario.sesion_version or 1, "jti": sesion.jti,
+    })
+    return schemas.TokenResponse(
+        access_token=token, rol=usuario.rol.value, nombre=usuario.nombre_completo,
+        es_administrador=usuario.es_administrador,
+        es_superadmin=getattr(usuario, "es_superadmin", False),
+        puede_eliminar=usuario.puede_eliminar, puede_exportar=usuario.puede_exportar,
+        zonas_permitidas=usuario.zonas_permitidas, gimnasio_id=usuario.gimnasio_id,
+        gimnasio_slug=gimnasio.slug if gimnasio else None,
     )
 
 
@@ -7973,6 +8092,53 @@ def actualizar_configuracion(datos: schemas.ConfiguracionUpdate, db: Session = D
     db.commit()
     db.refresh(config)
     return config
+
+
+def _whatsapp_configuracion_del_gym(db: Session, gimnasio_id: int):
+    config = db.query(models.WhatsAppConfiguracion).filter(
+        models.WhatsAppConfiguracion.gimnasio_id == gimnasio_id,
+    ).first()
+    if not config:
+        config = models.WhatsAppConfiguracion(gimnasio_id=gimnasio_id)
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+    return config
+
+
+@app.get("/whatsapp/configuracion", response_model=schemas.WhatsAppConfiguracionOut, tags=["WhatsApp"])
+def obtener_whatsapp_configuracion(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    return _whatsapp_configuracion_del_gym(db, usuario.gimnasio_id)
+
+
+@app.put("/whatsapp/configuracion", response_model=schemas.WhatsAppConfiguracionOut, tags=["WhatsApp"])
+def actualizar_whatsapp_configuracion(
+    datos: schemas.WhatsAppConfiguracionUpdate,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    config = _whatsapp_configuracion_del_gym(db, usuario.gimnasio_id)
+    cambios = datos.model_dump(exclude_unset=True)
+    for campo, valor in cambios.items():
+        setattr(config, campo, valor)
+    config.actualizado_en = ahora_lima()
+    db.commit()
+    db.refresh(config)
+    return config
+
+
+@app.get("/whatsapp/mensajes", response_model=List[schemas.WhatsAppMensajeOut], tags=["WhatsApp"])
+def listar_whatsapp_mensajes(
+    limite: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    return db.query(models.WhatsAppMensaje).filter(
+        models.WhatsAppMensaje.gimnasio_id == usuario.gimnasio_id,
+    ).order_by(models.WhatsAppMensaje.creado_en.desc()).limit(limite).all()
 
 
 # ==================================================================
