@@ -88,7 +88,7 @@
         </div>
 
         <!-- Stats -->
-        <div class="stats-grid">
+        <div class="stats-grid" id="panel-stats">
             <div class="stat-card">
                 <div class="stat-icon blue">👥</div>
                 <div>
@@ -134,10 +134,17 @@
         </div>
 
         <!-- 3 paneles -->
-        <div class="panel-grid">
+        <div id="panel-bienvenida" class="panel-card" style="display:none;max-width:520px;margin:0 auto;text-align:center;">
+            <div class="panel-card-body" style="padding:36px 24px;">
+                <div style="font-size:2rem;margin-bottom:10px;">👋</div>
+                <div style="font-size:1.05rem;font-weight:600;">Bienvenido a Soft-Gym</div>
+            </div>
+        </div>
+
+        <div class="panel-grid" id="panel-grid-principal">
 
             <!-- Panel 1: Busqueda inteligente -->
-            <div class="panel-card">
+            <div class="panel-card" id="panel-clientes">
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>🔎 Busqueda inteligente</span>
                     <button class="btn btn-primary btn-sm" onclick="abrirModalClienteNuevo(_panelFcTerminado)">+ Cliente</button>
@@ -162,7 +169,7 @@
             </div>
 
             <!-- Panel 2: Ingresos de hoy -->
-            <div class="panel-card">
+            <div class="panel-card" id="panel-asistencias">
                 <div class="panel-card-header">🟢 Control de sala</div>
                 <div class="ui-resumen-tabs">
                     <button class="ui-resumen-tab" id="ui-tab-hoy" onclick="cambiarVistaIngresos('hoy')">Ingresos de hoy (—)</button>
@@ -174,7 +181,7 @@
             </div>
 
             <!-- Panel 3: Venta rapida mini -->
-            <div class="panel-card">
+            <div class="panel-card" id="panel-ventas">
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>⚡ Venta rapida</span>
                     <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.85em;line-height:1;" title="Abrir Venta Rápida completa (con el cliente seleccionado, si hay uno)" onclick="irAVentaRapidaCompleta()">🔗</button>
@@ -208,7 +215,7 @@
             </div>
 
             <!-- Panel 4: Otros ingresos -->
-            <div class="panel-card">
+            <div class="panel-card" id="panel-sistema">
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
                     <span>Otros ingresos</span>
                     <span style="display:flex;gap:6px;"><button class="btn btn-secondary btn-sm" onclick="abrirConceptosIngreso()">Conceptos</button><button class="btn btn-primary btn-sm" onclick="abrirOtroIngreso()">+ Registrar</button></span>
@@ -299,6 +306,27 @@
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
 
+    const ACCESO_PRINCIPAL = {
+        sistema: tieneAccesoZona("sistema"),
+        clientes: tieneAccesoZona("clientes"),
+        asistencias: tieneAccesoZona("asistencias") && tieneAccesoZona("clientes"),
+        ventas: tieneAccesoZona("ventas") && tieneAccesoZona("productos"),
+    };
+
+    function configurarPrincipalPorPermisos() {
+        document.getElementById("panel-stats").style.display = ACCESO_PRINCIPAL.sistema ? "grid" : "none";
+        document.getElementById("panel-clientes").style.display = ACCESO_PRINCIPAL.clientes ? "flex" : "none";
+        document.getElementById("panel-asistencias").style.display = ACCESO_PRINCIPAL.asistencias ? "flex" : "none";
+        document.getElementById("panel-ventas").style.display = ACCESO_PRINCIPAL.ventas ? "flex" : "none";
+        document.getElementById("panel-sistema").style.display = ACCESO_PRINCIPAL.sistema ? "flex" : "none";
+
+        const tieneAlgunPanel = Object.values(ACCESO_PRINCIPAL).some(Boolean);
+        document.getElementById("panel-grid-principal").style.display = tieneAlgunPanel ? "grid" : "none";
+        document.getElementById("panel-bienvenida").style.display = tieneAlgunPanel ? "none" : "flex";
+    }
+
+    configurarPrincipalPorPermisos();
+
     function _panelFcTerminado(cliente) {
         // Se llama cuando termina el flujo compartido "Nuevo Cliente ->
         // Asignar Membresia -> Cobro y Contrato" desde el boton +Cliente.
@@ -317,15 +345,17 @@
     setInterval(actualizarHora, 1000);
 
     async function cargarDashboard() {
+        if (!ACCESO_PRINCIPAL.sistema) return;
         try {
-            const config = await getConfiguracion();
+            let moneda = "S/";
+            try { moneda = (await getConfiguracion()).moneda || moneda; } catch (_) {}
             const stats = await apiFetch("/dashboard/stats");
 
             document.getElementById("stat-clientes-activos").textContent = stats.clientes_activos;
-            document.getElementById("stat-ingresos-membresias").textContent = formatCurrency(stats.ingresos_hoy_membresias, config.moneda);
-            document.getElementById("stat-ingresos-ventarapida").textContent = formatCurrency(stats.ingresos_hoy_venta_rapida, config.moneda);
-            document.getElementById("stat-balance-efectivo").textContent = formatCurrency(stats.balance_efectivo_hoy, config.moneda);
-            document.getElementById("stat-balance-cuenta").textContent = formatCurrency(stats.balance_cuenta_hoy, config.moneda);
+            document.getElementById("stat-ingresos-membresias").textContent = formatCurrency(stats.ingresos_hoy_membresias, moneda);
+            document.getElementById("stat-ingresos-ventarapida").textContent = formatCurrency(stats.ingresos_hoy_venta_rapida, moneda);
+            document.getElementById("stat-balance-efectivo").textContent = formatCurrency(stats.balance_efectivo_hoy, moneda);
+            document.getElementById("stat-balance-cuenta").textContent = formatCurrency(stats.balance_cuenta_hoy, moneda);
             document.getElementById("stat-por-vencer").textContent = stats.membresias_por_vencer;
         } catch (error) {
             showError(error.message);
@@ -719,6 +749,7 @@
     }
 
     async function cargarUltimosIngresos() {
+        if (!ACCESO_PRINCIPAL.asistencias) return;
         try {
             asistenciasHoyCache = await apiFetch("/asistencias/hoy");
             const enSala = asistenciasHoyCache.filter(a => !a.fecha_hora_salida);
@@ -778,6 +809,7 @@
     let clienteSeleccionadoVenta = null;
 
     async function cargarProductosMini() {
+        if (!ACCESO_PRINCIPAL.ventas) return;
         try {
             const items = await apiFetch("/productos/mas-vendidos?limit=40");
             productosMiniCache = items;
@@ -994,6 +1026,7 @@
     let conceptosIngresoCache = [], conceptoIngresoEditando = null;
 
     async function cargarOtrosIngresos() {
+        if (!ACCESO_PRINCIPAL.sistema) return;
         try {
             const hoy = fechaLocalISO();
             const ingresos = await apiFetch(`/otros-ingresos/?desde=${hoy}&hasta=${hoy}&limit=30`);
