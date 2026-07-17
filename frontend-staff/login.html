@@ -11,16 +11,13 @@
     <div class="login-card">
         <div class="login-logo">
             <div class="logo-icon">🏋️</div>
-            <h1>Soft-Gym</h1>
-            <p style="color:#636E72;font-size:0.88em;margin-top:4px;">Panel de administracion</p>
         </div>
         <div id="alert-container"></div>
         <div id="counter-login" style="display:none;">
-            <p style="font-size:.86rem;color:#636E72;margin-bottom:12px;">Dispositivo Counter vinculado. Selecciona tu perfil e ingresa tu PIN.</p>
             <div class="form-group"><label>Trabajador</label><select id="counter-usuario"></select></div>
             <div class="form-group"><label>PIN personal</label><input type="password" id="counter-pin" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6 digitos"></div>
             <button type="button" class="btn btn-primary" id="btn-counter" onclick="ingresarCounter()">Ingresar al turno</button>
-            <div style="text-align:center;margin-top:12px;"><button type="button" class="btn btn-sm btn-secondary" onclick="mostrarLoginNormal()">Usar usuario y contrasena</button></div>
+            <div style="text-align:center;margin-top:12px;"><button type="button" class="btn btn-sm btn-secondary" onclick="mostrarLoginNormal()">Acceso administrador</button></div>
         </div>
         <form id="form-login">
             <div class="form-group">
@@ -33,8 +30,6 @@
             </div>
             <button type="submit" class="btn btn-primary" id="btn-login">Ingresar</button>
         </form>
-        <div style="text-align:center;margin-top:.8rem;font-size:.84rem;"><a href="recuperar.html" style="color:#7c3aed;text-decoration:none;">¿Olvidaste tu contraseña?</a></div>
-        <div style="text-align:center;margin-top:1.25rem;font-size:.86rem;">¿No tienes cuenta? <a href="registro.html" style="color:#7c3aed;text-decoration:none;font-weight:600;">Registra tu gimnasio gratis</a></div>
     </div>
     <script src="js/api.js"></script>
     <script>
