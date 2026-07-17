@@ -384,6 +384,20 @@
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
     let clientesListadoCache = [], configuracionListadoCache = null, ordenClientesCampo = "nombre", ordenClientesAsc = true;
 
+    async function getConfiguracionClientes() {
+        if (configuracionListadoCache) return configuracionListadoCache;
+        try {
+            configuracionListadoCache = await getConfiguracion();
+        } catch (_) {
+            configuracionListadoCache = {
+                moneda: "S/",
+                medidas_campos_visibles: null,
+                medidas_valores_visibles: null,
+            };
+        }
+        return configuracionListadoCache;
+    }
+
     function alternarFiltrosMovil() {
         const filtros = document.querySelector(".filtros-bar");
         const abiertos = filtros.classList.toggle("abiertos");
@@ -469,7 +483,7 @@
         } else {
             [clientes, cfg] = await Promise.all([
                 apiFetch(`/clientes/listado-completo?${params.toString()}`),
-                getConfiguracion(),
+                getConfiguracionClientes(),
             ]);
             clientesListadoCache = Array.isArray(clientes) ? clientes : [];
             configuracionListadoCache = cfg;
@@ -560,7 +574,7 @@
                 apiFetch(`/clientes/${clienteActual.id}/membresias`),
                 _getCatalogoMembresias(),
             ]);
-            const cfg = await getConfiguracion();
+            const cfg = await getConfiguracionClientes();
             const activa = historial.find(cm => cm.activo);
             if (!activa) { wrap.innerHTML = '<span style="font-size:0.82em;color:var(--color-texto-secundario);">Sin plan activo</span>'; return; }
             const plan = catalogo.find(m => m.id === activa.membresia_id);
@@ -962,7 +976,7 @@
                 apiFetch(`/clientes/${clienteActual.id}/membresias`),
                 _getCatalogoMembresias(),
             ]);
-            const cfg = await getConfiguracion();
+            const cfg = await getConfiguracionClientes();
             if (!historial.length) { cont.innerHTML = '<p style="color:#636E72;">Este cliente no tiene pagos registrados</p>'; return; }
 
             const esAdmin = esAdministrador();
@@ -1109,7 +1123,7 @@
     let _psCtx = null; // { cmId, precio, pagado, saldo }
 
     async function abrirModalPagarSaldo(cmId, planNombre, precio, pagado) {
-        const cfg = await getConfiguracion();
+        const cfg = await getConfiguracionClientes();
         const saldo = Math.max(precio - pagado, 0);
         _psCtx = { cmId, precio, pagado, saldo, moneda: cfg.moneda };
 
@@ -1255,7 +1269,7 @@
 
     async function _getMedidasConfig() {
         if (medidasConfigCache) return medidasConfigCache;
-        const cfg = await getConfiguracion();
+        const cfg = await getConfiguracionClientes();
         const campos = (cfg.medidas_campos_visibles || "").split(",").filter(Boolean);
         const valores = (cfg.medidas_valores_visibles || "").split(",").filter(Boolean);
         medidasConfigCache = {
