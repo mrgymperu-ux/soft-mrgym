@@ -623,15 +623,6 @@ def _migrar_columnas_nuevas():
             ("codigo_acceso", "VARCHAR"),
             ("gimnasio_id", "INTEGER"),
         ],
-        "configuracion": [
-            ("dias_aviso_vencimiento", "INTEGER DEFAULT 7"),
-            ("comision_producto_porcentaje", "FLOAT DEFAULT 0.0"),
-            ("tema", "VARCHAR DEFAULT 'lavanda'"),
-            ("modo_tema", "VARCHAR DEFAULT 'claro'"),
-            ("clausulas_contrato", "TEXT"),
-            ("medidas_campos_visibles", "TEXT"),
-            ("medidas_valores_visibles", "TEXT"),
-        ],
         "usuarios": [
             ("es_administrador", "BOOLEAN DEFAULT 1"),
             ("es_superadmin", "BOOLEAN DEFAULT 0"),
