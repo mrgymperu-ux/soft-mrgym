@@ -2747,6 +2747,7 @@ def registrar_otro_ingreso(datos: schemas.OtroIngresoCreate, idempotency_key: Op
         raise HTTPException(status_code=404, detail="Concepto de ingreso no encontrado")
     valores = datos.model_dump()
     valores["fecha"] = datos.fecha or ahora_lima()
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), valores["fecha"])
     ingreso = models.OtroIngreso(**valores, gimnasio_id=get_gid(usuario), usuario_id=usuario.id)
     db.add(ingreso); db.flush()
     _guardar_idempotencia(db, usuario, "otros-ingresos", idempotency_key, payload, "OtroIngreso", ingreso.id)
@@ -2761,6 +2762,7 @@ def eliminar_otro_ingreso(ingreso_id: int, datos: schemas.AnulacionOperacionRequ
         raise HTTPException(status_code=404, detail="Ingreso no encontrado")
     if ingreso.anulada:
         raise HTTPException(status_code=409, detail="El ingreso ya fue anulado")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), ingreso.fecha)
     ingreso.anulada = True; ingreso.anulada_en = ahora_lima(); ingreso.anulada_por_id = usuario.id; ingreso.motivo_anulacion = datos.motivo.strip()
     db.commit()
     return {"message": "Ingreso anulado"}
@@ -3012,8 +3014,10 @@ def crear_gasto(
     categoria = datos.categoria.value if hasattr(datos.categoria, "value") else datos.categoria
     if categoria != models.CategoriaGasto.OTROS.value:
         raise HTTPException(status_code=400, detail="Compras, planilla y servicios deben registrarse desde su modulo para evitar egresos duplicados")
+    fecha_gasto = datos.fecha or ahora_lima()
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), fecha_gasto)
     g = models.Gasto(
-        fecha=datos.fecha or ahora_lima(),
+        fecha=fecha_gasto,
         categoria=datos.categoria,
         monto=datos.monto,
         descripcion=datos.descripcion,
@@ -3036,6 +3040,7 @@ def eliminar_gasto(gasto_id: int, datos: schemas.AnulacionOperacionRequest, db: 
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
     if g.anulada:
         raise HTTPException(status_code=409, detail="El gasto ya fue anulado")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), g.fecha)
     g.anulada = True; g.anulada_en = ahora_lima(); g.anulada_por_id = usuario.id; g.motivo_anulacion = datos.motivo.strip()
     db.commit()
     return {"message": "Gasto anulado"}
@@ -3043,6 +3048,24 @@ def eliminar_gasto(gasto_id: int, datos: schemas.AnulacionOperacionRequest, db: 
 
 def _dinero(valor) -> Decimal:
     return Decimal(str(valor or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _turno_cerrado_de_fecha(db: Session, gimnasio_id: int, fecha: datetime):
+    return db.query(models.TurnoCaja).filter(
+        models.TurnoCaja.gimnasio_id == gimnasio_id,
+        models.TurnoCaja.estado == "cerrada",
+        models.TurnoCaja.abierta_en <= fecha,
+        models.TurnoCaja.cerrada_en >= fecha,
+    ).first()
+
+
+def _exigir_periodo_financiero_abierto(db: Session, gimnasio_id: int, fecha: Optional[datetime]):
+    """Evita reescribir un movimiento incluido en una conciliacion ya firmada."""
+    if fecha and _turno_cerrado_de_fecha(db, gimnasio_id, fecha):
+        raise HTTPException(
+            status_code=409,
+            detail="Esta operacion pertenece a una caja cerrada y no puede modificarse. Registra un ajuste en Caja.",
+        )
 
 
 def _movimientos_caja(db: Session, gimnasio_id: int, desde: datetime, hasta: datetime) -> dict:
@@ -3079,6 +3102,13 @@ def _movimientos_caja(db: Session, gimnasio_id: int, desde: datetime, hasta: dat
         models.Gasto.categoria == models.CategoriaGasto.OTROS, models.Gasto.metodo_pago == "efectivo",
         models.Gasto.fecha >= desde, models.Gasto.fecha <= hasta).all():
         agregar("gasto", g.id, g.fecha, g.descripcion or "Gasto general", g.monto, "egreso")
+    for a in db.query(models.AjusteCaja).filter(
+        models.AjusteCaja.gimnasio_id == gimnasio_id,
+        models.AjusteCaja.fecha >= desde,
+        models.AjusteCaja.fecha <= hasta,
+    ).all():
+        referencia = f" ({a.referencia})" if a.referencia else ""
+        agregar("ajuste", a.id, a.fecha, f"Ajuste: {a.motivo}{referencia}", a.monto, a.tipo)
 
     ingresos = sum((_dinero(m["monto"]) for m in movimientos if m["direccion"] == "ingreso"), Decimal("0"))
     egresos = sum((_dinero(m["monto"]) for m in movimientos if m["direccion"] == "egreso"), Decimal("0"))
@@ -3141,6 +3171,27 @@ def cerrar_caja(datos: schemas.CierreCajaRequest, idempotency_key: Optional[str]
     db.flush(); _guardar_idempotencia(db, usuario, "caja-cerrar", idempotency_key, payload, "TurnoCaja", turno.id)
     db.commit(); db.refresh(turno)
     return _resumen_turno_caja(db, turno, cierre)
+
+
+@app.post("/caja/ajustes", tags=["Caja"])
+def crear_ajuste_caja(datos: schemas.AjusteCajaCreate, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Registra una correccion visible en el turno actual; nunca cambia una caja cerrada."""
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "caja-ajuste", idempotency_key, payload, models.AjusteCaja)
+    if previo:
+        return {"id": previo.id, "message": "Ajuste ya registrado"}
+    turno = q(db, models.TurnoCaja, usuario).filter(models.TurnoCaja.estado == "abierta").with_for_update().first()
+    if not turno:
+        raise HTTPException(status_code=409, detail="Abre la caja antes de registrar un ajuste")
+    ajuste = models.AjusteCaja(
+        gimnasio_id=get_gid(usuario), turno_id=turno.id, tipo=datos.tipo,
+        monto=_dinero(datos.monto), motivo=datos.motivo.strip(),
+        referencia=(datos.referencia or "").strip() or None, usuario_id=usuario.id,
+    )
+    db.add(ajuste); db.flush()
+    _guardar_idempotencia(db, usuario, "caja-ajuste", idempotency_key, payload, "AjusteCaja", ajuste.id)
+    db.commit(); db.refresh(ajuste)
+    return {"id": ajuste.id, "message": "Ajuste registrado"}
 
 
 @app.get("/caja/historial", tags=["Caja"])
@@ -4846,6 +4897,11 @@ def editar_cliente_membresia(
 
     datos_dict = datos.model_dump(exclude_unset=True)
 
+    if "monto_pagado" in datos_dict and abs((datos_dict["monto_pagado"] or 0) - (cm.monto_pagado or 0)) > 0.001:
+        raise HTTPException(status_code=409, detail="El total pagado no se edita directamente. Registra un pago o anula el ultimo pago desde la pestaña Pagos.")
+    if "metodo_pago" in datos_dict and any(not pago.anulada for pago in cm.pagos):
+        raise HTTPException(status_code=409, detail="El metodo pertenece a cada pago y no se modifica desde la membresia. Corrige el ultimo pago antes de cerrar caja.")
+
     if "membresia_id" in datos_dict:
         membresia = _del_gym(db, models.Membresia, datos_dict["membresia_id"], usuario)
         if not membresia:
@@ -4862,19 +4918,6 @@ def editar_cliente_membresia(
         raise HTTPException(status_code=404, detail="Membresia no encontrada")
     if (cm.monto_pagado or 0.0) > plan_actual.precio + 0.01:
         raise HTTPException(status_code=400, detail="El monto pagado no puede superar el precio de la membresia")
-
-    if "monto_pagado" in datos_dict and datos_dict["monto_pagado"] is not None:
-        ajuste = round(datos_dict["monto_pagado"] - monto_anterior, 2)
-        if ajuste:
-            metodo = cm.metodo_pago.value if hasattr(cm.metodo_pago, "value") else cm.metodo_pago
-            db.add(models.PagoMembresia(
-                cliente_membresia_id=cm.id,
-                monto=ajuste,
-                metodo_pago=metodo or "efectivo",
-                fecha_proximo_pago=cm.fecha_pago_saldo,
-                registrado_por_id=usuario.id,
-                notas="Ajuste administrativo de pago",
-            ))
 
     if cm.fecha_fin and cm.fecha_inicio and cm.fecha_fin < cm.fecha_inicio:
         raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
@@ -4961,6 +5004,7 @@ def eliminar_pago_membresia(
         raise HTTPException(status_code=404, detail="Pago de membresia no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     cm = pago.cliente_membresia
     ultimo_id = db.query(models.PagoMembresia.id).filter(
         models.PagoMembresia.cliente_membresia_id == cm.id,
@@ -5002,6 +5046,9 @@ def eliminar_cliente_membresia(cm_id: int, datos: schemas.AnulacionOperacionRequ
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
     if cm.anulada:
         raise HTTPException(status_code=409, detail="La membresia asignada ya fue anulada")
+    for pago in cm.pagos:
+        if not pago.anulada:
+            _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     cliente_id = cm.cliente_id; momento = ahora_lima(); motivo = datos.motivo.strip()
     cm.activo = False; cm.anulada = True; cm.anulada_en = momento; cm.anulada_por_id = usuario.id; cm.motivo_anulacion = motivo
     for pago in cm.pagos:
@@ -5332,6 +5379,7 @@ def eliminar_compra(compra_id: int, datos: schemas.AnulacionOperacionRequest, db
         raise HTTPException(status_code=404, detail="Compra no encontrada")
     if compra.anulada:
         raise HTTPException(status_code=409, detail="La compra ya fue anulada")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), compra.fecha)
     producto = db.query(models.Producto).filter(models.Producto.id == compra.producto_id).first()
     if producto:
         if producto.stock < compra.cantidad:
@@ -5590,6 +5638,8 @@ def editar_venta(
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     if venta.anulada:
         raise HTTPException(status_code=409, detail="Una venta anulada no se puede editar")
+    if {"metodo_pago"}.intersection(datos.model_dump(exclude_unset=True)):
+        _exigir_periodo_financiero_abierto(db, get_gid(usuario), venta.fecha_venta)
     datos_dict = datos.model_dump(exclude_unset=True)
     if datos_dict.get("cliente_id") is not None and not _del_gym(db, models.Cliente, datos_dict["cliente_id"], usuario):
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -5608,6 +5658,7 @@ def eliminar_venta(venta_id: int, datos: schemas.AnulacionOperacionRequest, db: 
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     if venta.anulada:
         raise HTTPException(status_code=409, detail="La venta ya fue anulada")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), venta.fecha_venta)
     for detalle in venta.detalles:
         producto = db.query(models.Producto).filter(models.Producto.id == detalle.producto_id).first()
         if producto:
@@ -7777,6 +7828,7 @@ def editar_pago_planilla(
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="Un pago anulado no se puede editar")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
 
     datos_dict = datos.model_dump(exclude_unset=True)
 
@@ -7825,6 +7877,7 @@ def eliminar_pago_planilla(pago_id: int, datos: schemas.AnulacionOperacionReques
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     pago.anulada = True; pago.anulada_en = ahora_lima(); pago.anulada_por_id = usuario.id; pago.motivo_anulacion = datos.motivo.strip()
     db.commit()
     return {"message": "Pago anulado"}
@@ -8079,6 +8132,9 @@ def eliminar_cargo_servicio(cargo_id: int, datos: schemas.AnulacionOperacionRequ
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
     if cargo.anulada:
         raise HTTPException(status_code=409, detail="El cargo ya fue anulado")
+    for pago in cargo.pagos:
+        if not pago.anulada:
+            _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     momento = ahora_lima(); motivo = datos.motivo.strip()
     cargo.anulada = True; cargo.anulada_en = momento; cargo.anulada_por_id = usuario.id; cargo.motivo_anulacion = motivo
     for pago in cargo.pagos:
@@ -8147,6 +8203,7 @@ def editar_pago_servicio(
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="Un pago anulado no se puede editar")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     datos_dict = datos.model_dump(exclude_unset=True)
     if "monto" in datos_dict and datos_dict["monto"] is not None:
         nuevo_monto = datos_dict["monto"]
@@ -8175,6 +8232,7 @@ def eliminar_pago_servicio(pago_id: int, datos: schemas.AnulacionOperacionReques
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     pago.anulada = True; pago.anulada_en = ahora_lima(); pago.anulada_por_id = usuario.id; pago.motivo_anulacion = datos.motivo.strip()
     db.commit()
     return {"message": "Pago anulado"}

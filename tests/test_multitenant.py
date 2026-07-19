@@ -29,6 +29,7 @@ from backend.main import (
     actualizar_whatsapp_configuracion,
     crear_equipamiento_personalizado,
     crear_concepto_ingreso,
+    crear_ajuste_caja,
     crear_paquete_rutina,
     crear_reserva_sala,
     crear_tipo_ejercicio,
@@ -357,6 +358,29 @@ class MultiTenantTest(unittest.TestCase):
         cierre = cerrar_caja(schemas.CierreCajaRequest(monto_contado=105, nota="Faltante pendiente de revision"), idempotency_key="cierre-caja-prueba-0002", db=self.db, usuario=self.admin1)
         self.assertEqual(cierre["diferencia"], -5.0)
         self.assertEqual(self.db.query(models.TurnoCaja).one().estado, "cerrada")
+
+    def test_caja_cerrada_no_se_reescribe_y_la_correccion_es_un_ajuste(self):
+        abrir_caja(schemas.AperturaCajaRequest(monto_apertura=100), idempotency_key="apertura-bloqueo-0001", db=self.db, usuario=self.admin1)
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Agua", precio_venta=10, stock=2)
+        self.db.add(producto); self.db.commit()
+        venta = crear_venta(
+            schemas.VentaCreate(metodo_pago="efectivo", detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=1, precio_unitario=10)]),
+            idempotency_key="venta-bloqueo-0001", db=self.db, usuario_actual=self.admin1,
+        )
+        cerrar_caja(schemas.CierreCajaRequest(monto_contado=110), idempotency_key="cierre-bloqueo-0001", db=self.db, usuario=self.admin1)
+
+        with self.assertRaises(HTTPException) as error:
+            eliminar_venta(venta.id, schemas.AnulacionOperacionRequest(motivo="Correccion posterior"), db=self.db, usuario=self.admin1)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertFalse(venta.anulada)
+
+        abrir_caja(schemas.AperturaCajaRequest(monto_apertura=110), idempotency_key="apertura-bloqueo-0002", db=self.db, usuario=self.admin1)
+        datos = schemas.AjusteCajaCreate(tipo="egreso", monto=10, motivo="Correccion de la venta anterior", referencia=f"Venta #{venta.id}")
+        primero = crear_ajuste_caja(datos, idempotency_key="ajuste-bloqueo-0001", db=self.db, usuario=self.admin1)
+        segundo = crear_ajuste_caja(datos, idempotency_key="ajuste-bloqueo-0001", db=self.db, usuario=self.admin1)
+        self.assertEqual(primero["id"], segundo["id"])
+        self.assertEqual(self.db.query(models.AjusteCaja).count(), 1)
+        self.assertEqual(caja_actual(db=self.db, usuario=self.admin1)["monto_esperado"], 100.0)
 
     def test_venta_usa_precio_del_servidor(self):
         producto = models.Producto(

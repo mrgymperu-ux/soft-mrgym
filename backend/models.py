@@ -56,7 +56,7 @@ class PlanSaas(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, nullable=False)  # "Free", "Pro", "Enterprise"
-    precio_mensual = Column(Float, default=0.0)
+    precio_mensual = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     max_clientes = Column(Integer, default=50)  # 0 = ilimitado
     max_productos = Column(Integer, default=20)
     max_rutinas = Column(Integer, default=10)
@@ -175,7 +175,7 @@ class PagoSaas(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
     suscripcion_id = Column(Integer, ForeignKey("suscripciones_saas.id"), nullable=False, index=True)
     plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=True)
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     moneda = Column(String, nullable=False, default="S/")
     metodo_pago = Column(String, nullable=False, default="manual")
     referencia = Column(String, nullable=True)
@@ -505,7 +505,7 @@ class Membresia(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     nombre = Column(String, nullable=False)  # Descripcion de la tarifa
     descripcion = Column(Text, nullable=True)  # notas internas adicionales
-    precio = Column(Float, nullable=False)  # Monto base
+    precio = Column(Numeric(12, 2, asdecimal=False), nullable=False)  # Monto base
     duracion_dias = Column(Integer, nullable=False)  # duracion total en dias (fuente de verdad para fecha_fin)
     activo = Column(Boolean, default=True)
 
@@ -514,13 +514,13 @@ class Membresia(Base):
     duracion_dias_extra = Column(Integer, nullable=True)
 
     # --- Pago fragmentado / deuda ---
-    monto_inicial = Column(Float, nullable=True)  # solo para pago fragmentado
+    monto_inicial = Column(Numeric(12, 2, asdecimal=False), nullable=True)  # solo para pago fragmentado
     fracciones_pago_deuda = Column(Integer, nullable=True)
-    penalizacion = Column(Float, nullable=True)
+    penalizacion = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     dias_gracia_pago = Column(Integer, nullable=True)
 
     # --- Tarifas recurrentes / mensuales ---
-    monto_mensual = Column(Float, nullable=True)
+    monto_mensual = Column(Numeric(12, 2, asdecimal=False), nullable=True)
 
     # --- Congelamiento ---
     dias_congelamiento = Column(Integer, nullable=True)
@@ -555,7 +555,7 @@ class ClienteMembresia(Base):
     membresia_id = Column(Integer, ForeignKey("membresias.id"), nullable=False)
     fecha_inicio = Column(Date, default=hoy_lima)
     fecha_fin = Column(Date, nullable=True)
-    monto_pagado = Column(Float, default=0.0)
+    monto_pagado = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     # Si queda saldo (monto_pagado < precio del plan), fecha en la
     # que el personal espera cobrar el resto (recordatorio, no
     # automatiza nada por si solo).
@@ -591,7 +591,7 @@ class PagoMembresia(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     cliente_membresia_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=False, index=True)
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     metodo_pago = Column(String, default="efectivo")
     fecha_pago = Column(DateTime, default=ahora_lima)
     fecha_proximo_pago = Column(Date, nullable=True)
@@ -618,8 +618,8 @@ class Producto(Base):
     nombre = Column(String, nullable=False)
     descripcion = Column(Text, nullable=True)
     categoria = Column(String, nullable=True)
-    precio_compra = Column(Float, nullable=True)
-    precio_venta = Column(Float, nullable=False)
+    precio_compra = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    precio_venta = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     stock = Column(Integer, default=0)
     stock_minimo = Column(Integer, default=5)
     icono = Column(String, nullable=True)  # emoji o nombre de icono para venta rapida
@@ -649,12 +649,12 @@ class Venta(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
     fecha_venta = Column(DateTime, default=ahora_lima)
-    total = Column(Float, nullable=False)
+    total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     metodo_pago = Column(Enum(MetodoPago), nullable=False)
     es_venta_rapida = Column(Boolean, default=False)
     notas = Column(Text, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # quien registro la venta, para comisiones
-    costo_comision_gym = Column(Float, default=0.0)  # comision de tarjeta/QR que absorbe el gimnasio (no se cobra al cliente)
+    costo_comision_gym = Column(Numeric(12, 2, asdecimal=False), default=0.0)  # comision de tarjeta/QR que absorbe el gimnasio (no se cobra al cliente)
     anulada = Column(Boolean, nullable=False, default=False, index=True)
     anulada_en = Column(DateTime, nullable=True)
     anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
@@ -671,8 +671,8 @@ class DetalleVenta(Base):
     venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Integer, nullable=False)
-    precio_unitario = Column(Float, nullable=False)
-    subtotal = Column(Float, nullable=False)
+    precio_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False)
 
     venta = relationship("Venta", back_populates="detalles")
     producto = relationship("Producto", back_populates="detalles_venta")
@@ -691,8 +691,8 @@ class Compra(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Integer, nullable=False)
-    costo_unitario = Column(Float, nullable=False)
-    costo_total = Column(Float, nullable=False)
+    costo_unitario = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    costo_total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     fecha = Column(DateTime, default=ahora_lima)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(Text, nullable=True)
@@ -1102,12 +1102,12 @@ class Empleado(Base):
     codigo_acceso = Column(String, nullable=True)
 
     # --- Solo aplica a STAFF_FIJO ---
-    sueldo_fijo_mensual = Column(Float, nullable=True)
+    sueldo_fijo_mensual = Column(Numeric(12, 2, asdecimal=False), nullable=True)
 
     # --- Solo aplica a PROFESOR_DE_SALA ---
-    tarifa_por_clase = Column(Float, nullable=True)
+    tarifa_por_clase = Column(Numeric(12, 2, asdecimal=False), nullable=True)
     minimo_alumnos_tarifa_completa = Column(Integer, nullable=True)
-    tarifa_reducida = Column(Float, nullable=True)  # si no llega al minimo
+    tarifa_reducida = Column(Numeric(12, 2, asdecimal=False), nullable=True)  # si no llega al minimo
 
     activo = Column(Boolean, default=True)
     fecha_ingreso = Column(Date, default=hoy_lima)
@@ -1176,7 +1176,7 @@ class ClaseDictada(Base):
 
     dictada = Column(Boolean, default=False)  # True cuando realmente ocurrio
     cantidad_alumnos = Column(Integer, nullable=True)  # se llena al marcar dictada
-    monto_pagado = Column(Float, nullable=True)  # snapshot calculado al marcar dictada
+    monto_pagado = Column(Numeric(12, 2, asdecimal=False), nullable=True)  # snapshot calculado al marcar dictada
 
     serie_id = Column(String, nullable=True, index=True)
     profesor_reemplazo_id = Column(Integer, ForeignKey("empleados.id"), nullable=True)
@@ -1252,15 +1252,15 @@ class PagoPlanilla(Base):
     mes = Column(Integer, nullable=False)  # 1-12
 
     # --- STAFF ---
-    monto_sueldo_fijo = Column(Float, default=0.0)
-    monto_comision_membresias = Column(Float, default=0.0)  # del mes ANTERIOR
-    monto_comision_productos = Column(Float, default=0.0)  # del mes ANTERIOR
+    monto_sueldo_fijo = Column(Numeric(12, 2, asdecimal=False), default=0.0)
+    monto_comision_membresias = Column(Numeric(12, 2, asdecimal=False), default=0.0)  # del mes ANTERIOR
+    monto_comision_productos = Column(Numeric(12, 2, asdecimal=False), default=0.0)  # del mes ANTERIOR
 
     # --- PROFESOR ---
     cantidad_clases = Column(Integer, nullable=True)
-    monto_clases = Column(Float, default=0.0)
+    monto_clases = Column(Numeric(12, 2, asdecimal=False), default=0.0)
 
-    monto_total = Column(Float, nullable=False)  # lo efectivamente pagado en ESTE registro (permite pagos parciales)
+    monto_total = Column(Numeric(12, 2, asdecimal=False), nullable=False)  # lo efectivamente pagado en ESTE registro (permite pagos parciales)
     fecha_pago = Column(DateTime, default=ahora_lima)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # quien registro el pago
@@ -1318,7 +1318,7 @@ class CargoServicio(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     servicio_id = Column(Integer, ForeignKey("servicios.id"), nullable=False)
     concepto = Column(String, nullable=True)  # texto libre opcional, ej. "Recibo de Junio"
-    monto_total = Column(Float, nullable=False)
+    monto_total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     anio = Column(Integer, nullable=False)
     mes = Column(Integer, nullable=False)  # 1-12, periodo al que corresponde el cargo
     fecha_vencimiento = Column(Date, nullable=True)
@@ -1347,7 +1347,7 @@ class PagoServicio(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     cargo_id = Column(Integer, ForeignKey("cargos_servicio.id"), nullable=False)
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     fecha_pago = Column(DateTime, default=ahora_lima)
     notas = Column(Text, nullable=True)
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
@@ -1418,7 +1418,7 @@ class ConceptoOtroIngreso(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
     nombre = Column(String, nullable=False)
     descripcion = Column(Text, nullable=True)
-    monto_sugerido = Column(Float, default=0.0)
+    monto_sugerido = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     mostrar_agenda = Column(Boolean, default=False)
     sala_sugerida = Column(String, nullable=True)
     activo = Column(Boolean, default=True)
@@ -1433,7 +1433,7 @@ class OtroIngreso(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
     concepto_id = Column(Integer, ForeignKey("conceptos_otro_ingreso.id"), nullable=False)
     fecha = Column(DateTime, default=ahora_lima)
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     metodo_pago = Column(String, default="efectivo")
     descripcion = Column(Text, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
@@ -1458,7 +1458,7 @@ class Gasto(Base):
     gimnasio_id    = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     fecha          = Column(DateTime, default=ahora_lima)
     categoria      = Column(Enum(CategoriaGasto), nullable=False)
-    monto          = Column(Float, nullable=False)
+    monto          = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     descripcion    = Column(Text, nullable=True)
     referencia_id  = Column(Integer, nullable=True)  # id en PagoPlanilla o Compra segun categoria
     usuario_id     = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
@@ -1492,6 +1492,21 @@ class TurnoCaja(Base):
     nota_cierre = Column(Text, nullable=True)
 
 
+class AjusteCaja(Base):
+    """Correccion explícita del turno actual sin reescribir documentos de cajas cerradas."""
+    __tablename__ = "ajustes_caja"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    turno_id = Column(Integer, ForeignKey("turnos_caja.id"), nullable=False, index=True)
+    tipo = Column(String(10), nullable=False)  # ingreso | egreso
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    motivo = Column(Text, nullable=False)
+    referencia = Column(String(200), nullable=True)
+    fecha = Column(DateTime, nullable=False, default=ahora_lima)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+
+
 class MetaMensual(Base):
     """
     Meta de ventas esperada para un mes especifico (proyeccion
@@ -1505,8 +1520,8 @@ class MetaMensual(Base):
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     anio = Column(Integer, nullable=False, index=True)
     mes = Column(Integer, nullable=False)  # 1-12
-    meta_membresias = Column(Float, default=0.0)
-    meta_productos = Column(Float, default=0.0)
+    meta_membresias = Column(Numeric(12, 2, asdecimal=False), default=0.0)
+    meta_productos = Column(Numeric(12, 2, asdecimal=False), default=0.0)
     notas = Column(Text, nullable=True)
 
 

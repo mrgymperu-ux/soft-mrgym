@@ -1489,6 +1489,13 @@ class CierreCajaRequest(BaseModel):
     nota: Optional[str] = Field(default=None, max_length=500)
 
 
+class AjusteCajaCreate(BaseModel):
+    tipo: str = Field(pattern="^(ingreso|egreso)$")
+    monto: float = Field(gt=0, le=9999999999.99)
+    motivo: str = Field(min_length=5, max_length=500)
+    referencia: Optional[str] = Field(default=None, max_length=200)
+
+
 class CargoServicioCreate(BaseModel):
     servicio_id: int
     concepto: Optional[str] = None

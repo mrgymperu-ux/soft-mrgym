@@ -33,7 +33,15 @@ python scripts/restore_database.py backups/archivo.json.gz --confirm RESTORE_EMP
 1. Abrir **Sistema > Caja** al comenzar el turno y registrar el efectivo contado.
 2. Registrar cada cobro o egreso desde su modulo; la caja se actualiza desde esos documentos, no mediante ajustes manuales.
 3. Al finalizar, contar el efectivo y cerrar la caja. Toda diferencia mayor a un centimo exige una explicacion.
-4. No editar documentos de un turno ya cerrado para cuadrar una diferencia: anular con motivo y registrar la operacion correcta.
+4. Los documentos incluidos en una caja cerrada quedan bloqueados. No se editan ni anulan retroactivamente.
+5. Si una caja anterior necesita correccion, abrir el turno actual y usar **Registrar ajuste**. Indicar si es ingreso o egreso, el motivo y la referencia del documento original.
+6. El ajuste aparece como un movimiento independiente y conserva usuario, hora y referencia; nunca reemplaza el documento original.
+
+## Precision de importes
+
+- Los precios, cobros, ventas, compras, planilla, servicios, egresos y metas se almacenan con dos decimales exactos.
+- No ingresar mas de dos decimales en importes. El servidor normaliza los datos heredados a centimos durante la migracion.
+- Nunca corregir centimos directamente en la base de datos: usar el documento correspondiente o un ajuste de caja cuando el periodo ya fue cerrado.
 
 ## Contingencia del counter
 
