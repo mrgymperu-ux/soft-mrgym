@@ -2844,6 +2844,11 @@ def listar_ingresos(
             models.OtroIngreso.fecha >= desde_dt,
             models.OtroIngreso.fecha <= hasta_dt,
         ).all():
+            comision_gym = 0.0
+            if ingreso.metodo_pago == "tarjeta":
+                comision_gym = round(ingreso.monto * (config.comision_tarjeta or 0.0) / 100, 2)
+            elif ingreso.metodo_pago == "qr":
+                comision_gym = round(ingreso.monto * (config.comision_qr or 0.0) / 100, 2)
             detalle.append({
                 "id": ingreso.id,
                 "fecha": ingreso.fecha.isoformat(),
@@ -2851,7 +2856,7 @@ def listar_ingresos(
                 "descripcion": f"{ingreso.concepto.nombre if ingreso.concepto else 'Otro ingreso'}{(' — ' + ingreso.descripcion) if ingreso.descripcion else ''}",
                 "monto": ingreso.monto,
                 "metodo_pago": ingreso.metodo_pago,
-                "comision_gym": 0.0,
+                "comision_gym": comision_gym,
             })
 
     detalle.sort(key=lambda x: x["fecha"], reverse=True)
@@ -2860,6 +2865,15 @@ def listar_ingresos(
     tot_o = sum(d["monto"] for d in detalle if d["categoria"] in ("otros", "otros_ingresos"))
     return {"total": round(tot_m + tot_p + tot_o, 2), "membresias": round(tot_m, 2),
             "productos": round(tot_p, 2), "otros": round(tot_o, 2), "detalle": detalle}
+
+
+def _total_pagado_membresia(db: Session, cliente_membresia_id: int) -> float:
+    """Fuente única del pagado: pagos válidos, nunca el acumulado editable."""
+    total = db.query(func.coalesce(func.sum(models.PagoMembresia.monto), 0.0)).filter(
+        models.PagoMembresia.cliente_membresia_id == cliente_membresia_id,
+        models.PagoMembresia.anulada == False,
+    ).scalar()
+    return round(float(total or 0.0), 2)
 
 
 @app.get("/egresos/", tags=["Finanzas"])
@@ -2964,26 +2978,45 @@ def listar_egresos(
                 "descripcion": f"Comisión {metodo_txt} — Venta #{v.id}", "monto": v.costo_comision_gym,
                 "metodo_pago": "cuenta"})
 
-        for cm in db.query(models.ClienteMembresia).join(
+        for pago in db.query(models.PagoMembresia).join(
+            models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id
+        ).join(
             models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id
         ).filter(
             models.Cliente.gimnasio_id == get_gid(usuario),
-            models.ClienteMembresia.fecha_inicio >= desde,
-            models.ClienteMembresia.fecha_inicio <= hasta,
-            models.ClienteMembresia.monto_pagado > 0,
+            models.PagoMembresia.anulada == False,
+            models.PagoMembresia.fecha_pago >= desde_dt,
+            models.PagoMembresia.fecha_pago <= hasta_dt,
         ).all():
-            metodo = cm.metodo_pago or "efectivo"
+            metodo = pago.metodo_pago or "efectivo"
             if metodo not in ("tarjeta", "qr"):
                 continue
             porcentaje = config.comision_tarjeta if metodo == "tarjeta" else config.comision_qr
-            comision = round((cm.monto_pagado or 0.0) * (porcentaje or 0.0) / 100, 2)
+            comision = round((pago.monto or 0.0) * (porcentaje or 0.0) / 100, 2)
             if comision <= 0:
                 continue
-            cli = db.query(models.Cliente).filter(models.Cliente.id == cm.cliente_id).first()
+            cli = pago.cliente_membresia.cliente if pago.cliente_membresia else None
             metodo_txt = "Tarjeta" if metodo == "tarjeta" else "QR"
-            detalle.append({"id": cm.id, "fecha": datetime.combine(cm.fecha_inicio, datetime.min.time()).isoformat(),
+            detalle.append({"id": pago.id, "fecha": pago.fecha_pago.isoformat(),
                 "categoria": "comision",
                 "descripcion": f"Comisión {metodo_txt} — Membresía {(cli.nombre + ' ' + (cli.apellidos or '')).strip() if cli else '?'}",
+                "monto": comision, "metodo_pago": "cuenta"})
+
+        for ingreso in db.query(models.OtroIngreso).filter(
+            models.OtroIngreso.gimnasio_id == get_gid(usuario),
+            models.OtroIngreso.anulada == False,
+            models.OtroIngreso.fecha >= desde_dt,
+            models.OtroIngreso.fecha <= hasta_dt,
+            models.OtroIngreso.metodo_pago.in_(("tarjeta", "qr")),
+        ).all():
+            porcentaje = config.comision_tarjeta if ingreso.metodo_pago == "tarjeta" else config.comision_qr
+            comision = round((ingreso.monto or 0.0) * (porcentaje or 0.0) / 100, 2)
+            if comision <= 0:
+                continue
+            metodo_txt = "Tarjeta" if ingreso.metodo_pago == "tarjeta" else "QR"
+            detalle.append({"id": ingreso.id, "fecha": ingreso.fecha.isoformat(),
+                "categoria": "comision",
+                "descripcion": f"Comisión {metodo_txt} — {ingreso.concepto.nombre if ingreso.concepto else 'Otro ingreso'}",
                 "monto": comision, "metodo_pago": "cuenta"})
 
     detalle.sort(key=lambda x: x["fecha"], reverse=True)
@@ -3536,16 +3569,8 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     )
 
     inicio_mes = hoy_lima().replace(day=1)
-    ingresos_mes = (
-        db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
-        .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid, models.Venta.anulada == False)
-        .scalar()
-    )
-    ingresos_mes += db.query(func.coalesce(func.sum(models.OtroIngreso.monto), 0.0)).filter(
-        models.OtroIngreso.fecha >= datetime.combine(inicio_mes, datetime.min.time()),
-        models.OtroIngreso.gimnasio_id == gid,
-        models.OtroIngreso.anulada == False,
-    ).scalar()
+    libro_mes = listar_ingresos(desde=inicio_mes, hasta=hoy_lima(), db=db, usuario=usuario)
+    ingresos_mes = libro_mes["total"]
 
     productos_bajo_stock = (
         db.query(models.Producto)
@@ -3594,16 +3619,8 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         .count()
     )
 
-    ingresos_hoy_membresias = (
-        db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
-        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
-        .filter(
-            models.ClienteMembresia.fecha_inicio == hoy_fecha,
-            models.ClienteMembresia.monto_pagado > 0,
-            models.Cliente.gimnasio_id == gid,
-        )
-        .scalar()
-    )
+    detalle_hoy = [mov for mov in libro_mes["detalle"] if mov["fecha"][:10] == hoy_fecha.isoformat()]
+    ingresos_hoy_membresias = sum(mov["monto"] for mov in detalle_hoy if mov["categoria"] == "membresias")
     ingresos_hoy_venta_rapida = (
         db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
         .filter(
@@ -3615,44 +3632,11 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         .scalar()
     )
 
-    ventas_hoy = db.query(models.Venta).filter(
-        models.Venta.fecha_venta >= hoy,
-        models.Venta.gimnasio_id == gid,
-        models.Venta.anulada == False,
-    ).all()
-    membresias_hoy = (
-        db.query(models.ClienteMembresia)
-        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
-        .filter(
-            models.ClienteMembresia.fecha_inicio == hoy_fecha,
-            models.ClienteMembresia.monto_pagado > 0,
-            models.Cliente.gimnasio_id == gid,
-        )
-        .all()
-    )
-    otros_ingresos_hoy = db.query(models.OtroIngreso).filter(
-        models.OtroIngreso.fecha >= hoy,
-        models.OtroIngreso.gimnasio_id == gid,
-    ).all()
-
-    balance_efectivo_hoy = sum(v.total for v in ventas_hoy if v.metodo_pago == models.MetodoPago.EFECTIVO)
-    balance_efectivo_hoy += sum(cm.monto_pagado or 0.0 for cm in membresias_hoy if (cm.metodo_pago or "efectivo") == "efectivo")
-    balance_efectivo_hoy += sum(i.monto for i in otros_ingresos_hoy if i.metodo_pago == "efectivo")
-
+    balance_efectivo_hoy = sum(mov["monto"] for mov in detalle_hoy if mov["metodo_pago"] == "efectivo")
     balance_cuenta_hoy = sum(
-        v.total - (v.costo_comision_gym or 0.0) for v in ventas_hoy if v.metodo_pago != models.MetodoPago.EFECTIVO
+        mov["monto"] - (mov.get("comision_gym") or 0.0)
+        for mov in detalle_hoy if mov["metodo_pago"] != "efectivo"
     )
-    for cm in membresias_hoy:
-        metodo = cm.metodo_pago or "efectivo"
-        if metodo == "tarjeta":
-            balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_tarjeta or 0.0) / 100)
-        elif metodo == "qr":
-            balance_cuenta_hoy += (cm.monto_pagado or 0.0) * (1 - (config.comision_qr or 0.0) / 100)
-    for ingreso in otros_ingresos_hoy:
-        if ingreso.metodo_pago == "tarjeta":
-            balance_cuenta_hoy += ingreso.monto * (1 - (config.comision_tarjeta or 0.0) / 100)
-        elif ingreso.metodo_pago == "qr":
-            balance_cuenta_hoy += ingreso.monto * (1 - (config.comision_qr or 0.0) / 100)
 
     return schemas.DashboardStats(
         total_clientes=total_clientes,
@@ -3693,42 +3677,19 @@ def get_dashboard_empresarial(
     membresias_vendidas = [0] * 12
     metas_membresias = [0.0] * 12
 
-    pagos = db.query(models.PagoMembresia.fecha_pago, models.PagoMembresia.monto).join(
-        models.ClienteMembresia,
-        models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id,
-    ).join(
-        models.Cliente,
-        models.Cliente.id == models.ClienteMembresia.cliente_id,
-    ).filter(
-        models.Cliente.gimnasio_id == gid,
-        models.PagoMembresia.anulada == False,
-        models.PagoMembresia.fecha_pago >= desde_dt,
-        models.PagoMembresia.fecha_pago < hasta_dt,
-    ).all()
-    for pago in pagos:
-        membresias[pago.fecha_pago.month - 1] += float(pago.monto or 0)
-
-    for fecha_venta, total in db.query(models.Venta.fecha_venta, models.Venta.total).filter(
-        models.Venta.gimnasio_id == gid,
-        models.Venta.anulada == False,
-        models.Venta.fecha_venta >= desde_dt,
-        models.Venta.fecha_venta < hasta_dt,
-    ).all():
-        productos[fecha_venta.month - 1] += float(total or 0)
-
-    for fecha_ingreso, monto in db.query(models.OtroIngreso.fecha, models.OtroIngreso.monto).filter(
-        models.OtroIngreso.gimnasio_id == gid,
-        models.OtroIngreso.fecha >= desde_dt,
-        models.OtroIngreso.fecha < hasta_dt,
-    ).all():
-        otros[fecha_ingreso.month - 1] += float(monto or 0)
-
-    for fecha_gasto, monto in db.query(models.Gasto.fecha, models.Gasto.monto).filter(
-        models.Gasto.gimnasio_id == gid,
-        models.Gasto.fecha >= desde_dt,
-        models.Gasto.fecha < hasta_dt,
-    ).all():
-        egresos[fecha_gasto.month - 1] += float(monto or 0)
+    libro_ingresos = listar_ingresos(desde=desde_fecha, hasta=date(anio, 12, 31), db=db, usuario=usuario)
+    libro_egresos = listar_egresos(desde=desde_fecha, hasta=date(anio, 12, 31), db=db, usuario=usuario)
+    for movimiento in libro_ingresos["detalle"]:
+        mes_indice = int(movimiento["fecha"][5:7]) - 1
+        if movimiento["categoria"] == "membresias":
+            membresias[mes_indice] += float(movimiento["monto"] or 0)
+        elif movimiento["categoria"] == "productos":
+            productos[mes_indice] += float(movimiento["monto"] or 0)
+        else:
+            otros[mes_indice] += float(movimiento["monto"] or 0)
+    for movimiento in libro_egresos["detalle"]:
+        mes_indice = int(movimiento["fecha"][5:7]) - 1
+        egresos[mes_indice] += float(movimiento["monto"] or 0)
 
     for fecha_registro, in db.query(models.Cliente.fecha_registro).filter(
         models.Cliente.gimnasio_id == gid,
@@ -3748,6 +3709,7 @@ def get_dashboard_empresarial(
         models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id,
     ).filter(
         models.Cliente.gimnasio_id == gid,
+        models.ClienteMembresia.anulada == False,
         models.ClienteMembresia.fecha_inicio >= desde_fecha,
         models.ClienteMembresia.fecha_inicio < hasta_fecha,
     ).all():
@@ -3875,7 +3837,7 @@ def listado_completo_clientes(
             membresia = db.query(models.Membresia).filter(models.Membresia.id == ultimo_plan_cm.membresia_id).first()
             ultimo_plan_nombre = membresia.nombre if membresia else None
             costo = membresia.precio if membresia else None
-            pagado = ultimo_plan_cm.monto_pagado or 0.0
+            pagado = _total_pagado_membresia(db, ultimo_plan_cm.id)
             saldo = max((costo or 0.0) - pagado, 0.0)
             if ultimo_plan_cm.fecha_fin:
                 dias_para_vencer = (ultimo_plan_cm.fecha_fin - hoy).days
@@ -5191,6 +5153,7 @@ def obtener_cliente_membresia(cm_id: int, db: Session = Depends(get_db), usuario
     cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+    cm.monto_pagado = _total_pagado_membresia(db, cm.id)
     return cm
 
 
@@ -5232,7 +5195,7 @@ def editar_cliente_membresia(
     plan_actual = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
     if not plan_actual:
         raise HTTPException(status_code=404, detail="Membresia no encontrada")
-    if (cm.monto_pagado or 0.0) > plan_actual.precio + 0.01:
+    if _total_pagado_membresia(db, cm.id) > plan_actual.precio + 0.01:
         raise HTTPException(status_code=400, detail="El monto pagado no puede superar el precio de la membresia")
 
     if cm.fecha_fin and cm.fecha_inicio and cm.fecha_fin < cm.fecha_inicio:
@@ -5255,8 +5218,7 @@ def pagar_saldo_membresia(
     """
     Pago rapido de saldo pendiente de una membresia asignada.
     Cualquier staff puede usarlo (no requiere administrador).
-    Suma el monto al monto_pagado existente; si el saldo llega a 0,
-    limpia la fecha_pago_saldo automaticamente.
+    Registra un pago individual auditable; el total se deriva del historial.
     """
     cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
@@ -5268,7 +5230,7 @@ def pagar_saldo_membresia(
 
     membresia = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
     precio = membresia.precio if membresia else 0
-    pagado_actual = cm.monto_pagado or 0
+    pagado_actual = _total_pagado_membresia(db, cm.id)
     saldo_actual = round(max(precio - pagado_actual, 0), 2)
 
     if datos.monto <= 0:
@@ -5331,12 +5293,12 @@ def eliminar_pago_membresia(
     ).first()
     if not ultimo_id or ultimo_id[0] != pago.id:
         raise HTTPException(status_code=400, detail="Solo se puede borrar el ultimo pago registrado")
-    cm.monto_pagado = round(max((cm.monto_pagado or 0.0) - pago.monto, 0.0), 2)
     pago.anulada = True
     pago.anulada_en = ahora_lima()
     pago.anulada_por_id = usuario.id
     pago.motivo_anulacion = datos.motivo.strip()
     db.flush()
+    cm.monto_pagado = _total_pagado_membresia(db, cm.id)
     pago_anterior = db.query(models.PagoMembresia).filter(
         models.PagoMembresia.cliente_membresia_id == cm.id,
         models.PagoMembresia.anulada == False,
@@ -5444,7 +5406,8 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
     membresia_actual = None
     if cm_activa:
         membresia = db.query(models.Membresia).filter(models.Membresia.id == cm_activa.membresia_id).first()
-        deuda = max((membresia.precio if membresia else 0.0) - (cm_activa.monto_pagado or 0.0), 0.0)
+        total_pagado = _total_pagado_membresia(db, cm_activa.id)
+        deuda = max((membresia.precio if membresia else 0.0) - total_pagado, 0.0)
         dias_restantes = (cm_activa.fecha_fin - hoy).days if cm_activa.fecha_fin else None
         membresia_actual = schemas.FichaMembresiaActual(
             cm_id=cm_activa.id,
@@ -5452,7 +5415,7 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
             fecha_fin=cm_activa.fecha_fin,
             dias_restantes=dias_restantes,
             precio=membresia.precio if membresia else 0.0,
-            monto_pagado=cm_activa.monto_pagado or 0.0,
+            monto_pagado=total_pagado,
             deuda_pendiente=deuda,
             fecha_pago_saldo=cm_activa.fecha_pago_saldo,
         )
@@ -5885,7 +5848,7 @@ def _normalizar_porciones_cliente():
         db.close()
 
 
-def _calcular_costo_comision_gym(subtotal: float, metodo_pago: models.MetodoPago, config: models.Configuracion) -> float:
+def _calcular_costo_comision_gym(subtotal: float, metodo_pago: models.MetodoPago, config: models.Gimnasio) -> float:
     """
     La comision de la pasarela (tarjeta/QR) NO se le cobra al
     cliente: el gimnasio la asume como gasto. Esta funcion devuelve
@@ -5897,16 +5860,6 @@ def _calcular_costo_comision_gym(subtotal: float, metodo_pago: models.MetodoPago
     if metodo_pago == models.MetodoPago.QR:
         return round(subtotal * config.comision_qr / 100, 2)
     return 0.0
-
-
-def _get_o_crear_configuracion(db: Session) -> models.Configuracion:
-    config = db.query(models.Configuracion).filter(models.Configuracion.id == 1).first()
-    if not config:
-        config = models.Configuracion(id=1)
-        db.add(config)
-        db.commit()
-        db.refresh(config)
-    return config
 
 
 @app.get("/ventas/", response_model=List[schemas.Venta], tags=["Ventas"])
@@ -7942,11 +7895,16 @@ def _calcular_comisiones_periodo(db: Session, usuario_id: int, gimnasio_id: int,
     ).all()
 
     ventas_membresias = (
-        db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
+        db.query(func.coalesce(func.sum(models.PagoMembresia.monto), 0.0))
+        .join(models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
         .filter(
+            models.Cliente.gimnasio_id == gimnasio_id,
             models.ClienteMembresia.vendido_por_id == usuario_id,
-            models.ClienteMembresia.fecha_inicio >= desde,
-            models.ClienteMembresia.fecha_inicio < hasta,
+            models.ClienteMembresia.anulada == False,
+            models.PagoMembresia.anulada == False,
+            models.PagoMembresia.fecha_pago >= datetime.combine(desde, datetime.min.time()),
+            models.PagoMembresia.fecha_pago < datetime.combine(hasta, datetime.min.time()),
         )
         .scalar()
     )
@@ -9203,11 +9161,16 @@ def resumen_comisiones(
     resultado = []
     for usuario in usuarios:
         ventas_membresias = (
-            db.query(func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0))
+            db.query(func.coalesce(func.sum(models.PagoMembresia.monto), 0.0))
+            .join(models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id)
+            .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
             .filter(
+                models.Cliente.gimnasio_id == get_gid(usuario),
                 models.ClienteMembresia.vendido_por_id == usuario.id,
-                models.ClienteMembresia.fecha_inicio >= desde,
-                models.ClienteMembresia.fecha_inicio < hasta,
+                models.ClienteMembresia.anulada == False,
+                models.PagoMembresia.anulada == False,
+                models.PagoMembresia.fecha_pago >= datetime.combine(desde, datetime.min.time()),
+                models.PagoMembresia.fecha_pago < datetime.combine(hasta, datetime.min.time()),
             )
             .scalar()
         )
@@ -9286,13 +9249,17 @@ def evolucion_metas_anual(
 
         membresias_por_usuario = dict(db.query(
             models.ClienteMembresia.vendido_por_id,
-            func.coalesce(func.sum(models.ClienteMembresia.monto_pagado), 0.0),
+            func.coalesce(func.sum(models.PagoMembresia.monto), 0.0),
+        ).join(
+            models.PagoMembresia, models.PagoMembresia.cliente_membresia_id == models.ClienteMembresia.id,
         ).join(
             models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id,
         ).filter(
             models.Cliente.gimnasio_id == gid,
-            models.ClienteMembresia.fecha_inicio >= desde,
-            models.ClienteMembresia.fecha_inicio < hasta,
+            models.ClienteMembresia.anulada == False,
+            models.PagoMembresia.anulada == False,
+            models.PagoMembresia.fecha_pago >= datetime.combine(desde, datetime.min.time()),
+            models.PagoMembresia.fecha_pago < datetime.combine(hasta, datetime.min.time()),
         ).group_by(models.ClienteMembresia.vendido_por_id).all())
         productos_por_usuario = dict(db.query(
             models.Venta.usuario_id,
@@ -9870,7 +9837,7 @@ def _cliente_tiene_pago_vencido(db: Session, cliente_id: int) -> bool:
     if not membresia or not membresia.fecha_pago_saldo or membresia.fecha_pago_saldo >= hoy_lima():
         return False
     precio = float(membresia.membresia.precio or 0) if membresia.membresia else 0
-    return max(precio - float(membresia.monto_pagado or 0), 0) > 0.009
+    return max(precio - _total_pagado_membresia(db, membresia.id), 0) > 0.009
 
 
 def _validar_acceso_modulos_alumno(db: Session, cliente: models.Cliente):
@@ -9892,7 +9859,7 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
     sin_pagos_pendientes = False
     if membresia:
         precio = float(membresia.membresia.precio or 0)
-        pagado = float(membresia.monto_pagado or 0)
+        pagado = _total_pagado_membresia(db, membresia.id)
         saldo = round(max(precio - pagado, 0), 2)
         pago_vencido = bool(saldo > 0.009 and membresia.fecha_pago_saldo and membresia.fecha_pago_saldo < hoy_lima())
         sin_pagos_pendientes = saldo <= 0.009

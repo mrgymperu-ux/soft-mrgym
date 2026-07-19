@@ -9,8 +9,7 @@ Se ejecuta como modulo desde la raiz del proyecto:
 
 Que hace:
   1. Crea todas las tablas definidas en models.py (si no existen).
-  2. Crea la fila de Configuracion por defecto (id=1) si no existe.
-  3. Crea un usuario STAFF administrador inicial, SOLO si todavia
+  2. Crea un usuario STAFF administrador inicial, SOLO si todavia
      no existe ningun usuario en la base de datos. Las credenciales
      se pueden definir por variable de entorno; si no se definen,
      se usan valores por defecto que se deben cambiar de inmediato.
@@ -38,14 +37,6 @@ def init_db():
 
     db = SessionLocal()
     try:
-        # --- Configuracion por defecto ---
-        config = db.query(models.Configuracion).filter(models.Configuracion.id == 1).first()
-        if not config:
-            config = models.Configuracion(id=1)
-            db.add(config)
-            db.commit()
-            print("[init_db] Configuracion por defecto creada.")
-
         # --- Usuario admin inicial ---
         existe_algun_usuario = db.query(models.Usuario).count() > 0
         if not existe_algun_usuario:

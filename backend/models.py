@@ -1365,40 +1365,6 @@ class PagoServicio(Base):
 
 
 # ==================================================================
-# 12. CONFIGURACION GENERAL
-# ==================================================================
-
-class Configuracion(Base):
-    """
-    Fila unica con la configuracion general del gimnasio. Se
-    espera que solo exista un registro (id=1).
-    """
-    __tablename__ = "configuracion"
-
-    id = Column(Integer, primary_key=True, index=True)
-    moneda = Column(String, default="S/")
-    nombre_gimnasio = Column(String, default="Mi Gimnasio")
-    telefono = Column(String, nullable=True)
-    email = Column(String, nullable=True)
-    direccion = Column(String, nullable=True)
-    comision_tarjeta = Column(Float, default=3.5)
-    comision_qr = Column(Float, default=2.0)
-    dias_aviso_vencimiento = Column(Integer, default=7)
-    comision_producto_porcentaje = Column(Float, default=0.0)  # % flat por cada venta de producto, sin relacion a metas
-    tema = Column(String, default="lavanda")  # paleta de colores de la interfaz
-    modo_tema = Column(String, default="claro")  # "claro" | "oscuro"
-    clausulas_contrato = Column(Text, nullable=True)  # texto libre con las clausulas del contrato de matricula
-
-    # --- Gestion > Medidas: que campos crudos y que valores calculados
-    # se muestran en la tabla de Medidas de la ficha del cliente.
-    # Se guardan como csv de claves (ver medidas-catalogo.js para las
-    # claves validas de cada lista). Si es null/vacio, se usa un set
-    # razonable por defecto (definido en el frontend).
-    medidas_campos_visibles = Column(Text, nullable=True)
-    medidas_valores_visibles = Column(Text, nullable=True)
-
-
-# ==================================================================
 # 13. METAS DE VENTAS Y COMISIONES (solo administrador)
 # ==================================================================
 

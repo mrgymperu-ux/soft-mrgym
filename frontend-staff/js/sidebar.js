@@ -9,7 +9,6 @@ const NAV_ITEMS = [
         items: [
             { href: "principal.html", icono: "📊", texto: "Panel de Control", zona: null },
             { href: "clientes.html", icono: "👥", texto: "Clientes", zona: "clientes" },
-            { href: "pagos.html",     icono: "💳", texto: "Pagos",    zona: "pagos" },
             { href: "asistencias.html", icono: "✅", texto: "Asistencias", zona: "asistencias" },
             { href: "movimientos.html", icono: "🔁", texto: "Movimientos", zona: "sistema" },
         ],
@@ -47,10 +46,8 @@ const NAV_ITEMS = [
         items: [
             { href: "dashboard.html", icono: "📊", texto: "Dashboard", zona: "sistema" },
             { href: "caja.html", icono: "🧮", texto: "Caja", zona: "sistema" },
+            { href: "pagos.html", icono: "🧰", texto: "Servicios y deudas", zona: "pagos" },
             { href: "documentos.html", icono: "🗂️", texto: "Documentos", zona: "sistema" },
-            { href: "resumen.html",   icono: "📈", texto: "Resumen", zona: "sistema" },
-            { href: "ingresos.html",  icono: "💰", texto: "Ingresos", zona: "sistema" },
-            { href: "egresos.html",   icono: "📤", texto: "Egresos",  zona: "sistema" },
             { href: "reportes.html", icono: "📊", texto: "Reportes", zona: "sistema", soloExportar: true },
             { href: "metas.html", icono: "🎯", texto: "Metas y Comisiones", zona: "metas", soloAdmin: true },
             { href: "configuracion.html", icono: "⚙️", texto: "Configuracion", zona: "configuracion" },

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pagos - Soft-Gym</title>
+    <title>Servicios y deudas - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
     <style>
@@ -40,18 +40,14 @@
     <div id="sidebar-container"></div>
     <main class="main-content">
         <div class="header">
-            <div><h1 class="header-title">Pagos</h1><p class="header-subtitle">Gestiona el pago de Staff, Profesores y Servicios/Deudas</p></div>
+            <div><h1 class="header-title">Servicios y deudas</h1><p class="header-subtitle">Controla alquiler, suministros y otras obligaciones del gimnasio</p></div>
         </div>
 
         <div class="card">
-            <div class="tabs">
-                <button class="tab active" id="tabbtn-staff" onclick="cambiarTabPagos('staff', this)">🧾 Staff</button>
-                <button class="tab" id="tabbtn-profesores" onclick="cambiarTabPagos('profesores', this)">🏫 Profesores</button>
-                <button class="tab" id="tabbtn-servicios" onclick="cambiarTabPagos('servicios', this)">🧰 Servicios</button>
-            </div>
+            <div class="tabs"><button class="tab active" id="tabbtn-servicios">🧰 Servicios y deudas</button></div>
 
             <!-- ================= TAB STAFF ================= -->
-            <div id="tab-pagos-staff">
+            <div id="tab-pagos-staff" style="display:none;">
                 <div class="filtros-pagos">
                     <div class="form-group busq-wrap" style="margin:0;flex:1;min-width:220px;">
                         <label>Trabajador</label>
@@ -146,7 +142,7 @@
             </div>
 
             <!-- ================= TAB SERVICIOS ================= -->
-            <div id="tab-pagos-servicios" style="display:none;">
+            <div id="tab-pagos-servicios">
                 <div class="deuda-total-card">
                     <div>
                         <p style="margin:0;font-size:0.8em;color:var(--color-texto-secundario);">Deuda total pendiente (todos los servicios)</p>
@@ -826,8 +822,11 @@
     // ==================================================================
     // INIT
     // ==================================================================
-    initStaffTab();
-    initProfesoresTab();
+    async function iniciarServicios() {
+        try { moneda = (await getConfiguracion()).moneda; } catch (_) {}
+        await cargarServicios();
+    }
+    iniciarServicios();
 </script>
 </body>
 </html>

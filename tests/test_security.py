@@ -8,7 +8,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend import auth, models, schemas
-from backend.main import _validar_archivo_documento, _validar_y_optimizar_foto
+from backend.main import (
+    _total_pagado_membresia,
+    _validar_archivo_documento,
+    _validar_y_optimizar_foto,
+    listar_egresos,
+    listar_ingresos,
+)
 
 
 def test_codigo_acceso_se_guarda_como_hash_y_se_verifica():
@@ -118,3 +124,47 @@ def test_xml_contable_debe_estar_bien_formado():
         _validar_archivo_documento("factura.xml", b"<factura><total>10</factura>")
     mime, extension = _validar_archivo_documento("factura.xml", b"<factura><total>10</total></factura>")
     assert (mime, extension) == ("application/xml", ".xml")
+
+
+def test_total_membresia_proviene_de_pagos_validos_y_no_del_cache():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    models.Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        gym = models.Gimnasio(nombre="Gym", slug="gym-finanzas", activo=True)
+        db.add(gym); db.flush()
+        cliente = models.Cliente(gimnasio_id=gym.id, nombre="Socio")
+        plan = models.Membresia(gimnasio_id=gym.id, nombre="Plan", precio=100, duracion_dias=30)
+        db.add_all([cliente, plan]); db.flush()
+        cm = models.ClienteMembresia(cliente=cliente, membresia=plan, monto_pagado=999)
+        db.add(cm); db.flush()
+        db.add_all([
+            models.PagoMembresia(cliente_membresia_id=cm.id, monto=40, anulada=False),
+            models.PagoMembresia(cliente_membresia_id=cm.id, monto=50, anulada=True),
+        ])
+        db.commit()
+        assert _total_pagado_membresia(db, cm.id) == 40
+    finally:
+        db.close()
+
+
+def test_libro_financiero_registra_comision_de_otro_ingreso():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    models.Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        gym = models.Gimnasio(nombre="Gym", slug="gym-comision", activo=True, comision_tarjeta=4, comision_qr=2)
+        db.add(gym); db.flush()
+        admin = models.Usuario(gimnasio_id=gym.id, nombre_completo="Admin", username="admin-fin", password_hash="x", rol=models.RolUsuario.STAFF, es_administrador=True)
+        concepto = models.ConceptoOtroIngreso(gimnasio_id=gym.id, nombre="Alquiler")
+        db.add_all([admin, concepto]); db.flush()
+        ingreso = models.OtroIngreso(gimnasio_id=gym.id, concepto=concepto, monto=100, metodo_pago="tarjeta")
+        db.add(ingreso); db.commit()
+        fecha = ingreso.fecha.date()
+        libro_ingresos = listar_ingresos(desde=fecha, hasta=fecha, db=db, usuario=admin)
+        libro_egresos = listar_egresos(desde=fecha, hasta=fecha, db=db, usuario=admin)
+        assert libro_ingresos["total"] == 100
+        assert libro_ingresos["detalle"][0]["comision_gym"] == 4
+        assert libro_egresos["comisiones"] == 4
+    finally:
+        db.close()

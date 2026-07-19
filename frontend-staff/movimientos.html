@@ -12,6 +12,9 @@
         .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
         .filtros-bar select { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
         .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+        .direccion-filtro { display:flex; gap:4px; padding:3px; border:1px solid var(--color-borde); }
+        .direccion-filtro button { border:0; border-radius:0; padding:5px 10px; background:transparent; color:var(--color-texto-secundario); cursor:pointer; }
+        .direccion-filtro button.activo { background:var(--color-texto); color:var(--color-blanco); }
 
         .chips-cat { display:flex; gap:6px; flex-wrap:wrap; }
         .chip-cat { padding:5px 12px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.78em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); transition:.15s; user-select:none; }
@@ -44,10 +47,19 @@
                 <h1 class="header-title">🔁 Movimientos</h1>
                 <p class="header-subtitle" id="subtitulo-rango">Cargando...</p>
             </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-secondary" onclick="abrirIngreso()">+ Ingreso</button>
+                <button class="btn btn-primary" onclick="abrirGasto()">+ Gasto</button>
+            </div>
         </div>
 
         <!-- Filtros (identicos a Resumen) -->
         <div class="filtros-bar">
+            <div class="direccion-filtro" aria-label="Tipo de movimiento">
+                <button type="button" data-tipo="todos" onclick="cambiarTipo(this)">Todos</button>
+                <button type="button" data-tipo="ingreso" onclick="cambiarTipo(this)">Ingresos</button>
+                <button type="button" data-tipo="egreso" onclick="cambiarTipo(this)">Egresos</button>
+            </div>
             <label>Periodo
                 <select id="f-periodo" onchange="onPeriodoChange()">
                     <option value="personalizado">Personalizado</option>
@@ -129,11 +141,34 @@
     </main>
 </div>
 
+<div id="modal-ingreso" class="modal"><div class="modal-content" style="max-width:450px;">
+    <div class="modal-header"><h3 class="modal-title">Registrar otro ingreso</h3><button class="modal-close" onclick="cerrarModalFinanza('modal-ingreso')">✕</button></div>
+    <div class="form-group"><label>Fecha *</label><input id="mi-fecha" type="date"></div>
+    <div class="form-group"><label>Concepto *</label><div style="display:flex;gap:6px;"><select id="mi-concepto" style="flex:1" onchange="onConceptoIngreso()"></select><button class="btn btn-secondary" onclick="crearConceptoIngreso()">+ Nuevo</button></div></div>
+    <div class="form-group"><label>Monto *</label><input id="mi-monto" type="number" min="0.01" step="0.01"></div>
+    <div class="form-group"><label>Método</label><select id="mi-metodo"><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="qr">QR</option></select></div>
+    <div class="form-group"><label>Descripción adicional</label><input id="mi-descripcion"></div>
+    <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModalFinanza('modal-ingreso')">Cancelar</button><button class="btn btn-primary" onclick="guardarIngreso()">Registrar</button></div>
+</div></div>
+
+<div id="modal-gasto" class="modal"><div class="modal-content" style="max-width:450px;">
+    <div class="modal-header"><h3 class="modal-title">Registrar gasto general</h3><button class="modal-close" onclick="cerrarModalFinanza('modal-gasto')">✕</button></div>
+    <p style="font-size:.8em;color:var(--color-texto-secundario);">Las compras de stock y la planilla se registran en sus módulos. Aquí van alquiler, mantenimiento y gastos similares.</p>
+    <div class="form-group"><label>Fecha *</label><input id="mg-fecha" type="date"></div>
+    <div class="form-group"><label>Descripción *</label><input id="mg-descripcion"></div>
+    <div class="form-group"><label>Monto *</label><input id="mg-monto" type="number" min="0.01" step="0.01"></div>
+    <div class="form-group"><label>Pago desde</label><select id="mg-metodo"><option value="efectivo">Efectivo</option><option value="cuenta">Cuenta</option></select></div>
+    <div class="form-group"><label>Notas</label><input id="mg-notas"></div>
+    <div class="form-actions"><button class="btn btn-secondary" onclick="cerrarModalFinanza('modal-gasto')">Cancelar</button><button class="btn btn-primary" onclick="guardarGasto()">Registrar</button></div>
+</div></div>
+
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
 <script>
     let catActiva = "todos";
+    let tipoActivo = new URLSearchParams(location.search).get("tipo") || "todos";
     let moneda = "S/";
+    let conceptosIngreso = [];
 
     // Formato numero sin simbolo de moneda (la moneda va en la cabecera)
     function fmtNum(v) {
@@ -207,6 +242,15 @@
         renderTabla(window._ing, window._egr);
     }
 
+    function cambiarTipo(el) {
+        tipoActivo = el.dataset.tipo;
+        document.querySelectorAll(".direccion-filtro button").forEach(b => b.classList.toggle("activo", b.dataset.tipo === tipoActivo));
+        const url = new URL(location.href);
+        if (tipoActivo === "todos") url.searchParams.delete("tipo"); else url.searchParams.set("tipo", tipoActivo);
+        history.replaceState(null, "", url);
+        renderTabla(window._ing, window._egr);
+    }
+
     function renderTabla(ing, egr) {
         const tbody = document.getElementById("tabla-movimientos");
         let filas = [];
@@ -214,8 +258,8 @@
         const incluirCat = (cat) => catActiva === "todos" || catActiva === cat ||
             (catActiva === "otros" && ["otros","otros_ingresos","pago_staff","pago_profesor","comision"].includes(cat));
 
-        ing.detalle.forEach(d => { if (incluirCat(d.categoria) || (catActiva==="todos")) filas.push({ ...d, tipo:"ingreso" }); });
-        egr.detalle.forEach(d => {
+        if (tipoActivo !== "egreso") ing.detalle.forEach(d => { if (incluirCat(d.categoria) || (catActiva==="todos")) filas.push({ ...d, tipo:"ingreso" }); });
+        if (tipoActivo !== "ingreso") egr.detalle.forEach(d => {
             const catNormalizada = d.categoria === "compra_producto" ? "productos" : d.categoria;
             if (incluirCat(catNormalizada)) filas.push({ ...d, tipo:"egreso" });
         });
@@ -274,6 +318,64 @@
         } catch (e) { showError(e.message); }
     }
 
+    function cerrarModalFinanza(id) { document.getElementById(id).classList.remove("active"); }
+
+    async function cargarConceptosIngreso() {
+        conceptosIngreso = await apiFetch("/conceptos-ingreso/");
+        document.getElementById("mi-concepto").innerHTML = '<option value="">Seleccionar...</option>' + conceptosIngreso.map(c => `<option value="${c.id}">${escapeHTML(c.nombre)}</option>`).join("");
+    }
+
+    async function abrirIngreso() {
+        await cargarConceptosIngreso();
+        document.getElementById("mi-fecha").value = fechaLocalISO();
+        document.getElementById("mi-monto").value = "";
+        document.getElementById("mi-descripcion").value = "";
+        document.getElementById("modal-ingreso").classList.add("active");
+    }
+
+    async function crearConceptoIngreso() {
+        const nombre = (prompt("Nombre del nuevo concepto de ingreso:") || "").trim();
+        if (!nombre) return;
+        try {
+            const creado = await apiFetch("/conceptos-ingreso/", {method:"POST", body:JSON.stringify({nombre, monto_sugerido:0, mostrar_agenda:false})});
+            await cargarConceptosIngreso();
+            document.getElementById("mi-concepto").value = creado.id;
+        } catch (e) { showError(e.message); }
+    }
+
+    function onConceptoIngreso() {
+        const c = conceptosIngreso.find(x => x.id === Number(document.getElementById("mi-concepto").value));
+        if (c && c.monto_sugerido) document.getElementById("mi-monto").value = c.monto_sugerido;
+    }
+
+    async function guardarIngreso() {
+        const concepto_id = Number(document.getElementById("mi-concepto").value);
+        const monto = Number(document.getElementById("mi-monto").value);
+        const fecha = document.getElementById("mi-fecha").value;
+        if (!concepto_id || !fecha || monto <= 0) return showError("Completa fecha, concepto y monto");
+        try {
+            await apiFetch("/otros-ingresos/", {method:"POST", body:JSON.stringify({concepto_id, monto, fecha:`${fecha}T12:00:00`, metodo_pago:document.getElementById("mi-metodo").value, descripcion:document.getElementById("mi-descripcion").value.trim() || null})});
+            cerrarModalFinanza("modal-ingreso"); showSuccess("Ingreso registrado"); cargar();
+        } catch (e) { showError(e.message); }
+    }
+
+    function abrirGasto() {
+        document.getElementById("mg-fecha").value = fechaLocalISO();
+        ["mg-descripcion","mg-monto","mg-notas"].forEach(id => document.getElementById(id).value = "");
+        document.getElementById("modal-gasto").classList.add("active");
+    }
+
+    async function guardarGasto() {
+        const descripcion = document.getElementById("mg-descripcion").value.trim();
+        const monto = Number(document.getElementById("mg-monto").value);
+        const fecha = document.getElementById("mg-fecha").value;
+        if (!descripcion || !fecha || monto <= 0) return showError("Completa fecha, descripción y monto");
+        try {
+            await apiFetch("/gastos/", {method:"POST", body:JSON.stringify({categoria:"otros", descripcion, monto, fecha:`${fecha}T12:00:00`, metodo_pago:document.getElementById("mg-metodo").value, notas:document.getElementById("mg-notas").value.trim() || null})});
+            cerrarModalFinanza("modal-gasto"); showSuccess("Gasto registrado"); cargar();
+        } catch (e) { showError(e.message); }
+    }
+
     function calcularEfectivoCuenta(ing, config) {
         let efectivo = 0, cuenta = 0;
         (ing.detalle || []).forEach(d => {
@@ -329,6 +431,8 @@
     }
 
     initFechas();
+    if (!["todos", "ingreso", "egreso"].includes(tipoActivo)) tipoActivo = "todos";
+    document.querySelectorAll(".direccion-filtro button").forEach(b => b.classList.toggle("activo", b.dataset.tipo === tipoActivo));
     cargar();
 </script>
 </body>
