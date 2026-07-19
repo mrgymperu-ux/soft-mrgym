@@ -31,7 +31,7 @@ import unicodedata
 from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, Header
+from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, File, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse
@@ -3198,6 +3198,322 @@ def crear_ajuste_caja(datos: schemas.AjusteCajaCreate, idempotency_key: Optional
 def historial_caja(limit: int = Query(30, ge=1, le=200), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
     turnos = q(db, models.TurnoCaja, usuario).order_by(models.TurnoCaja.abierta_en.desc()).limit(limit).all()
     return [_resumen_turno_caja(db, t, t.cerrada_en) for t in turnos]
+
+
+def _fuente_documento(db: Session, usuario: models.Usuario, tipo: Optional[str], fuente_id: Optional[int]):
+    """Resuelve un movimiento financiero sin permitir referencias entre gimnasios."""
+    if not tipo and not fuente_id:
+        return None
+    if not tipo or not fuente_id:
+        raise HTTPException(status_code=400, detail="Indica tipo e ID del movimiento de origen")
+    gid = get_gid(usuario)
+    if tipo == "venta":
+        item = db.query(models.Venta).filter(models.Venta.id == fuente_id, models.Venta.gimnasio_id == gid, models.Venta.anulada == False).first()
+        return {"total": item.total, "fecha": item.fecha_venta.date(), "direccion": "ingreso", "descripcion": f"Venta #{item.id}"} if item else None
+    if tipo == "pago_membresia":
+        item = db.query(models.PagoMembresia).join(models.ClienteMembresia).join(models.Cliente).filter(
+            models.PagoMembresia.id == fuente_id, models.Cliente.gimnasio_id == gid, models.PagoMembresia.anulada == False).first()
+        return {"total": item.monto, "fecha": item.fecha_pago.date(), "direccion": "ingreso", "descripcion": f"Pago de membresia #{item.id}"} if item else None
+    if tipo == "compra":
+        item = db.query(models.Compra).filter(models.Compra.id == fuente_id, models.Compra.gimnasio_id == gid, models.Compra.anulada == False).first()
+        return {"total": item.costo_total, "fecha": item.fecha.date(), "direccion": "egreso", "descripcion": f"Compra #{item.id}"} if item else None
+    if tipo == "gasto":
+        item = db.query(models.Gasto).filter(models.Gasto.id == fuente_id, models.Gasto.gimnasio_id == gid, models.Gasto.anulada == False).first()
+        return {"total": item.monto, "fecha": item.fecha.date(), "direccion": "egreso", "descripcion": f"Gasto #{item.id}"} if item else None
+    if tipo == "pago_servicio":
+        item = db.query(models.PagoServicio).join(models.CargoServicio).filter(
+            models.PagoServicio.id == fuente_id, models.CargoServicio.gimnasio_id == gid, models.PagoServicio.anulada == False).first()
+        return {"total": item.monto, "fecha": item.fecha_pago.date(), "direccion": "egreso", "descripcion": f"Pago de servicio #{item.id}"} if item else None
+    if tipo == "pago_planilla":
+        item = db.query(models.PagoPlanilla).filter(models.PagoPlanilla.id == fuente_id, models.PagoPlanilla.gimnasio_id == gid, models.PagoPlanilla.anulada == False).first()
+        return {"total": item.monto_total, "fecha": item.fecha_pago.date(), "direccion": "egreso", "descripcion": f"Pago de planilla #{item.id}"} if item else None
+    if tipo == "otro_ingreso":
+        item = db.query(models.OtroIngreso).filter(models.OtroIngreso.id == fuente_id, models.OtroIngreso.gimnasio_id == gid, models.OtroIngreso.anulada == False).first()
+        return {"total": item.monto, "fecha": item.fecha.date(), "direccion": "ingreso", "descripcion": f"Otro ingreso #{item.id}"} if item else None
+    return None
+
+
+def _normalizar_documento(datos: dict, fuente: Optional[dict], gimnasio: models.Gimnasio) -> dict:
+    if fuente:
+        if datos.get("total") is not None and abs(float(datos["total"]) - float(fuente["total"])) > 0.01:
+            raise HTTPException(status_code=400, detail=f"El total debe coincidir con el movimiento de origen ({float(fuente['total']):.2f})")
+        datos["total"] = float(fuente["total"])
+        datos["direccion"] = fuente["direccion"]
+        datos["fecha_emision"] = datos.get("fecha_emision") or fuente["fecha"]
+        datos["descripcion_fuente"] = fuente["descripcion"]
+    if datos.get("total") is None:
+        raise HTTPException(status_code=400, detail="Indica el total o vincula un movimiento de origen")
+    total = _dinero(datos["total"]); igv = _dinero(datos.get("igv") or 0)
+    subtotal = _dinero(datos.get("subtotal") if datos.get("subtotal") is not None else total - igv)
+    if igv > total or abs((subtotal + igv) - total) > Decimal("0.01"):
+        raise HTTPException(status_code=400, detail="Subtotal + IGV debe ser igual al total")
+    datos["total"] = total; datos["igv"] = igv; datos["subtotal"] = subtotal
+    datos["serie"] = (datos.get("serie") or "").strip().upper() or None
+    for campo in ("emisor_documento", "emisor_nombre", "receptor_documento", "receptor_nombre", "notas"):
+        if campo in datos:
+            datos[campo] = (datos.get(campo) or "").strip() or None
+    if datos["direccion"] == "ingreso":
+        datos["emisor_documento"] = datos.get("emisor_documento") or gimnasio.ruc
+        datos["emisor_nombre"] = datos.get("emisor_nombre") or gimnasio.razon_social or gimnasio.nombre
+    else:
+        datos["receptor_documento"] = datos.get("receptor_documento") or gimnasio.ruc
+        datos["receptor_nombre"] = datos.get("receptor_nombre") or gimnasio.razon_social or gimnasio.nombre
+    return datos
+
+
+@app.get("/documentos-financieros/", response_model=List[schemas.DocumentoFinancieroOut], tags=["Documentos"])
+def listar_documentos_financieros(anio: Optional[int] = None, mes: Optional[int] = Query(None, ge=1, le=12), estado: Optional[str] = None, direccion: Optional[str] = None, limit: int = Query(200, ge=1, le=500), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    query = q(db, models.DocumentoFinanciero, usuario)
+    if anio:
+        query = query.filter(func.extract("year", models.DocumentoFinanciero.fecha_emision) == anio)
+    if mes:
+        query = query.filter(func.extract("month", models.DocumentoFinanciero.fecha_emision) == mes)
+    if estado:
+        query = query.filter(models.DocumentoFinanciero.estado == estado)
+    if direccion:
+        query = query.filter(models.DocumentoFinanciero.direccion == direccion)
+    return query.order_by(models.DocumentoFinanciero.fecha_emision.desc(), models.DocumentoFinanciero.id.desc()).limit(limit).all()
+
+
+@app.post("/documentos-financieros/", response_model=schemas.DocumentoFinancieroOut, tags=["Documentos"])
+def crear_documento_financiero(datos: schemas.DocumentoFinancieroCreate, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "documentos-crear", idempotency_key, payload, models.DocumentoFinanciero)
+    if previo:
+        return previo
+    valores = datos.model_dump()
+    fuente = _fuente_documento(db, usuario, valores.get("fuente_tipo"), valores.get("fuente_id"))
+    if valores.get("fuente_tipo") and not fuente:
+        raise HTTPException(status_code=404, detail="Movimiento de origen no encontrado")
+    valores = _normalizar_documento(valores, fuente, _configuracion_del_gym(db, usuario))
+    documento = models.DocumentoFinanciero(**valores, gimnasio_id=get_gid(usuario), creado_por_id=usuario.id, estado="borrador")
+    db.add(documento); db.flush()
+    _guardar_idempotencia(db, usuario, "documentos-crear", idempotency_key, payload, "DocumentoFinanciero", documento.id)
+    db.commit(); db.refresh(documento)
+    return documento
+
+
+@app.put("/documentos-financieros/{documento_id}", response_model=schemas.DocumentoFinancieroOut, tags=["Documentos"])
+def actualizar_documento_financiero(documento_id: int, datos: schemas.DocumentoFinancieroUpdate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    documento = _del_gym(db, models.DocumentoFinanciero, documento_id, usuario)
+    if not documento:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if documento.estado != "borrador":
+        raise HTTPException(status_code=409, detail="Un documento emitido no se edita; debe anularse y registrarse nuevamente")
+    valores = datos.model_dump(exclude_unset=True)
+    base = {campo: getattr(documento, campo) for campo in (
+        "direccion", "tipo", "serie", "numero", "fecha_emision", "emisor_documento", "emisor_nombre",
+        "receptor_documento", "receptor_nombre", "subtotal", "igv", "total", "moneda", "notas")}
+    base.update(valores)
+    base = _normalizar_documento(base, None, _configuracion_del_gym(db, usuario))
+    for campo, valor in base.items():
+        setattr(documento, campo, valor)
+    db.commit(); db.refresh(documento)
+    return documento
+
+
+_SERIES_DOCUMENTO = {"boleta": "B001", "factura": "F001", "recibo": "R001", "nota_credito": "NC01", "nota_debito": "ND01", "sustento_egreso": "E001", "otro": "D001"}
+
+
+@app.post("/documentos-financieros/{documento_id}/emitir", response_model=schemas.DocumentoFinancieroOut, tags=["Documentos"])
+def emitir_documento_financiero(documento_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).with_for_update().first()
+    documento = _del_gym(db, models.DocumentoFinanciero, documento_id, usuario)
+    if not documento:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if documento.estado == "emitido":
+        return documento
+    if documento.estado == "anulado":
+        raise HTTPException(status_code=409, detail="Un documento anulado no puede emitirse")
+    if documento.direccion == "ingreso" and documento.tipo in ("boleta", "factura") and not (gimnasio.ruc and gimnasio.razon_social):
+        raise HTTPException(status_code=400, detail="Configura RUC y razon social antes de emitir boletas o facturas")
+    if documento.direccion == "egreso" and (not documento.serie or documento.numero is None):
+        raise HTTPException(status_code=400, detail="En documentos recibidos indica la serie y numero del proveedor")
+    if documento.fuente_tipo and documento.fuente_id:
+        clave = f"gym:{gimnasio.id}:{documento.fuente_tipo}:{documento.fuente_id}"
+        duplicado = db.query(models.DocumentoFinanciero).filter(models.DocumentoFinanciero.clave_fuente_vigente == clave, models.DocumentoFinanciero.id != documento.id).first()
+        if duplicado:
+            raise HTTPException(status_code=409, detail=f"El movimiento ya tiene el documento #{duplicado.id}")
+        documento.clave_fuente_vigente = clave
+    documento.serie = (documento.serie or _SERIES_DOCUMENTO[documento.tipo]).upper()
+    if documento.direccion == "ingreso":
+        correlativo = db.query(models.CorrelativoDocumento).filter_by(gimnasio_id=gimnasio.id, tipo=documento.tipo, serie=documento.serie).with_for_update().first()
+        if not correlativo:
+            correlativo = models.CorrelativoDocumento(gimnasio_id=gimnasio.id, tipo=documento.tipo, serie=documento.serie, ultimo_numero=0)
+            db.add(correlativo); db.flush()
+        if documento.numero is None:
+            correlativo.ultimo_numero += 1
+            documento.numero = correlativo.ultimo_numero
+        else:
+            correlativo.ultimo_numero = max(correlativo.ultimo_numero, documento.numero)
+    repetido = db.query(models.DocumentoFinanciero).filter(
+        models.DocumentoFinanciero.gimnasio_id == gimnasio.id, models.DocumentoFinanciero.tipo == documento.tipo,
+        models.DocumentoFinanciero.serie == documento.serie, models.DocumentoFinanciero.numero == documento.numero,
+        models.DocumentoFinanciero.id != documento.id).first()
+    if repetido:
+        raise HTTPException(status_code=409, detail="La serie y numero ya estan registrados")
+    documento.estado = "emitido"; documento.emitido_en = ahora_lima(); documento.emitido_por_id = usuario.id
+    db.commit(); db.refresh(documento)
+    return documento
+
+
+@app.post("/documentos-financieros/{documento_id}/anular", response_model=schemas.DocumentoFinancieroOut, tags=["Documentos"])
+def anular_documento_financiero(documento_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    documento = _del_gym(db, models.DocumentoFinanciero, documento_id, usuario)
+    if not documento:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if documento.estado == "anulado":
+        raise HTTPException(status_code=409, detail="El documento ya fue anulado")
+    documento.estado = "anulado"; documento.clave_fuente_vigente = None
+    documento.anulado_en = ahora_lima(); documento.anulado_por_id = usuario.id; documento.motivo_anulacion = datos.motivo.strip()
+    db.commit(); db.refresh(documento)
+    return documento
+
+
+def _validar_archivo_documento(nombre: str, contenido: bytes) -> tuple[str, str]:
+    extension = os.path.splitext(nombre)[1].lower()
+    if extension == ".pdf" and contenido.startswith(b"%PDF-"):
+        return "application/pdf", extension
+    if extension == ".xml" and contenido.lstrip().startswith(b"<"):
+        try:
+            import xml.etree.ElementTree as ET
+            ET.fromstring(contenido)
+        except Exception:
+            raise HTTPException(status_code=400, detail="El XML no es valido")
+        return "application/xml", extension
+    if extension in (".jpg", ".jpeg") and contenido.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", extension
+    if extension == ".png" and contenido.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", extension
+    if extension == ".webp" and contenido[:4] == b"RIFF" and contenido[8:12] == b"WEBP":
+        return "image/webp", extension
+    if extension == ".zip" and contenido.startswith(b"PK\x03\x04"):
+        return "application/zip", extension
+    raise HTTPException(status_code=400, detail="Adjunta PDF, XML, JPG, PNG, WEBP o ZIP validos")
+
+
+@app.post("/documentos-financieros/{documento_id}/archivos", response_model=schemas.DocumentoArchivoOut, tags=["Documentos"])
+async def adjuntar_archivo_documento(documento_id: int, archivo: UploadFile = File(...), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    documento = _del_gym(db, models.DocumentoFinanciero, documento_id, usuario)
+    if not documento:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    if len(documento.archivos) >= 5:
+        raise HTTPException(status_code=400, detail="Cada documento admite hasta 5 archivos")
+    contenido = await archivo.read(5 * 1024 * 1024 + 1)
+    if not contenido:
+        raise HTTPException(status_code=400, detail="El archivo esta vacio")
+    if len(contenido) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="El archivo supera 5 MB")
+    nombre = os.path.basename(archivo.filename or "archivo")[:255]
+    tipo_mime, _ = _validar_archivo_documento(nombre, contenido)
+    digest = hashlib.sha256(contenido).hexdigest()
+    if any(item.sha256 == digest for item in documento.archivos):
+        raise HTTPException(status_code=409, detail="Ese archivo ya esta adjunto")
+    item = models.DocumentoArchivo(documento_id=documento.id, nombre=nombre, tipo_mime=tipo_mime,
+        tamano=len(contenido), sha256=digest, datos=contenido, creado_por_id=usuario.id)
+    db.add(item); db.commit(); db.refresh(item)
+    return item
+
+
+@app.get("/documentos-financieros/{documento_id}/archivos/{archivo_id}", tags=["Documentos"])
+def descargar_archivo_documento(documento_id: int, archivo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    item = db.query(models.DocumentoArchivo).join(models.DocumentoFinanciero).filter(
+        models.DocumentoArchivo.id == archivo_id, models.DocumentoArchivo.documento_id == documento_id,
+        models.DocumentoFinanciero.gimnasio_id == get_gid(usuario)).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    extension = os.path.splitext(item.nombre)[1]
+    return Response(content=item.datos, media_type=item.tipo_mime,
+        headers={"Content-Disposition": f'attachment; filename="documento_{documento_id}_{archivo_id}{extension}"', "X-Content-Type-Options": "nosniff"})
+
+
+def _claves_fuentes_periodo(db: Session, gimnasio_id: int, desde: datetime, hasta: datetime) -> set[str]:
+    claves = set()
+    def agregar(tipo, consulta):
+        claves.update(f"gym:{gimnasio_id}:{tipo}:{fila[0]}" for fila in consulta.all())
+    agregar("venta", db.query(models.Venta.id).filter(models.Venta.gimnasio_id == gimnasio_id, models.Venta.anulada == False, models.Venta.fecha_venta.between(desde, hasta)))
+    agregar("pago_membresia", db.query(models.PagoMembresia.id).join(models.ClienteMembresia).join(models.Cliente).filter(models.Cliente.gimnasio_id == gimnasio_id, models.PagoMembresia.anulada == False, models.PagoMembresia.fecha_pago.between(desde, hasta)))
+    agregar("compra", db.query(models.Compra.id).filter(models.Compra.gimnasio_id == gimnasio_id, models.Compra.anulada == False, models.Compra.fecha.between(desde, hasta)))
+    agregar("gasto", db.query(models.Gasto.id).filter(models.Gasto.gimnasio_id == gimnasio_id, models.Gasto.anulada == False, models.Gasto.fecha.between(desde, hasta)))
+    agregar("pago_planilla", db.query(models.PagoPlanilla.id).filter(models.PagoPlanilla.gimnasio_id == gimnasio_id, models.PagoPlanilla.anulada == False, models.PagoPlanilla.fecha_pago.between(desde, hasta)))
+    agregar("pago_servicio", db.query(models.PagoServicio.id).join(models.CargoServicio).filter(models.CargoServicio.gimnasio_id == gimnasio_id, models.PagoServicio.anulada == False, models.PagoServicio.fecha_pago.between(desde, hasta)))
+    agregar("otro_ingreso", db.query(models.OtroIngreso.id).filter(models.OtroIngreso.gimnasio_id == gimnasio_id, models.OtroIngreso.anulada == False, models.OtroIngreso.fecha.between(desde, hasta)))
+    return claves
+
+
+def _movimientos_documentables_periodo(db: Session, gimnasio_id: int, desde: datetime, hasta: datetime) -> list[dict]:
+    movimientos = []
+    def agregar(tipo, item_id, fecha, direccion, descripcion, total):
+        movimientos.append({"clave": f"gym:{gimnasio_id}:{tipo}:{item_id}", "fuente_tipo": tipo, "fuente_id": item_id,
+            "fecha": fecha.date().isoformat(), "direccion": direccion, "descripcion": descripcion, "total": float(_dinero(total))})
+    for item in db.query(models.Venta).filter(models.Venta.gimnasio_id == gimnasio_id, models.Venta.anulada == False, models.Venta.fecha_venta.between(desde, hasta)).all():
+        agregar("venta", item.id, item.fecha_venta, "ingreso", f"Venta #{item.id}", item.total)
+    for item in db.query(models.PagoMembresia).join(models.ClienteMembresia).join(models.Cliente).filter(models.Cliente.gimnasio_id == gimnasio_id, models.PagoMembresia.anulada == False, models.PagoMembresia.fecha_pago.between(desde, hasta)).all():
+        agregar("pago_membresia", item.id, item.fecha_pago, "ingreso", f"Pago de membresia #{item.id}", item.monto)
+    for item in db.query(models.OtroIngreso).filter(models.OtroIngreso.gimnasio_id == gimnasio_id, models.OtroIngreso.anulada == False, models.OtroIngreso.fecha.between(desde, hasta)).all():
+        agregar("otro_ingreso", item.id, item.fecha, "ingreso", f"Otro ingreso #{item.id}", item.monto)
+    for item in db.query(models.Compra).filter(models.Compra.gimnasio_id == gimnasio_id, models.Compra.anulada == False, models.Compra.fecha.between(desde, hasta)).all():
+        agregar("compra", item.id, item.fecha, "egreso", f"Compra #{item.id}", item.costo_total)
+    for item in db.query(models.Gasto).filter(models.Gasto.gimnasio_id == gimnasio_id, models.Gasto.anulada == False, models.Gasto.fecha.between(desde, hasta)).all():
+        agregar("gasto", item.id, item.fecha, "egreso", f"Gasto #{item.id}", item.monto)
+    for item in db.query(models.PagoPlanilla).filter(models.PagoPlanilla.gimnasio_id == gimnasio_id, models.PagoPlanilla.anulada == False, models.PagoPlanilla.fecha_pago.between(desde, hasta)).all():
+        agregar("pago_planilla", item.id, item.fecha_pago, "egreso", f"Pago de planilla #{item.id}", item.monto_total)
+    for item in db.query(models.PagoServicio).join(models.CargoServicio).filter(models.CargoServicio.gimnasio_id == gimnasio_id, models.PagoServicio.anulada == False, models.PagoServicio.fecha_pago.between(desde, hasta)).all():
+        agregar("pago_servicio", item.id, item.fecha_pago, "egreso", f"Pago de servicio #{item.id}", item.monto)
+    return sorted(movimientos, key=lambda item: (item["fecha"], item["fuente_tipo"], item["fuente_id"]), reverse=True)
+
+
+@app.get("/documentos-financieros/pendientes/{anio}/{mes}", tags=["Documentos"])
+def movimientos_pendientes_documento(anio: int, mes: int = Path(..., ge=1, le=12), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    desde_fecha = date(anio, mes, 1); hasta_fecha = date(anio, mes, calendar.monthrange(anio, mes)[1])
+    movimientos = _movimientos_documentables_periodo(db, get_gid(usuario), datetime.combine(desde_fecha, datetime.min.time()), datetime.combine(hasta_fecha, datetime.max.time()))
+    documentadas = {fila[0] for fila in q(db, models.DocumentoFinanciero, usuario).with_entities(models.DocumentoFinanciero.clave_fuente_vigente).filter(
+        models.DocumentoFinanciero.estado == "emitido", models.DocumentoFinanciero.clave_fuente_vigente.isnot(None)).all()}
+    return [item for item in movimientos if item["clave"] not in documentadas]
+
+
+@app.get("/documentos-financieros/exportar/{anio}/{mes}", tags=["Documentos"])
+def exportar_documentos_financieros(anio: int, mes: int = Path(..., ge=1, le=12), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    desde_fecha = date(anio, mes, 1); hasta_fecha = date(anio, mes, calendar.monthrange(anio, mes)[1])
+    documentos = q(db, models.DocumentoFinanciero, usuario).filter(
+        models.DocumentoFinanciero.fecha_emision.between(desde_fecha, hasta_fecha)).order_by(models.DocumentoFinanciero.fecha_emision, models.DocumentoFinanciero.id).all()
+    campos = ["id", "fecha", "direccion", "tipo", "serie", "numero", "estado", "emisor_documento", "emisor_nombre",
+        "receptor_documento", "receptor_nombre", "subtotal", "igv", "total", "moneda", "fuente", "archivos_sha256", "notas"]
+    filas = [{"id": d.id, "fecha": d.fecha_emision.isoformat(), "direccion": d.direccion, "tipo": d.tipo, "serie": d.serie or "",
+        "numero": d.numero or "", "estado": d.estado, "emisor_documento": d.emisor_documento or "", "emisor_nombre": d.emisor_nombre or "",
+        "receptor_documento": d.receptor_documento or "", "receptor_nombre": d.receptor_nombre or "", "subtotal": f"{d.subtotal:.2f}",
+        "igv": f"{d.igv:.2f}", "total": f"{d.total:.2f}", "moneda": d.moneda,
+        "fuente": f"{d.fuente_tipo or ''}#{d.fuente_id or ''}", "archivos_sha256": "|".join(a.sha256 for a in d.archivos), "notas": d.notas or ""} for d in documentos]
+    return _respuesta_csv(campos, filas, f"documentos_{anio}_{mes:02d}.csv")
+
+
+@app.get("/documentos-financieros/resumen/{anio}/{mes}", tags=["Documentos"])
+def resumen_documentos_financieros(anio: int, mes: int = Path(..., ge=1, le=12), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    desde_fecha = date(anio, mes, 1)
+    ultimo = calendar.monthrange(anio, mes)[1]
+    hasta_fecha = date(anio, mes, ultimo)
+    documentos = q(db, models.DocumentoFinanciero, usuario).filter(
+        models.DocumentoFinanciero.estado == "emitido", models.DocumentoFinanciero.fecha_emision.between(desde_fecha, hasta_fecha)).all()
+    totales = {"ingresos_base": Decimal("0"), "ingresos_igv": Decimal("0"), "ingresos_total": Decimal("0"),
+        "egresos_base": Decimal("0"), "egresos_igv": Decimal("0"), "egresos_total": Decimal("0")}
+    for documento in documentos:
+        prefijo = "ingresos" if documento.direccion == "ingreso" else "egresos"
+        signo = Decimal("-1") if documento.tipo == "nota_credito" else Decimal("1")
+        totales[f"{prefijo}_base"] += signo * _dinero(documento.subtotal)
+        totales[f"{prefijo}_igv"] += signo * _dinero(documento.igv)
+        totales[f"{prefijo}_total"] += signo * _dinero(documento.total)
+    desde_dt = datetime.combine(desde_fecha, datetime.min.time()); hasta_dt = datetime.combine(hasta_fecha, datetime.max.time())
+    fuentes = _claves_fuentes_periodo(db, get_gid(usuario), desde_dt, hasta_dt)
+    documentadas = set()
+    if fuentes:
+        documentadas = {fila[0] for fila in q(db, models.DocumentoFinanciero, usuario).with_entities(models.DocumentoFinanciero.clave_fuente_vigente).filter(
+            models.DocumentoFinanciero.estado == "emitido", models.DocumentoFinanciero.clave_fuente_vigente.in_(fuentes)).all()}
+    respuesta = {clave: float(_dinero(valor)) for clave, valor in totales.items()}
+    respuesta.update({"igv_referencial": float(max(totales["ingresos_igv"] - totales["egresos_igv"], Decimal("0"))),
+        "documentos_emitidos": len(documentos), "movimientos_financieros": len(fuentes),
+        "movimientos_documentados": len(fuentes & documentadas), "movimientos_pendientes": len(fuentes - documentadas),
+        "referencial": True})
+    return respuesta
 
 
 @app.get("/dashboard/stats", response_model=schemas.DashboardStats, tags=["Dashboard"])

@@ -89,6 +89,9 @@ class Gimnasio(Base):
     email_contacto = Column(String, nullable=True)
     telefono = Column(String, nullable=True)
     direccion = Column(String, nullable=True)
+    ruc = Column(String(11), nullable=True)
+    razon_social = Column(String(200), nullable=True)
+    regimen_tributario = Column(String(60), nullable=True)
     logo_url = Column(String, nullable=True)
     logo_oscuro_url = Column(String, nullable=True)
     logo_datos = deferred(Column(LargeBinary, nullable=True))
@@ -1505,6 +1508,76 @@ class AjusteCaja(Base):
     referencia = Column(String(200), nullable=True)
     fecha = Column(DateTime, nullable=False, default=ahora_lima)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+
+
+class CorrelativoDocumento(Base):
+    """Ultimo correlativo reservado por gimnasio, tipo y serie."""
+    __tablename__ = "correlativos_documento"
+    __table_args__ = (UniqueConstraint("gimnasio_id", "tipo", "serie", name="uq_correlativo_documento"),)
+
+    id = Column(Integer, primary_key=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    tipo = Column(String(30), nullable=False)
+    serie = Column(String(10), nullable=False)
+    ultimo_numero = Column(Integer, nullable=False, default=0)
+
+
+class DocumentoFinanciero(Base):
+    """Expediente contable interno; no sustituye la emision electronica tributaria."""
+    __tablename__ = "documentos_financieros"
+    __table_args__ = (
+        UniqueConstraint("gimnasio_id", "tipo", "serie", "numero", name="uq_documento_correlativo"),
+        UniqueConstraint("clave_fuente_vigente", name="uq_documento_fuente_vigente"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    direccion = Column(String(10), nullable=False)  # ingreso | egreso
+    tipo = Column(String(30), nullable=False, index=True)
+    serie = Column(String(10), nullable=True)
+    numero = Column(Integer, nullable=True)
+    fecha_emision = Column(Date, nullable=False, default=hoy_lima, index=True)
+    emisor_documento = Column(String(20), nullable=True)
+    emisor_nombre = Column(String(200), nullable=True)
+    receptor_documento = Column(String(20), nullable=True)
+    receptor_nombre = Column(String(200), nullable=True)
+    subtotal = Column(Numeric(12, 2, asdecimal=False), nullable=False, default=0)
+    igv = Column(Numeric(12, 2, asdecimal=False), nullable=False, default=0)
+    total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    moneda = Column(String(10), nullable=False, default="S/")
+    estado = Column(String(15), nullable=False, default="borrador", index=True)
+    fuente_tipo = Column(String(30), nullable=True)
+    fuente_id = Column(Integer, nullable=True)
+    clave_fuente_vigente = Column(String(100), nullable=True)
+    descripcion_fuente = Column(String(300), nullable=True)
+    notas = Column(Text, nullable=True)
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    emitido_en = Column(DateTime, nullable=True)
+    emitido_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    anulado_en = Column(DateTime, nullable=True)
+    anulado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
+
+    archivos = relationship("DocumentoArchivo", back_populates="documento", cascade="all, delete-orphan", order_by="DocumentoArchivo.creado_en")
+
+
+class DocumentoArchivo(Base):
+    """Archivo inmutable de sustento (PDF, XML, imagen o ZIP/CDR)."""
+    __tablename__ = "documentos_archivos"
+    __table_args__ = (UniqueConstraint("documento_id", "sha256", name="uq_documento_archivo_hash"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    documento_id = Column(Integer, ForeignKey("documentos_financieros.id"), nullable=False, index=True)
+    nombre = Column(String(255), nullable=False)
+    tipo_mime = Column(String(100), nullable=False)
+    tamano = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    datos = deferred(Column(LargeBinary, nullable=False))
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+
+    documento = relationship("DocumentoFinanciero", back_populates="archivos")
 
 
 class MetaMensual(Base):

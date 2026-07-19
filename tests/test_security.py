@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend import auth, models, schemas
-from backend.main import _validar_y_optimizar_foto
+from backend.main import _validar_archivo_documento, _validar_y_optimizar_foto
 
 
 def test_codigo_acceso_se_guarda_como_hash_y_se_verifica():
@@ -106,3 +106,15 @@ def test_imagen_valida_puede_convertirse_a_webp():
     contenido, mime = _validar_y_optimizar_foto(salida.getvalue(), "image/png", optimizar=True)
     assert mime == "image/webp"
     assert contenido.startswith(b"RIFF")
+
+
+def test_sustento_disfrazado_de_pdf_es_rechazado():
+    with pytest.raises(HTTPException):
+        _validar_archivo_documento("factura.pdf", b"<script>alert(1)</script>")
+
+
+def test_xml_contable_debe_estar_bien_formado():
+    with pytest.raises(HTTPException):
+        _validar_archivo_documento("factura.xml", b"<factura><total>10</factura>")
+    mime, extension = _validar_archivo_documento("factura.xml", b"<factura><total>10</total></factura>")
+    assert (mime, extension) == ("application/xml", ".xml")

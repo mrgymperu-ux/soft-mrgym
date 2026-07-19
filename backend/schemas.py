@@ -1496,6 +1496,80 @@ class AjusteCajaCreate(BaseModel):
     referencia: Optional[str] = Field(default=None, max_length=200)
 
 
+class DocumentoFinancieroCreate(BaseModel):
+    direccion: str = Field(pattern="^(ingreso|egreso)$")
+    tipo: str = Field(pattern="^(boleta|factura|recibo|nota_credito|nota_debito|sustento_egreso|otro)$")
+    serie: Optional[str] = Field(default=None, max_length=10)
+    numero: Optional[int] = Field(default=None, ge=1)
+    fecha_emision: date = Field(default_factory=date.today)
+    emisor_documento: Optional[str] = Field(default=None, max_length=20)
+    emisor_nombre: Optional[str] = Field(default=None, max_length=200)
+    receptor_documento: Optional[str] = Field(default=None, max_length=20)
+    receptor_nombre: Optional[str] = Field(default=None, max_length=200)
+    subtotal: Optional[float] = Field(default=None, ge=0)
+    igv: float = Field(default=0, ge=0)
+    total: Optional[float] = Field(default=None, gt=0)
+    moneda: str = Field(default="S/", max_length=10)
+    fuente_tipo: Optional[str] = Field(default=None, pattern="^(venta|pago_membresia|compra|gasto|pago_servicio|pago_planilla|otro_ingreso)$")
+    fuente_id: Optional[int] = Field(default=None, ge=1)
+    notas: Optional[str] = Field(default=None, max_length=1000)
+
+
+class DocumentoFinancieroUpdate(BaseModel):
+    direccion: Optional[str] = Field(default=None, pattern="^(ingreso|egreso)$")
+    tipo: Optional[str] = Field(default=None, pattern="^(boleta|factura|recibo|nota_credito|nota_debito|sustento_egreso|otro)$")
+    serie: Optional[str] = Field(default=None, max_length=10)
+    numero: Optional[int] = Field(default=None, ge=1)
+    fecha_emision: Optional[date] = None
+    emisor_documento: Optional[str] = Field(default=None, max_length=20)
+    emisor_nombre: Optional[str] = Field(default=None, max_length=200)
+    receptor_documento: Optional[str] = Field(default=None, max_length=20)
+    receptor_nombre: Optional[str] = Field(default=None, max_length=200)
+    subtotal: Optional[float] = Field(default=None, ge=0)
+    igv: Optional[float] = Field(default=None, ge=0)
+    total: Optional[float] = Field(default=None, gt=0)
+    moneda: Optional[str] = Field(default=None, max_length=10)
+    notas: Optional[str] = Field(default=None, max_length=1000)
+
+
+class DocumentoArchivoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    tipo_mime: str
+    tamano: int
+    sha256: str
+    creado_en: datetime
+
+
+class DocumentoFinancieroOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    direccion: str
+    tipo: str
+    serie: Optional[str] = None
+    numero: Optional[int] = None
+    fecha_emision: date
+    emisor_documento: Optional[str] = None
+    emisor_nombre: Optional[str] = None
+    receptor_documento: Optional[str] = None
+    receptor_nombre: Optional[str] = None
+    subtotal: float
+    igv: float
+    total: float
+    moneda: str
+    estado: str
+    fuente_tipo: Optional[str] = None
+    fuente_id: Optional[int] = None
+    descripcion_fuente: Optional[str] = None
+    notas: Optional[str] = None
+    creado_en: datetime
+    emitido_en: Optional[datetime] = None
+    anulado_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
+    archivos: List[DocumentoArchivoOut] = []
+
+
 class CargoServicioCreate(BaseModel):
     servicio_id: int
     concepto: Optional[str] = None
@@ -1556,6 +1630,9 @@ class ConfiguracionBase(BaseModel):
     telefono: Optional[str] = None
     email: Optional[str] = None
     direccion: Optional[str] = None
+    ruc: Optional[str] = Field(default=None, pattern="^$|^[0-9]{11}$")
+    razon_social: Optional[str] = Field(default=None, max_length=200)
+    regimen_tributario: Optional[str] = Field(default=None, max_length=60)
     latitud: Optional[float] = Field(default=None, ge=-90, le=90)
     longitud: Optional[float] = Field(default=None, ge=-180, le=180)
     radio_asistencia_metros: float = Field(default=150.0, ge=20, le=2000)

@@ -39,6 +39,9 @@
                 <div class="form-group"><label>Telefono</label><input type="text" id="c-telefono" placeholder="999-999-999"></div>
                 <div class="form-group"><label>Email</label><input type="email" id="c-email" placeholder="info@gimnasio.com"></div>
                 <div class="form-group"><label>Direccion</label><input type="text" id="c-direccion" placeholder="Av. Principal 123"></div>
+                <div class="form-group"><label>RUC</label><input type="text" id="c-ruc" inputmode="numeric" maxlength="11" placeholder="11 digitos"></div>
+                <div class="form-group"><label>Razon social</label><input type="text" id="c-razon-social" maxlength="200"></div>
+                <div class="form-group"><label>Regimen tributario</label><select id="c-regimen"><option value="">Sin configurar</option><option>Nuevo RUS</option><option>Regimen Especial de Renta</option><option>Regimen MYPE Tributario</option><option>Regimen General</option></select></div>
                 <div class="form-group">
                     <label>Logo para tema claro</label>
                     <div id="logo-preview" style="margin-bottom:8px;"><p style="font-size:0.8em;color:#636E72;">Cargando...</p></div>
@@ -213,6 +216,9 @@
         document.getElementById("c-telefono").value = config.telefono || "";
         document.getElementById("c-email").value = config.email || "";
         document.getElementById("c-direccion").value = config.direccion || "";
+        document.getElementById("c-ruc").value = config.ruc || "";
+        document.getElementById("c-razon-social").value = config.razon_social || "";
+        document.getElementById("c-regimen").value = config.regimen_tributario || "";
         document.getElementById("c-latitud").value = config.latitud ?? "";
         document.getElementById("c-longitud").value = config.longitud ?? "";
         document.getElementById("c-buscar-direccion").value = config.direccion || "";
@@ -295,6 +301,9 @@
             telefono: document.getElementById("c-telefono").value.trim() || null,
             email: document.getElementById("c-email").value.trim() || null,
             direccion: document.getElementById("c-direccion").value.trim() || null,
+            ruc: document.getElementById("c-ruc").value.trim() || null,
+            razon_social: document.getElementById("c-razon-social").value.trim() || null,
+            regimen_tributario: document.getElementById("c-regimen").value || null,
             moneda: document.getElementById("c-moneda").value,
             comision_tarjeta: parseFloat(document.getElementById("c-tarjeta").value) || 0,
             comision_qr: parseFloat(document.getElementById("c-qr").value) || 0,

@@ -385,7 +385,7 @@ _ZONA_POR_PREFIJO = {
     "retos": "retos", "agenda": "agenda", "clases": "agenda", "reservas-sala": "agenda", "salas": "agenda",
     "planilla": "planilla", "pagos-planilla": "planilla",
     "servicios": "pagos", "cargos-servicio": "pagos", "pagos-servicio": "pagos",
-    "dashboard": "sistema", "reportes": "sistema", "caja": "sistema",
+    "dashboard": "sistema", "reportes": "sistema", "caja": "sistema", "documentos-financieros": "sistema",
     "ingresos": "sistema", "egresos": "sistema", "gastos": "sistema",
     "conceptos-ingreso": "sistema", "otros-ingresos": "sistema",
     "usuarios": "usuarios", "empleados": "usuarios", "puestos": "usuarios",

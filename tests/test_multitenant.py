@@ -30,6 +30,7 @@ from backend.main import (
     crear_equipamiento_personalizado,
     crear_concepto_ingreso,
     crear_ajuste_caja,
+    crear_documento_financiero,
     crear_paquete_rutina,
     crear_reserva_sala,
     crear_tipo_ejercicio,
@@ -42,12 +43,14 @@ from backend.main import (
     eliminar_compra,
     eliminar_pago_membresia,
     eliminar_venta,
+    emitir_documento_financiero,
     generar_rutinas_por_equipamiento,
     obtener_equipamiento_gimnasio,
     registrar_compra,
     registrar_entrada,
     registrar_salida,
     registrar_otro_ingreso,
+    resumen_documentos_financieros,
     recomendar_paquetes_rutina_cliente,
     renovar_suscripcion_saas,
     guardar_recomendacion_rutina,
@@ -381,6 +384,46 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(primero["id"], segundo["id"])
         self.assertEqual(self.db.query(models.AjusteCaja).count(), 1)
         self.assertEqual(caja_actual(db=self.db, usuario=self.admin1)["monto_esperado"], 100.0)
+
+    def test_documentos_reservan_correlativo_y_no_duplican_el_origen(self):
+        self.gym1.ruc = "20123456789"; self.gym1.razon_social = "Gimnasio Prueba SAC"
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Agua", precio_venta=10, stock=3)
+        self.db.add(producto); self.db.commit()
+        venta = crear_venta(
+            schemas.VentaCreate(metodo_pago="efectivo", detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=1, precio_unitario=10)]),
+            idempotency_key="venta-documento-prueba-0001", db=self.db, usuario_actual=self.admin1,
+        )
+        datos = schemas.DocumentoFinancieroCreate(
+            direccion="ingreso", tipo="boleta", fecha_emision=date.today(), igv=1.53,
+            fuente_tipo="venta", fuente_id=venta.id, receptor_nombre="Consumidor final",
+        )
+        documento = crear_documento_financiero(datos, idempotency_key="documento-prueba-0001", db=self.db, usuario=self.admin1)
+        emitido = emitir_documento_financiero(documento.id, db=self.db, usuario=self.admin1)
+        self.assertEqual((emitido.serie, emitido.numero, emitido.estado), ("B001", 1, "emitido"))
+        self.assertEqual(emitido.total, 10.0)
+
+        duplicado = crear_documento_financiero(datos, idempotency_key="documento-prueba-0002", db=self.db, usuario=self.admin1)
+        with self.assertRaises(HTTPException) as error:
+            emitir_documento_financiero(duplicado.id, db=self.db, usuario=self.admin1)
+        self.assertEqual(error.exception.status_code, 409)
+
+        resumen = resumen_documentos_financieros(date.today().year, date.today().month, db=self.db, usuario=self.admin1)
+        self.assertEqual(resumen["documentos_emitidos"], 1)
+        self.assertEqual(resumen["ingresos_total"], 10.0)
+        self.assertEqual(resumen["ingresos_igv"], 1.53)
+        self.assertEqual(resumen["movimientos_documentados"], 1)
+        self.assertEqual(resumen["movimientos_pendientes"], 0)
+
+    def test_documento_no_admite_origen_de_otro_gimnasio(self):
+        producto = models.Producto(gimnasio_id=self.gym2.id, nombre="Ajeno", precio_venta=15, stock=1)
+        venta = models.Venta(gimnasio_id=self.gym2.id, total=15, metodo_pago=models.MetodoPago.EFECTIVO)
+        self.db.add_all([producto, venta]); self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            crear_documento_financiero(
+                schemas.DocumentoFinancieroCreate(direccion="ingreso", tipo="recibo", fuente_tipo="venta", fuente_id=venta.id),
+                idempotency_key="documento-ajeno-prueba-0001", db=self.db, usuario=self.admin1,
+            )
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_venta_usa_precio_del_servidor(self):
         producto = models.Producto(

@@ -43,6 +43,18 @@ python scripts/restore_database.py backups/archivo.json.gz --confirm RESTORE_EMP
 - No ingresar mas de dos decimales en importes. El servidor normaliza los datos heredados a centimos durante la migracion.
 - Nunca corregir centimos directamente en la base de datos: usar el documento correspondiente o un ajuste de caja cuando el periodo ya fue cerrado.
 
+## Control documental mensual
+
+1. Configurar RUC, razon social y regimen en **Sistema > Configuracion**.
+2. Abrir **Sistema > Documentos** y seleccionar el mes. Revisar primero los movimientos pendientes de sustento.
+3. Preparar el expediente desde el movimiento original, completar IGV y los datos del cliente o proveedor, y guardarlo como borrador.
+4. Adjuntar los sustentos disponibles: PDF, XML, imagen o ZIP/CDR. Cada archivo queda identificado por su huella SHA-256.
+5. Revisar el borrador y emitirlo. La emision reserva el correlativo y bloquea la edicion.
+6. Si existe un error, anular con motivo y crear un nuevo expediente. Nunca reutilizar ni reducir correlativos.
+7. Antes del cierre mensual, comprobar que **Movimientos sin sustento** sea cero y exportar la informacion que solicite el contador.
+
+El resumen de IGV es referencial. Soft-Gym no reemplaza un sistema de emision electronica homologado, los libros electronicos, la declaracion tributaria ni la revision de un contador.
+
 ## Contingencia del counter
 
 Si el sistema no está disponible, registrar temporalmente en una hoja numerada: hora, alumno, operación, monto, método y responsable. Al restablecerse, cargar las operaciones indicando en notas el número de contingencia y conciliarlas antes del cierre de caja.

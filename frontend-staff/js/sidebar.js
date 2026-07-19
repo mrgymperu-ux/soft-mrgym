@@ -47,6 +47,7 @@ const NAV_ITEMS = [
         items: [
             { href: "dashboard.html", icono: "📊", texto: "Dashboard", zona: "sistema" },
             { href: "caja.html", icono: "🧮", texto: "Caja", zona: "sistema" },
+            { href: "documentos.html", icono: "🗂️", texto: "Documentos", zona: "sistema" },
             { href: "resumen.html",   icono: "📈", texto: "Resumen", zona: "sistema" },
             { href: "ingresos.html",  icono: "💰", texto: "Ingresos", zona: "sistema" },
             { href: "egresos.html",   icono: "📤", texto: "Egresos",  zona: "sistema" },
@@ -63,7 +64,7 @@ const PAGINAS_SOLO_STAFF = [
     "clientes.html", "membresias.html", "productos.html", "ventas.html",
     "venta-rapida.html", "planilla-staff.html", "planilla-profesores.html",
     "usuarios-staff.html", "usuarios-profesores.html", "pagos.html",
-    "configuracion.html", "metas.html", "reportes.html", "dashboard.html", "caja.html", "auditoria.html",
+    "configuracion.html", "metas.html", "reportes.html", "dashboard.html", "caja.html", "documentos.html", "auditoria.html",
 ];
 
 function renderSidebar() {
