@@ -251,10 +251,12 @@
     }
 
     async function eliminarGasto(gastoId) {
-        if (!(await confirmDialog("¿Eliminar este gasto?"))) return;
+        if (!(await confirmDialog("¿Anular este gasto? El registro se conservará."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(`/gastos/${gastoId}`, { method: "DELETE" });
-            showSuccess("Gasto eliminado");
+            await apiFetch(`/gastos/${gastoId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Gasto anulado");
             cargar();
         } catch (e) { showError(e.message); }
     }

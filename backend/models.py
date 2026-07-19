@@ -32,6 +32,7 @@ from sqlalchemy import (
     ForeignKey,
     Enum,
     UniqueConstraint,
+    Numeric,
 )
 from sqlalchemy.orm import relationship, deferred
 import enum
@@ -341,6 +342,21 @@ class IntentoAcceso(Base):
     actualizado_en = Column(DateTime, nullable=False, default=ahora_lima)
 
 
+class OperacionIdempotente(Base):
+    """Evita duplicar cobros cuando el navegador reintenta una solicitud."""
+    __tablename__ = "operaciones_idempotentes"
+    __table_args__ = (UniqueConstraint("gimnasio_id", "endpoint", "clave", name="uq_idempotencia_gym_endpoint_clave"),)
+
+    id = Column(Integer, primary_key=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    endpoint = Column(String(100), nullable=False)
+    clave = Column(String(100), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    recurso_tipo = Column(String(60), nullable=False)
+    recurso_id = Column(Integer, nullable=False)
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+
+
 class DispositivoCounter(Base):
     """Equipo compartido vinculado a un gimnasio mediante token revocable."""
     __tablename__ = "dispositivos_counter"
@@ -550,6 +566,10 @@ class ClienteMembresia(Base):
     # Efectivo vs Cuenta del Panel). Si el pago se hizo en partes con
     # distintos metodos, se guarda el del ultimo pago registrado.
     metodo_pago = Column(String, default="efectivo")
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     cliente = relationship("Cliente", back_populates="membresias_cliente")
     membresia = relationship("Membresia", back_populates="clientes_con_este_plan")
@@ -1253,6 +1273,10 @@ class PagoPlanilla(Base):
     # contra la suma de pagos ya hechos para ese mismo rango.
     desde = Column(Date, nullable=True)
     hasta = Column(Date, nullable=True)
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     empleado = relationship("Empleado")
 
@@ -1308,6 +1332,10 @@ class CargoServicio(Base):
     recurrente_tipo = Column(String, nullable=True)  # "semanal" | "mensual" | "anual"
     recurrente_dias_semana = Column(String, nullable=True)  # csv (lun,mar,...), solo si recurrente_tipo == "semanal"
     serie_id = Column(String, nullable=True, index=True)  # agrupa los cargos generados por una misma regla de recurrencia
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     servicio = relationship("Servicio", back_populates="cargos")
     pagos = relationship("PagoServicio", back_populates="cargo", cascade="all, delete-orphan")
@@ -1325,6 +1353,10 @@ class PagoServicio(Base):
     usuario_registro_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     # Origen de fondos del gimnasio: caja fisica o cuenta bancaria/digital.
     metodo_pago = Column(String, default="efectivo")
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     cargo = relationship("CargoServicio", back_populates="pagos")
 
@@ -1405,6 +1437,10 @@ class OtroIngreso(Base):
     metodo_pago = Column(String, default="efectivo")
     descripcion = Column(Text, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     concepto = relationship("ConceptoOtroIngreso")
 
@@ -1428,6 +1464,32 @@ class Gasto(Base):
     usuario_id     = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas          = Column(Text, nullable=True)
     metodo_pago    = Column(String, default="efectivo")  # efectivo | cuenta
+    anulada        = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en     = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
+
+
+class TurnoCaja(Base):
+    """Apertura y cierre verificable de la caja fisica del gimnasio."""
+    __tablename__ = "turnos_caja"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    clave_abierta = Column(String(80), unique=True, nullable=True)
+    estado = Column(String(20), nullable=False, default="abierta", index=True)
+    abierta_en = Column(DateTime, nullable=False, default=ahora_lima)
+    abierta_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    monto_apertura = Column(Numeric(12, 2), nullable=False, default=0)
+    nota_apertura = Column(Text, nullable=True)
+    cerrada_en = Column(DateTime, nullable=True)
+    cerrada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    ingresos_efectivo = Column(Numeric(12, 2), nullable=True)
+    egresos_efectivo = Column(Numeric(12, 2), nullable=True)
+    monto_esperado = Column(Numeric(12, 2), nullable=True)
+    monto_contado = Column(Numeric(12, 2), nullable=True)
+    diferencia = Column(Numeric(12, 2), nullable=True)
+    nota_cierre = Column(Text, nullable=True)
 
 
 class MetaMensual(Base):

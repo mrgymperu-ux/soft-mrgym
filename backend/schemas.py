@@ -532,6 +532,9 @@ class ClienteMembresia(BaseModel):
     metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
     vendido_por_id: Optional[int] = None
     activo: bool
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
     membresia: Optional[Membresia] = None
     pagos: List[PagoMembresiaOut] = []
 
@@ -1346,6 +1349,9 @@ class OtroIngreso(BaseModel):
     metodo_pago: str
     descripcion: Optional[str] = None
     concepto: Optional[ConceptoOtroIngreso] = None
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
 
 
 class GastoCreate(BaseModel):
@@ -1368,6 +1374,9 @@ class GastoOut(BaseModel):
     referencia_id: Optional[int] = None
     notas: Optional[str] = None
     metodo_pago: Optional[str] = None
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
 
 
 class ResumenIngresos(BaseModel):
@@ -1414,6 +1423,9 @@ class PagoPlanilla(BaseModel):
     hasta: Optional[date] = None
     empleado: Optional[Empleado] = None
     metodo_pago: Optional[str] = None
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
 
 
 # ==================================================================
@@ -1462,6 +1474,19 @@ class PagoServicio(BaseModel):
     notas: Optional[str] = None
     usuario_registro_id: Optional[int] = None
     metodo_pago: Optional[str] = "efectivo"
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
+
+
+class AperturaCajaRequest(BaseModel):
+    monto_apertura: float = Field(ge=0)
+    nota: Optional[str] = Field(default=None, max_length=500)
+
+
+class CierreCajaRequest(BaseModel):
+    monto_contado: float = Field(ge=0)
+    nota: Optional[str] = Field(default=None, max_length=500)
 
 
 class CargoServicioCreate(BaseModel):
@@ -1509,6 +1534,9 @@ class CargoServicio(BaseModel):
     # Calculados en el endpoint (no son columnas de la tabla)
     total_pagado: float = 0.0
     pendiente: float = 0.0
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    motivo_anulacion: Optional[str] = None
 
 
 # ==================================================================

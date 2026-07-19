@@ -12,6 +12,7 @@ Convencion de permisos:
 """
 
 from datetime import datetime, date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 import calendar
 import math
@@ -24,12 +25,13 @@ import time
 import logging
 import json
 import secrets
+import hashlib
 import urllib.request
 import unicodedata
 from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse
@@ -201,6 +203,41 @@ def q(db: Session, Model, usuario: models.Usuario):
     """
     gid = get_gid(usuario)
     return db.query(Model).filter(Model.gimnasio_id == gid)
+
+
+def _buscar_idempotente(db: Session, usuario: models.Usuario, endpoint: str, clave: Optional[str], payload: dict, Modelo):
+    """Devuelve el recurso ya creado si el navegador reenvia la misma operacion."""
+    if not isinstance(clave, str) or not clave:
+        return None
+    if len(clave) < 16 or len(clave) > 100:
+        raise HTTPException(status_code=400, detail="Clave de operacion invalida")
+    gid = get_gid(usuario)
+    # Serializa las operaciones financieras del gimnasio y evita carreras entre reintentos.
+    db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).with_for_update().first()
+    payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    registro = db.query(models.OperacionIdempotente).filter(
+        models.OperacionIdempotente.gimnasio_id == gid,
+        models.OperacionIdempotente.endpoint == endpoint,
+        models.OperacionIdempotente.clave == clave,
+    ).first()
+    if not registro:
+        return None
+    if registro.payload_hash != payload_hash:
+        raise HTTPException(status_code=409, detail="La clave de operacion ya fue usada con datos diferentes")
+    recurso = db.query(Modelo).filter(Modelo.id == registro.recurso_id).first()
+    if not recurso:
+        raise HTTPException(status_code=409, detail="La operacion ya fue procesada, pero su registro no esta disponible")
+    return recurso
+
+
+def _guardar_idempotencia(db: Session, usuario: models.Usuario, endpoint: str, clave: Optional[str], payload: dict, recurso_tipo: str, recurso_id: int):
+    if not isinstance(clave, str) or not clave:
+        return
+    db.add(models.OperacionIdempotente(
+        gimnasio_id=get_gid(usuario), endpoint=endpoint, clave=clave,
+        payload_hash=hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest(),
+        recurso_tipo=recurso_tipo, recurso_id=recurso_id,
+    ))
 
 
 def _del_gym(db: Session, Model, entidad_id: int, usuario: models.Usuario):
@@ -2685,10 +2722,13 @@ def listar_otros_ingresos(
     desde: Optional[date] = None,
     hasta: Optional[date] = None,
     limit: int = 100,
+    incluir_anulados: bool = False,
     db: Session = Depends(get_db),
     usuario=Depends(auth.requiere_staff),
 ):
     query = q(db, models.OtroIngreso, usuario)
+    if not incluir_anulados:
+        query = query.filter(models.OtroIngreso.anulada == False)
     if desde:
         query = query.filter(models.OtroIngreso.fecha >= datetime.combine(desde, datetime.min.time()))
     if hasta:
@@ -2697,24 +2737,33 @@ def listar_otros_ingresos(
 
 
 @app.post("/otros-ingresos/", response_model=schemas.OtroIngreso, tags=["Finanzas"])
-def registrar_otro_ingreso(datos: schemas.OtroIngresoCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+def registrar_otro_ingreso(datos: schemas.OtroIngresoCreate, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "otros-ingresos", idempotency_key, payload, models.OtroIngreso)
+    if previo:
+        return previo
     concepto = _del_gym(db, models.ConceptoOtroIngreso, datos.concepto_id, usuario)
     if not concepto or not concepto.activo:
         raise HTTPException(status_code=404, detail="Concepto de ingreso no encontrado")
     valores = datos.model_dump()
     valores["fecha"] = datos.fecha or ahora_lima()
     ingreso = models.OtroIngreso(**valores, gimnasio_id=get_gid(usuario), usuario_id=usuario.id)
-    db.add(ingreso); db.commit(); db.refresh(ingreso)
+    db.add(ingreso); db.flush()
+    _guardar_idempotencia(db, usuario, "otros-ingresos", idempotency_key, payload, "OtroIngreso", ingreso.id)
+    db.commit(); db.refresh(ingreso)
     return ingreso
 
 
 @app.delete("/otros-ingresos/{ingreso_id}", tags=["Finanzas"])
-def eliminar_otro_ingreso(ingreso_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+def eliminar_otro_ingreso(ingreso_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
     ingreso = _del_gym(db, models.OtroIngreso, ingreso_id, usuario)
     if not ingreso:
         raise HTTPException(status_code=404, detail="Ingreso no encontrado")
-    db.delete(ingreso); db.commit()
-    return {"ok": True}
+    if ingreso.anulada:
+        raise HTTPException(status_code=409, detail="El ingreso ya fue anulado")
+    ingreso.anulada = True; ingreso.anulada_en = ahora_lima(); ingreso.anulada_por_id = usuario.id; ingreso.motivo_anulacion = datos.motivo.strip()
+    db.commit()
+    return {"message": "Ingreso anulado"}
 
 @app.get("/ingresos/", tags=["Finanzas"])
 def listar_ingresos(
@@ -2789,6 +2838,7 @@ def listar_ingresos(
     if not tipo or tipo in ("otros", "otros_ingresos"):
         for ingreso in db.query(models.OtroIngreso).filter(
             models.OtroIngreso.gimnasio_id == get_gid(usuario),
+            models.OtroIngreso.anulada == False,
             models.OtroIngreso.fecha >= desde_dt,
             models.OtroIngreso.fecha <= hasta_dt,
         ).all():
@@ -2846,6 +2896,7 @@ def listar_egresos(
         for p in db.query(models.PagoPlanilla).filter(
             models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "staff",
+            models.PagoPlanilla.anulada == False,
             models.PagoPlanilla.fecha_pago >= desde_dt, models.PagoPlanilla.fecha_pago <= hasta_dt,
         ).all():
             detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_staff",
@@ -2856,6 +2907,7 @@ def listar_egresos(
         for p in db.query(models.PagoPlanilla).filter(
             models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "profesor",
+            models.PagoPlanilla.anulada == False,
             models.PagoPlanilla.fecha_pago >= desde_dt, models.PagoPlanilla.fecha_pago <= hasta_dt,
         ).all():
             periodo = f"{p.desde} al {p.hasta}" if p.desde and p.hasta else f"{p.mes}/{p.anio}"
@@ -2868,6 +2920,7 @@ def listar_egresos(
             models.CargoServicio, models.CargoServicio.id == models.PagoServicio.cargo_id
         ).filter(
             models.CargoServicio.gimnasio_id == get_gid(usuario),
+            models.PagoServicio.anulada == False,
             models.PagoServicio.fecha_pago >= desde_dt,
             models.PagoServicio.fecha_pago <= hasta_dt,
         ).all():
@@ -2882,6 +2935,7 @@ def listar_egresos(
         for g in db.query(models.Gasto).filter(
             models.Gasto.gimnasio_id == get_gid(usuario),
             models.Gasto.categoria == models.CategoriaGasto.OTROS,
+            models.Gasto.anulada == False,
             models.Gasto.fecha >= desde_dt, models.Gasto.fecha <= hasta_dt,
         ).all():
             detalle.append({"id": g.id, "fecha": g.fecha.isoformat(), "categoria": "otros",
@@ -2945,11 +2999,19 @@ def listar_egresos(
 @app.post("/gastos/", tags=["Finanzas"])
 def crear_gasto(
     datos: schemas.GastoCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "gastos", idempotency_key, payload, models.Gasto)
+    if previo:
+        return previo
     if datos.monto <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    categoria = datos.categoria.value if hasattr(datos.categoria, "value") else datos.categoria
+    if categoria != models.CategoriaGasto.OTROS.value:
+        raise HTTPException(status_code=400, detail="Compras, planilla y servicios deben registrarse desde su modulo para evitar egresos duplicados")
     g = models.Gasto(
         fecha=datos.fecha or ahora_lima(),
         categoria=datos.categoria,
@@ -2961,17 +3023,130 @@ def crear_gasto(
         metodo_pago=datos.metodo_pago,
         gimnasio_id=get_gid(usuario),
     )
-    db.add(g); db.commit(); db.refresh(g)
+    db.add(g); db.flush()
+    _guardar_idempotencia(db, usuario, "gastos", idempotency_key, payload, "Gasto", g.id)
+    db.commit(); db.refresh(g)
     return g
 
 
 @app.delete("/gastos/{gasto_id}", tags=["Finanzas"])
-def eliminar_gasto(gasto_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+def eliminar_gasto(gasto_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
     g = _del_gym(db, models.Gasto, gasto_id, usuario)
     if not g:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    db.delete(g); db.commit()
-    return {"message": "Gasto eliminado"}
+    if g.anulada:
+        raise HTTPException(status_code=409, detail="El gasto ya fue anulado")
+    g.anulada = True; g.anulada_en = ahora_lima(); g.anulada_por_id = usuario.id; g.motivo_anulacion = datos.motivo.strip()
+    db.commit()
+    return {"message": "Gasto anulado"}
+
+
+def _dinero(valor) -> Decimal:
+    return Decimal(str(valor or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _movimientos_caja(db: Session, gimnasio_id: int, desde: datetime, hasta: datetime) -> dict:
+    """Reconstruye el efectivo desde los documentos fuente, sin una suma editable."""
+    movimientos = []
+    def agregar(tipo, registro_id, fecha, descripcion, monto, direccion):
+        valor = _dinero(monto)
+        movimientos.append({"tipo": tipo, "id": registro_id, "fecha": fecha.isoformat(), "descripcion": descripcion,
+                            "monto": float(valor), "direccion": direccion})
+
+    pagos = db.query(models.PagoMembresia).join(models.ClienteMembresia).join(models.Cliente).filter(
+        models.Cliente.gimnasio_id == gimnasio_id, or_(models.PagoMembresia.anulada == False, models.PagoMembresia.anulada_en > hasta),
+        models.PagoMembresia.metodo_pago == "efectivo", models.PagoMembresia.fecha_pago >= desde, models.PagoMembresia.fecha_pago <= hasta,
+    ).all()
+    for p in pagos: agregar("membresia", p.id, p.fecha_pago, "Pago de membresia", p.monto, "ingreso")
+    for v in db.query(models.Venta).filter(models.Venta.gimnasio_id == gimnasio_id, or_(models.Venta.anulada == False, models.Venta.anulada_en > hasta),
+        models.Venta.metodo_pago == models.MetodoPago.EFECTIVO, models.Venta.fecha_venta >= desde, models.Venta.fecha_venta <= hasta).all():
+        agregar("venta", v.id, v.fecha_venta, f"Venta #{v.id}", v.total, "ingreso")
+    for i in db.query(models.OtroIngreso).filter(models.OtroIngreso.gimnasio_id == gimnasio_id, or_(models.OtroIngreso.anulada == False, models.OtroIngreso.anulada_en > hasta),
+        models.OtroIngreso.metodo_pago == "efectivo", models.OtroIngreso.fecha >= desde, models.OtroIngreso.fecha <= hasta).all():
+        agregar("otro_ingreso", i.id, i.fecha, i.descripcion or "Otro ingreso", i.monto, "ingreso")
+
+    for c in db.query(models.Compra).filter(models.Compra.gimnasio_id == gimnasio_id, or_(models.Compra.anulada == False, models.Compra.anulada_en > hasta),
+        models.Compra.metodo_pago == "efectivo", models.Compra.fecha >= desde, models.Compra.fecha <= hasta).all():
+        agregar("compra", c.id, c.fecha, f"Compra #{c.id}", c.costo_total, "egreso")
+    for p in db.query(models.PagoPlanilla).filter(models.PagoPlanilla.gimnasio_id == gimnasio_id, or_(models.PagoPlanilla.anulada == False, models.PagoPlanilla.anulada_en > hasta),
+        models.PagoPlanilla.metodo_pago == "efectivo", models.PagoPlanilla.fecha_pago >= desde, models.PagoPlanilla.fecha_pago <= hasta).all():
+        agregar("planilla", p.id, p.fecha_pago, f"Pago de planilla #{p.id}", p.monto_total, "egreso")
+    for p in db.query(models.PagoServicio).join(models.CargoServicio).filter(models.CargoServicio.gimnasio_id == gimnasio_id,
+        or_(models.PagoServicio.anulada == False, models.PagoServicio.anulada_en > hasta), models.PagoServicio.metodo_pago == "efectivo",
+        models.PagoServicio.fecha_pago >= desde, models.PagoServicio.fecha_pago <= hasta).all():
+        agregar("servicio", p.id, p.fecha_pago, f"Pago de servicio #{p.id}", p.monto, "egreso")
+    for g in db.query(models.Gasto).filter(models.Gasto.gimnasio_id == gimnasio_id, or_(models.Gasto.anulada == False, models.Gasto.anulada_en > hasta),
+        models.Gasto.categoria == models.CategoriaGasto.OTROS, models.Gasto.metodo_pago == "efectivo",
+        models.Gasto.fecha >= desde, models.Gasto.fecha <= hasta).all():
+        agregar("gasto", g.id, g.fecha, g.descripcion or "Gasto general", g.monto, "egreso")
+
+    ingresos = sum((_dinero(m["monto"]) for m in movimientos if m["direccion"] == "ingreso"), Decimal("0"))
+    egresos = sum((_dinero(m["monto"]) for m in movimientos if m["direccion"] == "egreso"), Decimal("0"))
+    movimientos.sort(key=lambda m: m["fecha"], reverse=True)
+    return {"ingresos_efectivo": float(ingresos), "egresos_efectivo": float(egresos), "movimientos": movimientos}
+
+
+def _resumen_turno_caja(db: Session, turno: models.TurnoCaja, hasta: Optional[datetime] = None) -> dict:
+    corte = hasta or turno.cerrada_en or ahora_lima()
+    conciliacion = _movimientos_caja(db, turno.gimnasio_id, turno.abierta_en, corte)
+    esperado = _dinero(turno.monto_apertura) + _dinero(conciliacion["ingresos_efectivo"]) - _dinero(conciliacion["egresos_efectivo"])
+    if turno.estado == "cerrada":
+        conciliacion["ingresos_efectivo"] = float(turno.ingresos_efectivo or 0)
+        conciliacion["egresos_efectivo"] = float(turno.egresos_efectivo or 0)
+    return {"id": turno.id, "estado": turno.estado, "abierta_en": turno.abierta_en.isoformat(),
+            "cerrada_en": turno.cerrada_en.isoformat() if turno.cerrada_en else None,
+            "monto_apertura": float(turno.monto_apertura), "monto_esperado": float(turno.monto_esperado if turno.monto_esperado is not None else esperado),
+            "monto_contado": float(turno.monto_contado) if turno.monto_contado is not None else None,
+            "diferencia": float(turno.diferencia) if turno.diferencia is not None else None,
+            "nota_apertura": turno.nota_apertura, "nota_cierre": turno.nota_cierre, **conciliacion}
+
+
+@app.get("/caja/actual", tags=["Caja"])
+def caja_actual(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    turno = q(db, models.TurnoCaja, usuario).filter(models.TurnoCaja.estado == "abierta").first()
+    return _resumen_turno_caja(db, turno) if turno else {"estado": "sin_apertura"}
+
+
+@app.post("/caja/abrir", tags=["Caja"])
+def abrir_caja(datos: schemas.AperturaCajaRequest, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "caja-abrir", idempotency_key, payload, models.TurnoCaja)
+    if previo: return _resumen_turno_caja(db, previo)
+    gid = get_gid(usuario)
+    if q(db, models.TurnoCaja, usuario).filter(models.TurnoCaja.estado == "abierta").first():
+        raise HTTPException(status_code=409, detail="Ya existe una caja abierta para este gimnasio")
+    turno = models.TurnoCaja(gimnasio_id=gid, clave_abierta=f"gym:{gid}", abierta_por_id=usuario.id,
+                             monto_apertura=_dinero(datos.monto_apertura), nota_apertura=datos.nota)
+    db.add(turno); db.flush()
+    _guardar_idempotencia(db, usuario, "caja-abrir", idempotency_key, payload, "TurnoCaja", turno.id)
+    db.commit(); db.refresh(turno)
+    return _resumen_turno_caja(db, turno)
+
+
+@app.post("/caja/cerrar", tags=["Caja"])
+def cerrar_caja(datos: schemas.CierreCajaRequest, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario, "caja-cerrar", idempotency_key, payload, models.TurnoCaja)
+    if previo: return _resumen_turno_caja(db, previo, previo.cerrada_en)
+    turno = q(db, models.TurnoCaja, usuario).filter(models.TurnoCaja.estado == "abierta").with_for_update().first()
+    if not turno: raise HTTPException(status_code=409, detail="No hay una caja abierta")
+    cierre = ahora_lima(); conciliacion = _movimientos_caja(db, get_gid(usuario), turno.abierta_en, cierre)
+    esperado = _dinero(turno.monto_apertura) + _dinero(conciliacion["ingresos_efectivo"]) - _dinero(conciliacion["egresos_efectivo"])
+    contado = _dinero(datos.monto_contado); diferencia = contado - esperado
+    if abs(diferencia) > Decimal("0.01") and not (datos.nota or "").strip():
+        raise HTTPException(status_code=400, detail="Explica la diferencia antes de cerrar la caja")
+    turno.estado = "cerrada"; turno.clave_abierta = None; turno.cerrada_en = cierre; turno.cerrada_por_id = usuario.id
+    turno.ingresos_efectivo = _dinero(conciliacion["ingresos_efectivo"]); turno.egresos_efectivo = _dinero(conciliacion["egresos_efectivo"])
+    turno.monto_esperado = esperado; turno.monto_contado = contado; turno.diferencia = diferencia; turno.nota_cierre = datos.nota
+    db.flush(); _guardar_idempotencia(db, usuario, "caja-cerrar", idempotency_key, payload, "TurnoCaja", turno.id)
+    db.commit(); db.refresh(turno)
+    return _resumen_turno_caja(db, turno, cierre)
+
+
+@app.get("/caja/historial", tags=["Caja"])
+def historial_caja(limit: int = Query(30, ge=1, le=200), db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    turnos = q(db, models.TurnoCaja, usuario).order_by(models.TurnoCaja.abierta_en.desc()).limit(limit).all()
+    return [_resumen_turno_caja(db, t, t.cerrada_en) for t in turnos]
 
 
 @app.get("/dashboard/stats", response_model=schemas.DashboardStats, tags=["Dashboard"])
@@ -3002,6 +3177,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     ingresos_mes += db.query(func.coalesce(func.sum(models.OtroIngreso.monto), 0.0)).filter(
         models.OtroIngreso.fecha >= datetime.combine(inicio_mes, datetime.min.time()),
         models.OtroIngreso.gimnasio_id == gid,
+        models.OtroIngreso.anulada == False,
     ).scalar()
 
     productos_bajo_stock = (
@@ -3450,7 +3626,7 @@ def _calcular_porcentaje_asistencia(db: Session, cliente_id: int) -> Optional[fl
     """Porcentaje de asistencia del cliente segun su ultimo plan."""
     ultimo_plan = (
         db.query(models.ClienteMembresia)
-        .filter(models.ClienteMembresia.cliente_id == cliente_id)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id, models.ClienteMembresia.anulada == False)
         .order_by(models.ClienteMembresia.fecha_inicio.desc())
         .first()
     )
@@ -4531,9 +4707,14 @@ async def importar_membresias(
 def asignar_membresia_a_cliente(
     cliente_id: int,
     datos: schemas.ClienteMembresiaCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(auth.requiere_staff),
 ):
+    payload = {"cliente_id_url": cliente_id, **datos.model_dump(mode="json")}
+    previo = _buscar_idempotente(db, usuario_actual, "asignar-membresia", idempotency_key, payload, models.ClienteMembresia)
+    if previo:
+        return previo
     gid = get_gid(usuario_actual)
     cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.gimnasio_id == gid).first()
     if not cliente:
@@ -4565,6 +4746,7 @@ def asignar_membresia_a_cliente(
         vendido_por_id=usuario_actual.id,
     )
     db.add(db_cm)
+    db.flush()
 
     # Registrar el pago inicial en el historial (si hay monto)
     if db_cm.monto_pagado and db_cm.monto_pagado > 0:
@@ -4576,8 +4758,6 @@ def asignar_membresia_a_cliente(
             registrado_por_id=usuario_actual.id,
             notas="Pago inicial al asignar membresía",
         )
-        db.add(db_cm)
-        db.flush()  # obtener db_cm.id
         pago_inicial.cliente_membresia_id = db_cm.id
         db.add(pago_inicial)
 
@@ -4595,6 +4775,7 @@ def asignar_membresia_a_cliente(
     if not cliente.activo:
         cliente.activo = True
 
+    _guardar_idempotencia(db, usuario_actual, "asignar-membresia", idempotency_key, payload, "ClienteMembresia", db_cm.id)
     db.commit()
     db.refresh(db_cm)
     return db_cm
@@ -4708,6 +4889,7 @@ def editar_cliente_membresia(
 def pagar_saldo_membresia(
     cm_id: int,
     datos: schemas.PagoSaldoRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
@@ -4720,6 +4902,10 @@ def pagar_saldo_membresia(
     cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
+    payload = {"cm_id": cm_id, **datos.model_dump(mode="json")}
+    previo = _buscar_idempotente(db, usuario, "pagar-saldo", idempotency_key, payload, models.PagoMembresia)
+    if previo:
+        return previo.cliente_membresia
 
     membresia = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
     precio = membresia.precio if membresia else 0
@@ -4755,6 +4941,8 @@ def pagar_saldo_membresia(
     elif datos.fecha_proximo_pago:
         cm.fecha_pago_saldo = datos.fecha_proximo_pago
 
+    db.flush()
+    _guardar_idempotencia(db, usuario, "pagar-saldo", idempotency_key, payload, "PagoMembresia", pago.id)
     db.commit()
     db.refresh(cm)
     return cm
@@ -4807,17 +4995,21 @@ def eliminar_pago_membresia(
 
 
 @app.delete("/cliente-membresias/{cm_id}", tags=["Membresias"])
-def eliminar_cliente_membresia(cm_id: int, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
-    """Elimina una membresia asignada por error (borrado real, corrige el historial). Solo administrador. Resincroniza las fechas de la ficha del cliente."""
+def eliminar_cliente_membresia(cm_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario=Depends(auth.requiere_administrador)):
+    """Anula una membresia y sus pagos sin destruir el historial."""
     cm = _cliente_membresia_del_gym(db, cm_id, usuario)
     if not cm:
         raise HTTPException(status_code=404, detail="Membresia asignada no encontrada")
-    cliente_id = cm.cliente_id
-    db.delete(cm)
-    db.flush()
+    if cm.anulada:
+        raise HTTPException(status_code=409, detail="La membresia asignada ya fue anulada")
+    cliente_id = cm.cliente_id; momento = ahora_lima(); motivo = datos.motivo.strip()
+    cm.activo = False; cm.anulada = True; cm.anulada_en = momento; cm.anulada_por_id = usuario.id; cm.motivo_anulacion = motivo
+    for pago in cm.pagos:
+        if not pago.anulada:
+            pago.anulada = True; pago.anulada_en = momento; pago.anulada_por_id = usuario.id; pago.motivo_anulacion = f"Membresia anulada: {motivo}"
     _sincronizar_fechas_cliente(db, cliente_id)
     db.commit()
-    return {"message": "Membresia asignada eliminada"}
+    return {"message": "Membresia asignada anulada"}
 
 
 @app.get("/clientes/{cliente_id}/membresias/{cm_id}/recibo.pdf", tags=["Membresias"])
@@ -5082,6 +5274,7 @@ def listar_compras(
 @app.post("/compras/", response_model=schemas.Compra, tags=["Productos"])
 def registrar_compra(
     datos: schemas.CompraCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(auth.requiere_staff),
 ):
@@ -5090,6 +5283,10 @@ def registrar_compra(
     producto, actualiza su precio_compra (el mas reciente) y queda
     como egreso en /egresos/ y /resumen (categoria compra_producto).
     """
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario_actual, "compras", idempotency_key, payload, models.Compra)
+    if previo:
+        return previo
     if datos.cantidad <= 0:
         raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
     if datos.costo_unitario < 0:
@@ -5115,6 +5312,8 @@ def registrar_compra(
     producto.stock += datos.cantidad
     producto.precio_compra = datos.costo_unitario
 
+    db.flush()
+    _guardar_idempotencia(db, usuario_actual, "compras", idempotency_key, payload, "Compra", db_compra.id)
     db.commit()
     db.refresh(db_compra)
     return db_compra
@@ -5439,7 +5638,11 @@ def boleta_venta_pdf(venta_id: int, db: Session = Depends(get_db), usuario: mode
 
 
 @app.post("/ventas/", response_model=schemas.Venta, tags=["Ventas"])
-def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuario_actual: models.Usuario = Depends(auth.requiere_staff)):
+def crear_venta(venta: schemas.VentaCreate, idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"), db: Session = Depends(get_db), usuario_actual: models.Usuario = Depends(auth.requiere_staff)):
+    payload = venta.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario_actual, "ventas", idempotency_key, payload, models.Venta)
+    if previo:
+        return previo
     if not venta.detalles:
         raise HTTPException(status_code=400, detail="La venta debe tener al menos un producto")
 
@@ -5493,6 +5696,8 @@ def crear_venta(venta: schemas.VentaCreate, db: Session = Depends(get_db), usuar
         gimnasio_id=gid,
     )
     db.add(db_venta)
+    db.flush()
+    _guardar_idempotencia(db, usuario_actual, "ventas", idempotency_key, payload, "Venta", db_venta.id)
     db.commit()
     db.refresh(db_venta)
     return db_venta
@@ -7324,6 +7529,7 @@ def calcular_planilla_profesor(
             models.PagoPlanilla.empleado_id == profesor_id,
             models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "profesor",
+            models.PagoPlanilla.anulada == False,
             models.PagoPlanilla.desde == desde,
             models.PagoPlanilla.hasta == hasta,
         )
@@ -7441,6 +7647,7 @@ def calcular_planilla_staff(
             models.PagoPlanilla.empleado_id == empleado_id,
             models.PagoPlanilla.gimnasio_id == get_gid(usuario),
             models.PagoPlanilla.tipo == "staff",
+            models.PagoPlanilla.anulada == False,
             models.PagoPlanilla.anio == anio,
             models.PagoPlanilla.mes == mes,
         )
@@ -7467,6 +7674,7 @@ def calcular_planilla_staff(
 @app.post("/pagos-planilla/", response_model=schemas.PagoPlanilla, tags=["Personal"])
 def crear_pago_planilla(
     datos: schemas.PagoPlanillaCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(auth.requiere_staff),
 ):
@@ -7479,6 +7687,10 @@ def crear_pago_planilla(
     servidor, no confia en lo que mande el frontend): no se puede
     registrar un pago que supere lo que efectivamente se debe.
     """
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario_actual, "pagos-planilla", idempotency_key, payload, models.PagoPlanilla)
+    if previo:
+        return previo
     if datos.tipo not in ("staff", "profesor"):
         raise HTTPException(status_code=400, detail="tipo debe ser 'staff' o 'profesor'")
     empleado = _del_gym(db, models.Empleado, datos.empleado_id, usuario_actual)
@@ -7514,6 +7726,8 @@ def crear_pago_planilla(
         gimnasio_id=get_gid(usuario_actual),
     )
     db.add(db_pago)
+    db.flush()
+    _guardar_idempotencia(db, usuario_actual, "pagos-planilla", idempotency_key, payload, "PagoPlanilla", db_pago.id)
     db.commit()
     db.refresh(db_pago)
     return db_pago
@@ -7525,11 +7739,14 @@ def listar_pagos_planilla(
     empleado_id: Optional[int] = None,
     desde: Optional[date] = None,
     hasta: Optional[date] = None,
+    incluir_anulados: bool = False,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
     """Historial de pagos de planilla, con filtros de tipo, trabajador/profesor y rango de fechas (sobre fecha_pago)."""
     query = q(db, models.PagoPlanilla, usuario)
+    if not incluir_anulados:
+        query = query.filter(models.PagoPlanilla.anulada == False)
     if tipo:
         query = query.filter(models.PagoPlanilla.tipo == tipo)
     if empleado_id:
@@ -7558,6 +7775,8 @@ def editar_pago_planilla(
     pago = _del_gym(db, models.PagoPlanilla, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
+    if pago.anulada:
+        raise HTTPException(status_code=409, detail="Un pago anulado no se puede editar")
 
     datos_dict = datos.model_dump(exclude_unset=True)
 
@@ -7599,14 +7818,16 @@ def editar_pago_planilla(
 
 
 @app.delete("/pagos-planilla/{pago_id}", tags=["Personal"])
-def eliminar_pago_planilla(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
-    """Elimina un pago registrado por error. No recalcula nada automaticamente; el pendiente se vuelve a calcular solo."""
+def eliminar_pago_planilla(pago_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Anula un pago conservando su evidencia y recalculando el pendiente."""
     pago = _del_gym(db, models.PagoPlanilla, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
-    db.delete(pago)
+    if pago.anulada:
+        raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    pago.anulada = True; pago.anulada_en = ahora_lima(); pago.anulada_por_id = usuario.id; pago.motivo_anulacion = datos.motivo.strip()
     db.commit()
-    return {"message": "Pago eliminado"}
+    return {"message": "Pago anulado"}
 
 
 @app.get("/pagos-planilla/{pago_id}/recibo.pdf", tags=["Personal"])
@@ -7674,7 +7895,7 @@ def actualizar_servicio(servicio_id: int, datos: schemas.ServicioUpdate, db: Ses
 
 
 def _cargo_con_totales(cargo: models.CargoServicio) -> models.CargoServicio:
-    total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+    total_pagado = round(sum(p.monto for p in cargo.pagos if not p.anulada), 2)
     cargo.total_pagado = total_pagado
     cargo.pendiente = round(cargo.monto_total - total_pagado, 2)
     return cargo
@@ -7686,6 +7907,7 @@ def listar_cargos_servicio(
     anio: Optional[int] = None,
     mes: Optional[int] = None,
     solo_pendientes: bool = False,
+    incluir_anulados: bool = False,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
@@ -7695,6 +7917,8 @@ def listar_cargos_servicio(
     (anio/mes), pensado para la vista mensual de Pagos > Servicios.
     """
     query = q(db, models.CargoServicio, usuario)
+    if not incluir_anulados:
+        query = query.filter(models.CargoServicio.anulada == False)
     if servicio_id:
         query = query.filter(models.CargoServicio.servicio_id == servicio_id)
     if anio:
@@ -7837,7 +8061,7 @@ def actualizar_cargo_servicio(
     if "monto_total" in datos_dict and datos_dict["monto_total"] is not None:
         if datos_dict["monto_total"] <= 0:
             raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
-        total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+        total_pagado = round(sum(p.monto for p in cargo.pagos if not p.anulada), 2)
         if datos_dict["monto_total"] < total_pagado:
             raise HTTPException(status_code=400, detail=f"El nuevo monto no puede ser menor a lo ya pagado ({total_pagado:.2f})")
     for campo, valor in datos_dict.items():
@@ -7848,29 +8072,40 @@ def actualizar_cargo_servicio(
 
 
 @app.delete("/cargos-servicio/{cargo_id}", tags=["Servicios"])
-def eliminar_cargo_servicio(cargo_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
-    """Elimina un cargo (y sus pagos asociados, si tuviera) registrado por error."""
+def eliminar_cargo_servicio(cargo_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_permiso_eliminar)):
+    """Anula un cargo y sus pagos asociados conservando la evidencia."""
     cargo = db.query(models.CargoServicio).filter(models.CargoServicio.id == cargo_id, models.CargoServicio.gimnasio_id == get_gid(usuario)).first()
     if not cargo:
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
-    db.delete(cargo)
+    if cargo.anulada:
+        raise HTTPException(status_code=409, detail="El cargo ya fue anulado")
+    momento = ahora_lima(); motivo = datos.motivo.strip()
+    cargo.anulada = True; cargo.anulada_en = momento; cargo.anulada_por_id = usuario.id; cargo.motivo_anulacion = motivo
+    for pago in cargo.pagos:
+        if not pago.anulada:
+            pago.anulada = True; pago.anulada_en = momento; pago.anulada_por_id = usuario.id; pago.motivo_anulacion = f"Cargo anulado: {motivo}"
     db.commit()
-    return {"message": "Cargo eliminado"}
+    return {"message": "Cargo anulado"}
 
 
 @app.post("/pagos-servicio/", response_model=schemas.PagoServicio, tags=["Servicios"])
 def crear_pago_servicio(
     datos: schemas.PagoServicioCreate,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(auth.requiere_staff),
 ):
     """Registra un pago (total o parcial) contra un cargo de servicio, validando que no supere el saldo pendiente real (recalculado en el servidor)."""
+    payload = datos.model_dump(mode="json")
+    previo = _buscar_idempotente(db, usuario_actual, "pagos-servicio", idempotency_key, payload, models.PagoServicio)
+    if previo:
+        return previo
     cargo = _del_gym(db, models.CargoServicio, datos.cargo_id, usuario_actual)
     if not cargo:
         raise HTTPException(status_code=404, detail="Cargo no encontrado")
     if datos.monto <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
-    total_pagado = round(sum(p.monto for p in cargo.pagos), 2)
+    total_pagado = round(sum(p.monto for p in cargo.pagos if not p.anulada), 2)
     pendiente = round(cargo.monto_total - total_pagado, 2)
     if datos.monto > pendiente + 0.01:
         raise HTTPException(status_code=400, detail=f"El monto ({datos.monto:.2f}) supera el saldo pendiente ({pendiente:.2f})")
@@ -7880,16 +8115,20 @@ def crear_pago_servicio(
         usuario_registro_id=usuario_actual.id,
     )
     db.add(db_pago)
+    db.flush()
+    _guardar_idempotencia(db, usuario_actual, "pagos-servicio", idempotency_key, payload, "PagoServicio", db_pago.id)
     db.commit()
     db.refresh(db_pago)
     return db_pago
 
 
 @app.get("/pagos-servicio/", response_model=List[schemas.PagoServicio], tags=["Servicios"])
-def listar_pagos_servicio(cargo_id: Optional[int] = None, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+def listar_pagos_servicio(cargo_id: Optional[int] = None, incluir_anulados: bool = False, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
     query = db.query(models.PagoServicio).join(
         models.CargoServicio, models.CargoServicio.id == models.PagoServicio.cargo_id
     ).filter(models.CargoServicio.gimnasio_id == get_gid(usuario))
+    if not incluir_anulados:
+        query = query.filter(models.PagoServicio.anulada == False)
     if cargo_id:
         query = query.filter(models.PagoServicio.cargo_id == cargo_id)
     return query.order_by(models.PagoServicio.fecha_pago.desc()).all()
@@ -7906,13 +8145,15 @@ def editar_pago_servicio(
     pago = _pago_servicio_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
+    if pago.anulada:
+        raise HTTPException(status_code=409, detail="Un pago anulado no se puede editar")
     datos_dict = datos.model_dump(exclude_unset=True)
     if "monto" in datos_dict and datos_dict["monto"] is not None:
         nuevo_monto = datos_dict["monto"]
         if nuevo_monto <= 0:
             raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
         cargo = pago.cargo
-        pagado_sin_este = round(sum(p.monto for p in cargo.pagos if p.id != pago.id), 2)
+        pagado_sin_este = round(sum(p.monto for p in cargo.pagos if p.id != pago.id and not p.anulada), 2)
         pendiente_sin_este = round(cargo.monto_total - pagado_sin_este, 2)
         if nuevo_monto > pendiente_sin_este + 0.01:
             raise HTTPException(status_code=400, detail=f"El monto ({nuevo_monto:.2f}) supera el saldo disponible ({pendiente_sin_este:.2f}, sin contar este pago).")
@@ -7927,14 +8168,16 @@ def editar_pago_servicio(
 
 
 @app.delete("/pagos-servicio/{pago_id}", tags=["Servicios"])
-def eliminar_pago_servicio(pago_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
-    """Elimina un pago registrado por error. El pendiente del cargo se recalcula solo."""
+def eliminar_pago_servicio(pago_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Anula un pago; el pendiente se recalcula sin borrar evidencia."""
     pago = _pago_servicio_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
-    db.delete(pago)
+    if pago.anulada:
+        raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    pago.anulada = True; pago.anulada_en = ahora_lima(); pago.anulada_por_id = usuario.id; pago.motivo_anulacion = datos.motivo.strip()
     db.commit()
-    return {"message": "Pago eliminado"}
+    return {"message": "Pago anulado"}
 
 
 # ==================================================================

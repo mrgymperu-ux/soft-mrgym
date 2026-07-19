@@ -349,10 +349,12 @@
     }
 
     async function eliminarPago(pagoId) {
-        if (!(await confirmDialog("¿Eliminar este pago? El pendiente del periodo se recalculará solo."))) return;
+        if (!(await confirmDialog("¿Anular este pago? El pendiente se recalculará y el registro se conservará."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE" });
-            showSuccess("Pago eliminado");
+            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Pago anulado");
             cargarHistorialPagos();
             if (ultimoResumen) calcularPlanilla();
         } catch (e) { showError(e.message); }

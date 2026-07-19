@@ -15,6 +15,7 @@ const SESSION_KEYS = {
     nombre: "mrgym_nombre",
 };
 let _syncVersionStaff = Number(sessionStorage.getItem("mrgym_sync_version") || 0);
+const _operacionesEnCurso = new Map();
 
 function _registrarVersionStaff(response) {
     const version = Number(response.headers.get("X-Sync-Version") || 0);
@@ -85,6 +86,16 @@ async function apiFetch(path, options = {}) {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     const token = getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
+    const metodo = String(options.method || "GET").toUpperCase();
+    const huellaOperacion = metodo === "POST" ? `${path}|${options.body || ""}` : null;
+    if (huellaOperacion && !headers["Idempotency-Key"]) {
+        let pendiente = _operacionesEnCurso.get(huellaOperacion);
+        if (!pendiente) {
+            pendiente = { clave: crypto.randomUUID(), vence: Date.now() + 120000 };
+            _operacionesEnCurso.set(huellaOperacion, pendiente);
+        }
+        headers["Idempotency-Key"] = pendiente.clave;
+    }
 
     let response;
     try {
@@ -99,6 +110,13 @@ async function apiFetch(path, options = {}) {
 
     let data = null;
     try { data = await response.json(); } catch {}
+
+    // Una respuesta definitiva permite una operacion nueva. Ante error del
+    // servidor se conserva la clave para que Reintentar no duplique el cobro.
+    if (huellaOperacion && (response.ok || response.status < 500)) _operacionesEnCurso.delete(huellaOperacion);
+    for (const [huella, pendiente] of _operacionesEnCurso) {
+        if (pendiente.vence < Date.now()) _operacionesEnCurso.delete(huella);
+    }
 
     if (!response.ok) {
         const mensaje = (data && data.detail) ? data.detail : `Error ${response.status}`;

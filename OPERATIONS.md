@@ -28,6 +28,13 @@ python scripts/restore_database.py backups/archivo.json.gz --confirm RESTORE_EMP
 - Ante diferencias de stock o caja, conservar evidencia, registrar el incidente y realizar un contramovimiento.
 - Antes de cada despliegue con migraciones, comprobar que el último respaldo diario terminó correctamente.
 
+## Operacion diaria de caja
+
+1. Abrir **Sistema > Caja** al comenzar el turno y registrar el efectivo contado.
+2. Registrar cada cobro o egreso desde su modulo; la caja se actualiza desde esos documentos, no mediante ajustes manuales.
+3. Al finalizar, contar el efectivo y cerrar la caja. Toda diferencia mayor a un centimo exige una explicacion.
+4. No editar documentos de un turno ya cerrado para cuadrar una diferencia: anular con motivo y registrar la operacion correcta.
+
 ## Contingencia del counter
 
 Si el sistema no está disponible, registrar temporalmente en una hoja numerada: hora, alumno, operación, monto, método y responsable. Al restablecerse, cargar las operaciones indicando en notas el número de contingencia y conciliarlas antes del cierre de caja.

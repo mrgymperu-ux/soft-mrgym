@@ -1107,10 +1107,12 @@
     }
 
     async function eliminarCM(cmId) {
-        if (!(await confirmDialog("¿Eliminar esta membresía asignada? Esta acción corrige el historial y no se puede deshacer."))) return;
+        if (!(await confirmDialog("¿Anular esta membresía asignada? Se conservarán la membresía y sus pagos."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(`/cliente-membresias/${cmId}`, { method: "DELETE" });
-            showSuccess("Membresía eliminada");
+            await apiFetch(`/cliente-membresias/${cmId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Membresía anulada");
             cargarMembresiasCliente();
         } catch (e) { showError(e.message); }
     }

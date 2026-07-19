@@ -598,11 +598,13 @@
     }
 
     async function eliminarPagoPlanilla(pagoId) {
-        if (!(await confirmDialog("¿Eliminar este pago? La deuda se recalculará sola."))) return;
+        if (!(await confirmDialog("¿Anular este pago? La deuda se recalculará y el registro se conservará."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         const pago = pagosPlanillaCache.find(p => p.id === pagoId);
         try {
-            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE" });
-            showSuccess("Pago eliminado");
+            await apiFetch(`/pagos-planilla/${pagoId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Pago anulado");
             if (pago && pago.tipo === "staff") { cargarHistorialStaff(); if (resumenStaffActual) verDetalleStaff(); }
             else { cargarHistorialProfesor(); if (resumenProfActual) verDetalleProfesor(); }
         } catch (e) { showError(e.message); }
@@ -778,10 +780,12 @@
     }
 
     async function eliminarCargo(cargoId) {
-        if (!(await confirmDialog("¿Eliminar este cargo y sus pagos asociados?"))) return;
+        if (!(await confirmDialog("¿Anular este cargo y sus pagos asociados? Se conservará el historial."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(`/cargos-servicio/${cargoId}`, { method: "DELETE" });
-            showSuccess("Cargo eliminado");
+            await apiFetch(`/cargos-servicio/${cargoId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Cargo anulado");
             cargarCargosServicio();
         } catch (e) { showError(e.message); }
     }

@@ -24,6 +24,7 @@ from backend.main import (
     _porcion_cliente_facil,
     _sembrar_datos_gimnasio_nuevo,
     asignar_paquete_rutina,
+    abrir_caja,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
     crear_equipamiento_personalizado,
@@ -33,6 +34,8 @@ from backend.main import (
     crear_tipo_ejercicio,
     crear_usuario,
     crear_venta,
+    cerrar_caja,
+    caja_actual,
     consultar_auditoria,
     contenido_foto_cliente,
     eliminar_compra,
@@ -323,6 +326,37 @@ class MultiTenantTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:
             auth.requiere_staff(_request("/configuracion/", method="PUT"), self.staff1)
         self.assertEqual(error.exception.status_code, 403)
+
+    def test_reintento_de_venta_no_duplica_cobro_ni_descuenta_stock_dos_veces(self):
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Agua", precio_venta=5, stock=10)
+        self.db.add(producto); self.db.commit()
+        datos = schemas.VentaCreate(
+            metodo_pago="efectivo",
+            detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=2, precio_unitario=5)],
+        )
+        clave = "operacion-venta-prueba-0001"
+        primera = crear_venta(datos, idempotency_key=clave, db=self.db, usuario_actual=self.admin1)
+        segunda = crear_venta(datos, idempotency_key=clave, db=self.db, usuario_actual=self.admin1)
+        self.db.refresh(producto)
+        self.assertEqual(primera.id, segunda.id)
+        self.assertEqual(producto.stock, 8)
+        self.assertEqual(self.db.query(models.Venta).count(), 1)
+
+    def test_cierre_de_caja_exige_explicar_diferencia_y_conserva_snapshot(self):
+        abrir_caja(schemas.AperturaCajaRequest(monto_apertura=100), idempotency_key="apertura-caja-prueba-0001", db=self.db, usuario=self.admin1)
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Agua", precio_venta=10, stock=2)
+        self.db.add(producto); self.db.commit()
+        crear_venta(
+            schemas.VentaCreate(metodo_pago="efectivo", detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=1, precio_unitario=10)]),
+            idempotency_key="venta-caja-prueba-0001", db=self.db, usuario_actual=self.admin1,
+        )
+        actual = caja_actual(db=self.db, usuario=self.admin1)
+        self.assertEqual(actual["monto_esperado"], 110.0)
+        with self.assertRaises(HTTPException):
+            cerrar_caja(schemas.CierreCajaRequest(monto_contado=105), idempotency_key="cierre-caja-prueba-0001", db=self.db, usuario=self.admin1)
+        cierre = cerrar_caja(schemas.CierreCajaRequest(monto_contado=105, nota="Faltante pendiente de revision"), idempotency_key="cierre-caja-prueba-0002", db=self.db, usuario=self.admin1)
+        self.assertEqual(cierre["diferencia"], -5.0)
+        self.assertEqual(self.db.query(models.TurnoCaja).one().estado, "cerrada")
 
     def test_venta_usa_precio_del_servidor(self):
         producto = models.Producto(
