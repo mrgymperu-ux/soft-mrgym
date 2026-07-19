@@ -33,7 +33,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_
 from sqlalchemy.orm import Session
 
 from . import models, schemas, auth, pdf_generator, email_service
@@ -846,6 +846,80 @@ def readiness(db: Session = Depends(get_db)):
     except Exception:
         logger.exception("Fallo la comprobacion de disponibilidad")
         return JSONResponse(status_code=503, content={"status": "not_ready", "database": "error"})
+
+
+@app.get("/sistema/preparacion-produccion", tags=["Sistema"])
+def preparacion_produccion(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Diagnostico sin exponer secretos para activar controles de produccion."""
+    entorno_produccion = os.getenv("ENVIRONMENT", "").lower() in {"production", "prod"}
+    secreto_seguro = auth.SECRET_KEY != "cambiar-esta-clave-en-produccion-no-usar-en-real"
+    postgres = SQLALCHEMY_DATABASE_URL.startswith(("postgresql://", "postgresql+"))
+    app_base = os.getenv("APP_BASE_URL", "").strip()
+    url_https = app_base.startswith("https://")
+    correo_configurado = email_service.esta_configurado()
+    verificacion_activa = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true"
+    cuentas_pendientes = db.query(func.count(models.Usuario.id)).filter(
+        models.Usuario.gimnasio_id == usuario.gimnasio_id,
+        models.Usuario.activo == True,
+        or_(models.Usuario.email.is_(None), models.Usuario.email_verificado != True),
+    ).scalar() or 0
+    try:
+        migracion = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+        db.execute(text("SELECT COUNT(*) FROM intentos_acceso")).scalar()
+        bloqueo_persistente = True
+    except Exception:
+        db.rollback()
+        migracion = None
+        bloqueo_persistente = False
+
+    correo_puede_activarse = correo_configurado and url_https and cuentas_pendientes == 0
+    comprobaciones = [
+        {"nombre": "Entorno de produccion", "ok": entorno_produccion, "detalle": "Activo" if entorno_produccion else "Modo de desarrollo"},
+        {"nombre": "Clave de seguridad", "ok": secreto_seguro, "detalle": "Configurada" if secreto_seguro else "Falta configurar"},
+        {"nombre": "Base PostgreSQL", "ok": postgres, "detalle": "Conectada" if postgres else "Base local"},
+        {"nombre": "Bloqueo de accesos persistente", "ok": bloqueo_persistente, "detalle": "Activo" if bloqueo_persistente else "Migracion pendiente"},
+        {"nombre": "URL publica segura", "ok": url_https, "detalle": "HTTPS activo" if url_https else "Falta APP_BASE_URL con HTTPS"},
+        {"nombre": "Proveedor de correo", "ok": correo_configurado, "detalle": "Configurado" if correo_configurado else "Faltan credenciales de correo"},
+        {"nombre": "Cuentas con correo verificado", "ok": cuentas_pendientes == 0, "detalle": "Todas listas" if cuentas_pendientes == 0 else f"{cuentas_pendientes} cuenta(s) pendiente(s)"},
+        {"nombre": "Verificacion de correo", "ok": verificacion_activa, "detalle": "Obligatoria" if verificacion_activa else "Aun no obligatoria"},
+    ]
+    return {
+        "estado": "listo" if all(item["ok"] for item in comprobaciones[:5]) else "requiere_atencion",
+        "migracion": migracion,
+        "correo_puede_activarse": correo_puede_activarse,
+        "correo_configurado": correo_configurado and url_https,
+        "verificacion_correo_activa": verificacion_activa,
+        "comprobaciones": comprobaciones,
+        "respaldo": "Revisar en GitHub que el respaldo diario tenga una ejecucion exitosa",
+    }
+
+
+@app.post("/sistema/probar-correo", tags=["Sistema"])
+def probar_correo_produccion(
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    if not email_service.esta_configurado():
+        raise HTTPException(status_code=503, detail="El proveedor de correo aun no esta configurado")
+    if not usuario.email:
+        raise HTTPException(status_code=400, detail="Tu usuario administrador no tiene correo registrado")
+    try:
+        email_service.enviar(
+            usuario.email,
+            "Prueba de correo de Soft-Gym",
+            email_service.plantilla_accion(
+                "Correo configurado correctamente",
+                "Soft-Gym pudo enviar este mensaje desde el entorno de produccion.",
+                "Abrir Soft-Gym",
+                os.getenv("APP_BASE_URL", "https://soft-mrgym.onrender.com"),
+            ),
+        )
+    except Exception as exc:
+        logger.exception("Fallo la prueba de correo de produccion")
+        raise HTTPException(status_code=502, detail="El proveedor no pudo entregar el correo de prueba") from exc
+    return {"message": "Correo de prueba enviado al administrador"}
 
 
 @app.get("/sync-version", tags=["Sistema"])
@@ -1926,15 +2000,15 @@ def qr_portal_alumno(slug: str, portal: str = "alumno", db: Session = Depends(ge
 def login_staff_profesor(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Login de staff y profesores con username + password."""
     clave = auth.clave_rate_limit(request, "staff", datos.username)
-    auth.exigir_intentos_disponibles(clave)
+    auth.exigir_intentos_disponibles(clave, db)
     usuario = auth.autenticar_usuario(db, datos.username, datos.password)
     if not usuario:
-        auth.login_rate_limiter.registrar_fallo(clave)
+        auth.registrar_fallo_login(db, clave)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-    if os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true" and usuario.email and not usuario.email_verificado:
+    auth.limpiar_fallos_login(db, clave)
+    if os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true" and (not usuario.email or not usuario.email_verificado):
         raise HTTPException(status_code=403, detail="Debes verificar tu correo antes de ingresar")
 
-    auth.login_rate_limiter.limpiar(clave)
     # Obtener slug del gimnasio para el frontend
     gym_slug = None
     if usuario.gimnasio_id:
@@ -2056,16 +2130,18 @@ def login_counter(datos: schemas.CounterLoginRequest, request: Request, db: Sess
     if not dispositivo:
         raise HTTPException(status_code=401, detail="Dispositivo no vinculado o revocado")
     clave = auth.clave_rate_limit(request, "counter", str(datos.usuario_id), str(dispositivo.id))
-    auth.exigir_intentos_disponibles(clave)
+    auth.exigir_intentos_disponibles(clave, db)
     usuario = db.query(models.Usuario).filter(
         models.Usuario.id == datos.usuario_id,
         models.Usuario.gimnasio_id == dispositivo.gimnasio_id,
         models.Usuario.activo == True,
     ).first()
     if not usuario or not auth.verificar_codigo_acceso(datos.pin, usuario.pin_counter_hash):
-        auth.login_rate_limiter.registrar_fallo(clave)
+        auth.registrar_fallo_login(db, clave)
         raise HTTPException(status_code=401, detail="Trabajador o PIN incorrecto")
-    auth.login_rate_limiter.limpiar(clave)
+    auth.limpiar_fallos_login(db, clave)
+    if os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true" and (not usuario.email or not usuario.email_verificado):
+        raise HTTPException(status_code=403, detail="Debes verificar tu correo antes de ingresar")
     dispositivo.ultimo_uso_en = ahora_lima()
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == usuario.gimnasio_id).first()
     sesion = _crear_sesion_usuario(db, usuario, request)
@@ -2156,6 +2232,36 @@ def verificar_email(datos: schemas.VerificarEmailRequest, db: Session = Depends(
     usuario.email_verificado = True
     db.commit()
     return {"message": "Correo verificado correctamente"}
+
+
+@app.post("/auth/reenviar-verificacion", tags=["Auth"])
+def reenviar_verificacion_email(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.get_usuario_actual),
+):
+    if usuario.email_verificado:
+        return {"message": "Tu correo ya esta verificado", "enviado": False}
+    if not usuario.email:
+        raise HTTPException(status_code=400, detail="Tu cuenta no tiene un correo registrado")
+    if not email_service.esta_configurado():
+        raise HTTPException(status_code=503, detail="El proveedor de correo aun no esta configurado")
+    token_email = _crear_token_un_solo_uso(db, usuario.id, "verificar_email", 24 * 60)
+    base = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
+    try:
+        email_service.enviar(
+            usuario.email,
+            "Verifica tu correo de Soft-Gym",
+            email_service.plantilla_accion(
+                "Verifica tu correo",
+                "Confirma que este correo pertenece a tu cuenta de Soft-Gym.",
+                "Verificar correo",
+                f"{base}/verificar-email.html?token={token_email}",
+            ),
+        )
+    except Exception as exc:
+        logger.exception("Fallo el reenvio de verificacion para usuario %s", usuario.id)
+        raise HTTPException(status_code=502, detail="El proveedor no pudo entregar el correo") from exc
+    return {"message": "Correo de verificacion enviado", "enviado": True}
 
 
 @app.post("/auth/cerrar-otras-sesiones", tags=["Auth"])
@@ -2335,14 +2441,14 @@ def aceptar_invitacion(datos: schemas.InvitacionUsuarioAceptar, db: Session = De
 def login_alumno(datos: schemas.LoginAlumnoRequest, request: Request, db: Session = Depends(get_db)):
     """Login de alumnos con DNI + codigo de acceso corto."""
     clave = auth.clave_rate_limit(request, "alumno", datos.dni, datos.slug)
-    auth.exigir_intentos_disponibles(clave)
+    auth.exigir_intentos_disponibles(clave, db)
     gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
     cliente = auth.autenticar_alumno(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
     if not cliente:
-        auth.login_rate_limiter.registrar_fallo(clave)
+        auth.registrar_fallo_login(db, clave)
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
-    auth.login_rate_limiter.limpiar(clave)
+    auth.limpiar_fallos_login(db, clave)
     token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
     return schemas.TokenResponse(
         access_token=token,
@@ -2387,13 +2493,13 @@ def login_profesor(datos: schemas.LoginAlumnoRequest, request: Request, db: Sess
     """
     gid = _resolver_gimnasio_id_por_slug(db, datos.slug)
     clave = auth.clave_rate_limit(request, "profesor", datos.dni, datos.slug)
-    auth.exigir_intentos_disponibles(clave)
+    auth.exigir_intentos_disponibles(clave, db)
     profesor = auth.autenticar_profesor(db, datos.dni, datos.codigo_acceso, gimnasio_id=gid)
     if not profesor:
-        auth.login_rate_limiter.registrar_fallo(clave)
+        auth.registrar_fallo_login(db, clave)
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
-    auth.login_rate_limiter.limpiar(clave)
+    auth.limpiar_fallos_login(db, clave)
     token = auth.crear_access_token({"sub": str(profesor.id), "tipo": "profesor", "gimnasio_id": profesor.gimnasio_id})
     return schemas.TokenResponse(access_token=token, rol="profesor_sala", nombre=profesor.nombre_completo, gimnasio_id=profesor.gimnasio_id)
 
@@ -8619,6 +8725,11 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, request: Request, 
     iniciales y devuelve un token listo para usar.
     """
     import re
+    if os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() == "true" and not email_service.esta_configurado():
+        raise HTTPException(
+            status_code=503,
+            detail="El registro esta temporalmente pausado porque el correo de verificacion no esta disponible",
+        )
     try:
         auth.validar_password_segura(datos.password)
     except ValueError as exc:

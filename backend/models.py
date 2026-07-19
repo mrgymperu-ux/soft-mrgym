@@ -329,6 +329,18 @@ class SesionUsuario(Base):
     revocada_en = Column(DateTime, nullable=True)
 
 
+class IntentoAcceso(Base):
+    """Fallos de acceso persistentes; la identidad se conserva solo como hash."""
+    __tablename__ = "intentos_acceso"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clave_hash = Column(String(64), unique=True, nullable=False, index=True)
+    fallos = Column(Integer, nullable=False, default=0)
+    ventana_inicio = Column(DateTime, nullable=False, default=ahora_lima)
+    bloqueado_hasta = Column(DateTime, nullable=True)
+    actualizado_en = Column(DateTime, nullable=False, default=ahora_lima)
+
+
 class DispositivoCounter(Base):
     """Equipo compartido vinculado a un gimnasio mediante token revocable."""
     __tablename__ = "dispositivos_counter"

@@ -161,6 +161,17 @@
                 </table>
             </div>
 
+            <div class="config-section" id="seccion-preparacion" style="display:none;">
+                <h3>Preparacion para produccion</h3>
+                <p style="font-size:.82em;color:var(--color-texto-secundario);margin:0 0 14px;">Comprueba accesos, base de datos y correo sin mostrar ninguna clave secreta.</p>
+                <div id="preparacion-produccion"><p style="font-size:.85em;color:var(--color-texto-secundario);">Comprobando...</p></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+                    <button class="btn btn-secondary" type="button" onclick="cargarPreparacionProduccion()">Actualizar comprobacion</button>
+                    <button class="btn btn-primary" type="button" id="btn-probar-correo" onclick="probarCorreoProduccion()" disabled>Enviar correo de prueba</button>
+                    <button class="btn btn-secondary" type="button" id="btn-verificar-correo" onclick="reenviarVerificacionCorreo()" disabled>Verificar mi correo</button>
+                </div>
+            </div>
+
             <!-- Cambiar contrasena -->
             <div class="config-section">
                 <h3>🔑 Cambiar mi Contrasena</h3>
@@ -417,7 +428,41 @@
         } catch (e) { showError(e.message); }
     }
 
+    async function cargarPreparacionProduccion() {
+        if (!esAdministrador()) return;
+        const seccion = document.getElementById("seccion-preparacion");
+        const contenedor = document.getElementById("preparacion-produccion");
+        seccion.style.display = "block";
+        try {
+            const resultado = await apiFetch("/sistema/preparacion-produccion");
+            contenedor.innerHTML = resultado.comprobaciones.map(item => `
+                <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--color-borde);font-size:.84em;">
+                    <span>${item.nombre}</span>
+                    <strong style="color:${item.ok ? 'var(--color-exito)' : 'var(--color-advertencia)'};text-align:right;">${item.ok ? 'Correcto' : 'Pendiente'} · ${item.detalle}</strong>
+                </div>`).join("") + `<p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Version de base: ${resultado.migracion || "pendiente"}. ${resultado.respaldo}.</p>`;
+            document.getElementById("btn-probar-correo").disabled = !resultado.correo_configurado;
+            document.getElementById("btn-verificar-correo").disabled = !resultado.correo_configurado;
+        } catch (error) {
+            contenedor.innerHTML = `<p style="color:var(--color-error);font-size:.85em;">${error.message}</p>`;
+        }
+    }
+
+    async function probarCorreoProduccion() {
+        try {
+            await apiFetch("/sistema/probar-correo", { method: "POST" });
+            showSuccess("Correo de prueba enviado. Revisa la bandeja del administrador.");
+        } catch (error) { showError(error.message); }
+    }
+
+    async function reenviarVerificacionCorreo() {
+        try {
+            const resultado = await apiFetch("/auth/reenviar-verificacion", { method: "POST" });
+            showSuccess(resultado.message + (resultado.enviado ? ". Revisa tu bandeja de entrada." : "."));
+        } catch (error) { showError(error.message); }
+    }
+
     cargarConfig();
+    cargarPreparacionProduccion();
     if (new URLSearchParams(window.location.search).get("subscription") === "required" || sessionStorage.getItem("mrgym_suscripcion_bloqueada") === "1") {
         document.getElementById("aviso-suscripcion").style.display = "block";
     }

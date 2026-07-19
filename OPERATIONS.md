@@ -4,7 +4,7 @@
 
 1. Usar un servicio web que no entre en reposo y configurar `ENVIRONMENT=production`.
 2. Configurar `SECRET_KEY`, `DATABASE_URL`, `APP_BASE_URL`, `RESEND_API_KEY` y `EMAIL_FROM` como secretos.
-3. Probar correo y después cambiar `REQUIRE_EMAIL_VERIFICATION=true`.
+3. En **Configuracion > Preparacion para produccion**, enviar el correo de prueba. Solo despues de recibirlo, cambiar `REQUIRE_EMAIL_VERIFICATION=true`.
 4. En GitHub Actions, crear el secreto `PRODUCTION_DATABASE_URL` con acceso exclusivamente a la base de producción.
 5. Ejecutar manualmente el flujo **Respaldo diario de producción** y descargar el artefacto generado.
 6. Configurar un monitor externo sobre `GET /health/ready`; alertar cuando no responda 200.

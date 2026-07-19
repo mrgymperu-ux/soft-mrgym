@@ -3,8 +3,11 @@ import io
 from pydantic import ValidationError
 from fastapi import HTTPException
 from PIL import Image
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from backend import auth, schemas
+from backend import auth, models, schemas
 from backend.main import _validar_y_optimizar_foto
 
 
@@ -56,6 +59,33 @@ def test_rate_limit_bloquea_despues_del_quinto_fallo():
     assert limiter.comprobar(clave) is not None
     limiter.limpiar(clave)
     assert limiter.comprobar(clave) is None
+
+
+def test_rate_limit_persistente_sobrevive_reinicio_y_oculta_identidad():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    models.Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    clave = "alumno:192.0.2.10:mi-gym:87654321"
+    try:
+        for _ in range(5):
+            auth.registrar_fallo_login(db, clave)
+        # Simula un reinicio: la memoria se vacia, la BD debe seguir bloqueando.
+        auth.login_rate_limiter.limpiar(clave)
+        with pytest.raises(HTTPException) as error:
+            auth.exigir_intentos_disponibles(clave, db)
+        assert error.value.status_code == 429
+        registro = db.query(models.IntentoAcceso).one()
+        assert registro.clave_hash != clave
+        assert "87654321" not in registro.clave_hash
+        auth.limpiar_fallos_login(db, clave)
+        auth.exigir_intentos_disponibles(clave, db)
+    finally:
+        auth.login_rate_limiter.limpiar(clave)
+        db.close()
 
 
 def test_archivo_disfrazado_de_imagen_es_rechazado():

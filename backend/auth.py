@@ -30,6 +30,8 @@ IMPORTANTE - variable de entorno SECRET_KEY:
 
 import os
 import re
+import hashlib
+import hmac
 import threading
 import time
 from collections import defaultdict, deque
@@ -42,6 +44,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from . import models
 from .time_utils import ahora_lima, hoy_lima
@@ -152,14 +155,84 @@ def clave_rate_limit(request: Request, tipo: str, identificador: str, slug: Opti
     return f"{tipo}:{ip}:{(slug or '').lower()}:{identificador.strip().lower()}"
 
 
-def exigir_intentos_disponibles(clave: str) -> None:
+def _hash_clave_rate_limit(clave: str) -> str:
+    """Evita persistir IP, DNI, correo o nombre de usuario en texto legible."""
+    return hmac.new(SECRET_KEY.encode("utf-8"), clave.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _registro_intentos(db: Session, clave: str) -> Optional[models.IntentoAcceso]:
+    return db.query(models.IntentoAcceso).filter(
+        models.IntentoAcceso.clave_hash == _hash_clave_rate_limit(clave)
+    ).with_for_update().first()
+
+
+def _espera_persistente(db: Session, clave: str) -> Optional[int]:
+    registro = _registro_intentos(db, clave)
+    if not registro:
+        return None
+    ahora = ahora_lima()
+    if registro.bloqueado_hasta and registro.bloqueado_hasta > ahora:
+        return max(1, int((registro.bloqueado_hasta - ahora).total_seconds()))
+    if (ahora - registro.ventana_inicio).total_seconds() >= login_rate_limiter.ventana_segundos:
+        db.delete(registro)
+        db.commit()
+    return None
+
+
+def exigir_intentos_disponibles(clave: str, db: Optional[Session] = None) -> None:
     espera = login_rate_limiter.comprobar(clave)
+    if espera is None and db is not None:
+        espera = _espera_persistente(db, clave)
     if espera is not None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Demasiados intentos. Espera antes de volver a probar.",
             headers={"Retry-After": str(espera)},
         )
+
+
+def registrar_fallo_login(db: Session, clave: str) -> None:
+    """Registra el fallo en memoria y BD para que sobreviva reinicios del servidor."""
+    login_rate_limiter.registrar_fallo(clave)
+    ahora = ahora_lima()
+    registro = _registro_intentos(db, clave)
+    if not registro:
+        registro = models.IntentoAcceso(
+            clave_hash=_hash_clave_rate_limit(clave),
+            fallos=0,
+            ventana_inicio=ahora,
+            actualizado_en=ahora,
+        )
+        db.add(registro)
+    elif (ahora - registro.ventana_inicio).total_seconds() >= login_rate_limiter.ventana_segundos:
+        registro.fallos = 0
+        registro.ventana_inicio = ahora
+        registro.bloqueado_hasta = None
+    registro.fallos += 1
+    registro.actualizado_en = ahora
+    if registro.fallos >= login_rate_limiter.max_intentos:
+        registro.bloqueado_hasta = ahora + timedelta(seconds=login_rate_limiter.ventana_segundos)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Dos solicitudes simultaneas pudieron intentar crear la misma clave.
+        db.rollback()
+        registro = _registro_intentos(db, clave)
+        if not registro:
+            raise
+        registro.fallos += 1
+        registro.actualizado_en = ahora
+        if registro.fallos >= login_rate_limiter.max_intentos:
+            registro.bloqueado_hasta = ahora + timedelta(seconds=login_rate_limiter.ventana_segundos)
+        db.commit()
+
+
+def limpiar_fallos_login(db: Session, clave: str) -> None:
+    login_rate_limiter.limpiar(clave)
+    registro = _registro_intentos(db, clave)
+    if registro:
+        db.delete(registro)
+        db.commit()
 
 
 # ==================================================================
