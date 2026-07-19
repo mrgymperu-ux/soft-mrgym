@@ -23,8 +23,8 @@
         <div class="card">
             <div class="table-container">
                 <table class="table">
-                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Metodo</th><th>Tipo</th></tr></thead>
-                    <tbody id="tabla-ventas"><tr class="empty-row"><td colspan="6">Cargando...</td></tr></tbody>
+                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Metodo</th><th>Tipo</th><th>Estado</th></tr></thead>
+                    <tbody id="tabla-ventas"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
                 </table>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-top:1px solid var(--color-borde);">
@@ -86,17 +86,18 @@
         const ventas = await apiFetch(`/ventas/?skip=${paginaActual*LIMIT}&limit=${LIMIT}`);
         ventasCacheDetalle = ventas;
         const tbody = document.getElementById("tabla-ventas");
-        if (!ventas.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No hay ventas</td></tr>'; }
+        if (!ventas.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay ventas</td></tr>'; }
         else tbody.innerHTML = ventas.map(v => {
             const c = clientesCache.find(x => x.id === v.cliente_id);
             const prods = v.detalles ? v.detalles.map(d => `${d.cantidad}x ${d.producto ? d.producto.nombre : "#"+d.producto_id}`).join(", ") : "—";
-            return `<tr style="cursor:pointer;" onclick="verDetalleVenta(${v.id})">
+            return `<tr style="cursor:pointer;${v.anulada ? 'opacity:.62;' : ''}" onclick="verDetalleVenta(${v.id})">
                 <td>${formatFechaHora(v.fecha_venta)}</td>
                 <td>${c ? `<a href="clientes.html?ver=${c.id}" onclick="event.stopPropagation()" style="color:var(--color-primario);font-weight:600;text-decoration:none;">${c.nombre}</a>` : "Sin cliente"}</td>
                 <td style="font-size:0.82em;color:#636E72;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${prods}</td>
                 <td><strong>${formatCurrency(v.total,moneda)}</strong></td>
                 <td><span class="badge badge-info">${v.metodo_pago}</span></td>
                 <td>${v.es_venta_rapida ? '<span class="badge badge-success">⚡ Rapida</span>' : '<span class="badge">Normal</span>'}</td>
+                <td>${v.anulada ? '<span class="badge badge-danger">Anulada</span>' : '<span class="badge badge-success">Vigente</span>'}</td>
             </tr>`;
         }).join("");
         document.getElementById("btn-anterior").disabled = paginaActual === 0;
@@ -129,11 +130,27 @@
                 <tbody>${filasProductos}</tbody>
             </table>
             <div style="text-align:right;margin-top:10px;font-size:1.1em;"><strong>Total: ${formatCurrency(detalleReal.total, moneda)}</strong></div>
+            ${detalleReal.anulada
+                ? `<div class="alert alert-error" style="margin-top:12px;"><strong>Venta anulada</strong><br>${escapeHTML(detalleReal.motivo_anulacion || '')}</div>`
+                : `<div style="text-align:right;margin-top:14px;"><button class="btn btn-danger btn-sm" onclick="anularVenta(${detalleReal.id})">Anular venta</button></div>`}
         `;
         document.getElementById("modal-detalle-venta").classList.add("active");
     }
 
     function cerrarModalDetalle() { document.getElementById("modal-detalle-venta").classList.remove("active"); }
+
+    async function anularVenta(id) {
+        if (!(await confirmDialog("¿Anular esta venta? El stock se restaurará y el registro permanecerá en el historial."))) return;
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
+        try {
+            await apiFetch(`/ventas/${id}`, { method:"DELETE", body:JSON.stringify({ motivo }) });
+            showSuccess("Venta anulada y stock restaurado");
+            cerrarModalDetalle();
+            await cargarDatos();
+            await cargarVentas();
+        } catch (e) { showError(e.message); }
+    }
 
     async function abrirModalVenta() {
         await cargarDatos();

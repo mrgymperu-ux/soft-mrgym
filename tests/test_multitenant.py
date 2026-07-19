@@ -14,6 +14,7 @@ from backend import auth, models, schemas
 from backend.main import (
     EJERCICIOS_GENERABLES_EQUIPO,
     EQUIPAMIENTO_GIMNASIO,
+    _CAMPOS_CLIENTE_EXPORTABLES,
     _cliente_membresia_del_gym,
     _cerrar_asistencias_vencidas,
     _configuracion_del_gym,
@@ -33,7 +34,10 @@ from backend.main import (
     crear_usuario,
     crear_venta,
     consultar_auditoria,
+    contenido_foto_cliente,
+    eliminar_compra,
     eliminar_pago_membresia,
+    eliminar_venta,
     generar_rutinas_por_equipamiento,
     obtener_equipamiento_gimnasio,
     registrar_compra,
@@ -106,6 +110,21 @@ class MultiTenantTest(unittest.TestCase):
     def test_entidades_de_otro_gimnasio_no_se_resuelven(self):
         self.assertIsNone(_del_gym(self.db, models.Cliente, self.cliente2.id, self.admin1))
         self.assertIsNone(_cliente_membresia_del_gym(self.db, self.cm2.id, self.admin1))
+
+    def test_exportacion_no_incluye_credenciales_de_alumnos(self):
+        self.assertNotIn("codigo_acceso", _CAMPOS_CLIENTE_EXPORTABLES)
+
+    def test_foto_alumno_exige_token_opaco_correcto(self):
+        token = "token-opaco-de-prueba-1234567890"
+        self.cliente1.foto_datos = b"imagen"
+        self.cliente1.foto_tipo = "image/webp"
+        self.cliente1.foto_url = f"/clientes/{self.cliente1.id}/foto-contenido?token={token}"
+        self.db.commit()
+
+        respuesta = contenido_foto_cliente(self.cliente1.id, token=token, db=self.db)
+        self.assertEqual(respuesta.body, b"imagen")
+        with self.assertRaises(HTTPException):
+            contenido_foto_cliente(self.cliente1.id, token="token-incorrecto-de-largo-suficiente", db=self.db)
 
     def test_configuracion_es_por_gimnasio(self):
         config = _configuracion_del_gym(self.db, self.admin1)
@@ -359,7 +378,7 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(resultado["pagos"][0].monto, 49)
         self.assertTrue(auth._suscripcion_permite_acceso(self.db, self.gym1.id))
 
-    def test_eliminar_movimiento_quita_solo_el_pago_elegido(self):
+    def test_anular_pago_conserva_evidencia_y_recalcula_saldo(self):
         plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=50, duracion_dias=30)
         self.db.add(plan)
         self.db.flush()
@@ -380,12 +399,69 @@ class MultiTenantTest(unittest.TestCase):
 
         pago_id = pago.id
         asignacion_id = asignacion.id
-        eliminar_pago_membresia(pago_id, db=self.db, usuario=self.admin1)
+        eliminar_pago_membresia(
+            pago_id,
+            schemas.AnulacionOperacionRequest(motivo="Registro duplicado"),
+            db=self.db,
+            usuario=self.admin1,
+        )
 
-        self.assertIsNone(self.db.query(models.PagoMembresia).filter_by(id=pago_id).first())
+        pago_anulado = self.db.query(models.PagoMembresia).filter_by(id=pago_id).one()
+        self.assertTrue(pago_anulado.anulada)
+        self.assertEqual(pago_anulado.motivo_anulacion, "Registro duplicado")
+        self.assertEqual(pago_anulado.anulada_por_id, self.admin1.id)
         asignacion_actual = self.db.query(models.ClienteMembresia).filter_by(id=asignacion_id).first()
         self.assertIsNotNone(asignacion_actual)
         self.assertEqual(asignacion_actual.monto_pagado, 0)
+
+    def test_anular_venta_restaura_stock_sin_borrar_historial(self):
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Bebida", precio_venta=8, stock=3)
+        self.db.add(producto)
+        self.db.commit()
+        venta = crear_venta(
+            schemas.VentaCreate(
+                metodo_pago="efectivo",
+                detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=2, precio_unitario=8)],
+            ),
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+        self.assertEqual(producto.stock, 1)
+
+        eliminar_venta(
+            venta.id,
+            schemas.AnulacionOperacionRequest(motivo="Venta ingresada dos veces"),
+            db=self.db,
+            usuario=self.admin1,
+        )
+
+        self.db.refresh(venta)
+        self.db.refresh(producto)
+        self.assertTrue(venta.anulada)
+        self.assertEqual(producto.stock, 3)
+        self.assertEqual(len(venta.detalles), 1)
+
+    def test_anular_compra_exige_stock_disponible_y_conserva_registro(self):
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Proteina", precio_venta=90, stock=0)
+        self.db.add(producto)
+        self.db.commit()
+        compra = registrar_compra(
+            schemas.CompraCreate(producto_id=producto.id, cantidad=4, costo_unitario=50),
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+
+        eliminar_compra(
+            compra.id,
+            schemas.AnulacionOperacionRequest(motivo="Factura de proveedor incorrecta"),
+            db=self.db,
+            usuario=self.admin1,
+        )
+
+        self.db.refresh(compra)
+        self.db.refresh(producto)
+        self.assertTrue(compra.anulada)
+        self.assertEqual(producto.stock, 0)
 
     def test_egresos_solo_aceptan_efectivo_o_cuenta(self):
         for esquema, datos in (

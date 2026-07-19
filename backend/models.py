@@ -565,9 +565,13 @@ class PagoMembresia(Base):
     fecha_proximo_pago = Column(Date, nullable=True)
     registrado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(String, nullable=True)
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     cliente_membresia = relationship("ClienteMembresia", back_populates="pagos")
-    registrado_por = relationship("Usuario")
+    registrado_por = relationship("Usuario", foreign_keys=[registrado_por_id])
 
 
 # ==================================================================
@@ -619,6 +623,10 @@ class Venta(Base):
     notas = Column(Text, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # quien registro la venta, para comisiones
     costo_comision_gym = Column(Float, default=0.0)  # comision de tarjeta/QR que absorbe el gimnasio (no se cobra al cliente)
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     cliente = relationship("Cliente", back_populates="ventas")
     detalles = relationship("DetalleVenta", back_populates="venta", cascade="all, delete-orphan")
@@ -657,6 +665,10 @@ class Compra(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     notas = Column(Text, nullable=True)
     metodo_pago = Column(String, default="efectivo")  # efectivo | cuenta
+    anulada = Column(Boolean, nullable=False, default=False, index=True)
+    anulada_en = Column(DateTime, nullable=True)
+    anulada_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
 
     producto = relationship("Producto")
 

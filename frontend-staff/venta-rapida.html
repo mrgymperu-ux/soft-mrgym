@@ -247,21 +247,21 @@
     }
 
     async function mostrarBoletaGenerada(ventaId, clienteId) {
-        // La boleta requiere sesion (no es un endpoint publico), asi que
+        // El recibo interno requiere sesion (no es un endpoint publico), asi que
         // se descarga con el token; un <a href> directo al backend
         // fallaria con 401 al no llevar el token. Se descarga (no solo
         // se abre) para que quede lista en Descargas y se pueda
         // arrastrar directo a WhatsApp con un clic menos.
         try {
-            await apiDescargarArchivo(`/ventas/${ventaId}/boleta.pdf`, `boleta_${ventaId}.pdf`);
+            await apiDescargarArchivo(`/ventas/${ventaId}/boleta.pdf`, `recibo_interno_venta_${ventaId}.pdf`);
         } catch (e) {
-            showError("No se pudo descargar la boleta: " + e.message);
+            showError("No se pudo descargar el recibo interno: " + e.message);
         }
         if (clienteId) {
             try {
                 const cliente = await apiFetch(`/clientes/${clienteId}`);
                 if (cliente.telefono) {
-                    const mensaje = `Hola ${cliente.nombre}! Gracias por tu compra. Te comparto tu boleta adjunta (revisa tu carpeta de Descargas).`;
+                    const mensaje = `Hola ${cliente.nombre}! Gracias por tu compra. Te comparto tu recibo interno adjunto (no es comprobante tributario; revisa tu carpeta de Descargas).`;
                     const linkWa = linkWhatsApp(cliente.telefono, mensaje);
                     if (linkWa) window.open(linkWa, "_blank");
                 }

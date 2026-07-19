@@ -23,15 +23,17 @@ import asyncio
 import time
 import logging
 import json
+import secrets
 import urllib.request
 import unicodedata
+from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, Response
-from sqlalchemy import func
+from fastapi.responses import StreamingResponse, Response, JSONResponse
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from . import models, schemas, auth, pdf_generator, email_service
@@ -834,6 +836,18 @@ def ping():
     return {"status": "ok", "hora_lima": hora, "dia": dia, "keep_alive_activo": _en_horario_activo()}
 
 
+@app.get("/health/ready", include_in_schema=False)
+def readiness(db: Session = Depends(get_db)):
+    """Comprueba que la aplicación puede consultar la base de datos."""
+    try:
+        db.execute(text("SELECT 1"))
+        version = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+        return {"status": "ready", "database": "ok", "migration": version}
+    except Exception:
+        logger.exception("Fallo la comprobacion de disponibilidad")
+        return JSONResponse(status_code=503, content={"status": "not_ready", "database": "error"})
+
+
 @app.get("/sync-version", tags=["Sistema"])
 def sync_version():
     """Version minima para que los clientes consulten cambios sin descargar todos los datos."""
@@ -884,6 +898,7 @@ def startup_event():
     _sembrar_porciones_caseras()
     _normalizar_porciones_cliente()
     _sincronizar_nombres_ejercicios_catalogo()
+    _rotar_tokens_fotos_clientes()
 
 
 def _sembrar_ejercicios_catalogo():
@@ -2625,6 +2640,7 @@ def listar_ingresos(
             .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
             .filter(
                 models.Cliente.gimnasio_id == get_gid(usuario),
+                models.PagoMembresia.anulada == False,
                 models.PagoMembresia.fecha_pago >= desde_dt,
                 models.PagoMembresia.fecha_pago <= hasta_dt,
             )
@@ -2654,6 +2670,7 @@ def listar_ingresos(
     if not tipo or tipo == "productos":
         for v in db.query(models.Venta).filter(
             models.Venta.gimnasio_id == get_gid(usuario),
+            models.Venta.anulada == False,
             models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt
         ).all():
             cli  = db.query(models.Cliente).filter(models.Cliente.id == v.cliente_id).first() if v.cliente_id else None
@@ -2712,6 +2729,7 @@ def listar_egresos(
     if not tipo or tipo == "compra_producto":
         for c in db.query(models.Compra).filter(
             models.Compra.gimnasio_id == get_gid(usuario),
+            models.Compra.anulada == False,
             models.Compra.fecha >= desde_dt, models.Compra.fecha <= hasta_dt
         ).all():
             detalle.append({"id": c.id, "fecha": c.fecha.isoformat(), "categoria": "compra_producto",
@@ -2773,6 +2791,7 @@ def listar_egresos(
     if not tipo or tipo == "comision":
         for v in db.query(models.Venta).filter(
             models.Venta.gimnasio_id == get_gid(usuario),
+            models.Venta.anulada == False,
             models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt,
             models.Venta.metodo_pago != models.MetodoPago.EFECTIVO,
         ).all():
@@ -2871,7 +2890,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     inicio_mes = hoy_lima().replace(day=1)
     ingresos_mes = (
         db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
-        .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid)
+        .filter(models.Venta.fecha_venta >= inicio_mes, models.Venta.gimnasio_id == gid, models.Venta.anulada == False)
         .scalar()
     )
     ingresos_mes += db.query(func.coalesce(func.sum(models.OtroIngreso.monto), 0.0)).filter(
@@ -2942,6 +2961,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
             models.Venta.fecha_venta >= hoy,
             models.Venta.es_venta_rapida == True,
             models.Venta.gimnasio_id == gid,
+            models.Venta.anulada == False,
         )
         .scalar()
     )
@@ -2949,6 +2969,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
     ventas_hoy = db.query(models.Venta).filter(
         models.Venta.fecha_venta >= hoy,
         models.Venta.gimnasio_id == gid,
+        models.Venta.anulada == False,
     ).all()
     membresias_hoy = (
         db.query(models.ClienteMembresia)
@@ -3031,6 +3052,7 @@ def get_dashboard_empresarial(
         models.Cliente.id == models.ClienteMembresia.cliente_id,
     ).filter(
         models.Cliente.gimnasio_id == gid,
+        models.PagoMembresia.anulada == False,
         models.PagoMembresia.fecha_pago >= desde_dt,
         models.PagoMembresia.fecha_pago < hasta_dt,
     ).all()
@@ -3039,6 +3061,7 @@ def get_dashboard_empresarial(
 
     for fecha_venta, total in db.query(models.Venta.fecha_venta, models.Venta.total).filter(
         models.Venta.gimnasio_id == gid,
+        models.Venta.anulada == False,
         models.Venta.fecha_venta >= desde_dt,
         models.Venta.fecha_venta < hasta_dt,
     ).all():
@@ -3559,10 +3582,13 @@ def eliminar_cliente(cliente_id: int, db: Session = Depends(get_db), usuario: mo
 
 
 @app.get("/clientes/{cliente_id}/foto-contenido", tags=["Clientes"])
-def contenido_foto_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    """Sirve la foto persistente del alumno desde la base de datos."""
+def contenido_foto_cliente(cliente_id: int, token: str = Query(..., min_length=24), db: Session = Depends(get_db)):
+    """Sirve una foto únicamente mediante su URL opaca entregada al usuario autorizado."""
     cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id, models.Cliente.activo == True).first()
     if not cliente or not cliente.foto_datos:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    esperado = parse_qs(urlparse(cliente.foto_url or "").query).get("token", [""])[0]
+    if not esperado or not secrets.compare_digest(token, esperado):
         raise HTTPException(status_code=404, detail="Foto no encontrada")
     return Response(
         content=cliente.foto_datos,
@@ -3576,11 +3602,27 @@ def _guardar_foto_cliente_persistente(db: Session, cliente: models.Cliente, cont
     foto_anterior = cliente.foto_url
     cliente.foto_datos = contenido
     cliente.foto_tipo = content_type
-    cliente.foto_url = f"/clientes/{cliente.id}/foto-contenido?v={uuid.uuid4().hex[:12]}"
+    cliente.foto_url = f"/clientes/{cliente.id}/foto-contenido?token={secrets.token_urlsafe(32)}"
     db.commit()
     db.refresh(cliente)
     _eliminar_foto_anterior(foto_anterior)
     return cliente
+
+
+def _rotar_tokens_fotos_clientes():
+    """Reemplaza enlaces históricos predecibles sin modificar la imagen almacenada."""
+    db = SessionLocal()
+    try:
+        cambiadas = 0
+        for cliente in db.query(models.Cliente).filter(models.Cliente.foto_datos.isnot(None)).all():
+            token = parse_qs(urlparse(cliente.foto_url or "").query).get("token", [""])[0]
+            if len(token) < 24:
+                cliente.foto_url = f"/clientes/{cliente.id}/foto-contenido?token={secrets.token_urlsafe(32)}"
+                cambiadas += 1
+        if cambiadas:
+            db.commit()
+    finally:
+        db.close()
 
 
 @app.post("/clientes/{cliente_id}/foto", response_model=schemas.Cliente, tags=["Clientes"])
@@ -3643,7 +3685,7 @@ def _respuesta_csv(campos: List[str], filas: List[dict], nombre_archivo: str) ->
 
 _CAMPOS_CLIENTE_EXPORTABLES = [
     "id", "nombre", "apellidos", "dni", "telefono", "email",
-    "genero", "fecha_nacimiento", "direccion", "codigo_acceso",
+    "genero", "fecha_nacimiento", "direccion",
     "fecha_registro", "fecha_renovacion", "fecha_vencimiento",
     "membresia_texto", "porcentaje_asistencia", "activo",
 ]
@@ -3770,7 +3812,7 @@ _CAMPOS_VENTA_EXPORTABLES = [
 
 
 def _query_reporte_ventas(db: Session, desde: Optional[date], hasta: Optional[date], metodo_pago: Optional[str], gid: Optional[int] = None):
-    query = db.query(models.Venta)
+    query = db.query(models.Venta).filter(models.Venta.anulada == False)
     if gid is not None:
         query = query.filter(models.Venta.gimnasio_id == gid)
     if desde:
@@ -4615,16 +4657,20 @@ def pagar_saldo_membresia(
 @app.delete("/pagos-membresia/{pago_id}", tags=["Membresias"])
 def eliminar_pago_membresia(
     pago_id: int,
+    datos: schemas.AnulacionOperacionRequest,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_administrador),
 ):
-    """Corrige un ingreso eliminando solo el ultimo pago de la membresia."""
+    """Anula el último pago sin borrar su evidencia histórica."""
     pago = _pago_membresia_del_gym(db, pago_id, usuario)
     if not pago:
         raise HTTPException(status_code=404, detail="Pago de membresia no encontrado")
+    if pago.anulada:
+        raise HTTPException(status_code=409, detail="El pago ya fue anulado")
     cm = pago.cliente_membresia
     ultimo_id = db.query(models.PagoMembresia.id).filter(
         models.PagoMembresia.cliente_membresia_id == cm.id,
+        models.PagoMembresia.anulada == False,
     ).order_by(
         models.PagoMembresia.fecha_pago.desc(),
         models.PagoMembresia.id.desc(),
@@ -4632,10 +4678,14 @@ def eliminar_pago_membresia(
     if not ultimo_id or ultimo_id[0] != pago.id:
         raise HTTPException(status_code=400, detail="Solo se puede borrar el ultimo pago registrado")
     cm.monto_pagado = round(max((cm.monto_pagado or 0.0) - pago.monto, 0.0), 2)
-    db.delete(pago)
+    pago.anulada = True
+    pago.anulada_en = ahora_lima()
+    pago.anulada_por_id = usuario.id
+    pago.motivo_anulacion = datos.motivo.strip()
     db.flush()
     pago_anterior = db.query(models.PagoMembresia).filter(
         models.PagoMembresia.cliente_membresia_id == cm.id,
+        models.PagoMembresia.anulada == False,
     ).order_by(
         models.PagoMembresia.fecha_pago.desc(),
         models.PagoMembresia.id.desc(),
@@ -4647,7 +4697,7 @@ def eliminar_pago_membresia(
         else None
     )
     db.commit()
-    return {"message": "Pago de membresia eliminado", "monto_pagado": cm.monto_pagado}
+    return {"message": "Pago de membresia anulado", "monto_pagado": cm.monto_pagado}
 
 
 @app.delete("/cliente-membresias/{cm_id}", tags=["Membresias"])
@@ -4965,8 +5015,8 @@ def registrar_compra(
 
 
 @app.delete("/compras/{compra_id}", tags=["Productos"])
-def eliminar_compra(compra_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
-    """Elimina una compra registrada por error y resta el stock que habia sumado. Solo administrador."""
+def eliminar_compra(compra_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Anula una compra y revierte el stock sin borrar el registro."""
     compra = (
         db.query(models.Compra)
         .join(models.Producto, models.Compra.producto_id == models.Producto.id)
@@ -4975,12 +5025,19 @@ def eliminar_compra(compra_id: int, db: Session = Depends(get_db), usuario: mode
     )
     if not compra:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
+    if compra.anulada:
+        raise HTTPException(status_code=409, detail="La compra ya fue anulada")
     producto = db.query(models.Producto).filter(models.Producto.id == compra.producto_id).first()
     if producto:
-        producto.stock = max(producto.stock - compra.cantidad, 0)
-    db.delete(compra)
+        if producto.stock < compra.cantidad:
+            raise HTTPException(status_code=409, detail="No se puede anular: parte de ese stock ya fue vendido. Corrige primero las ventas relacionadas")
+        producto.stock -= compra.cantidad
+    compra.anulada = True
+    compra.anulada_en = ahora_lima()
+    compra.anulada_por_id = usuario.id
+    compra.motivo_anulacion = datos.motivo.strip()
     db.commit()
-    return {"message": "Compra eliminada y stock corregido"}
+    return {"message": "Compra anulada y stock corregido"}
 
 
 # ==================================================================
@@ -5201,7 +5258,7 @@ def listar_ventas(
 
 @app.get("/ventas/recientes", response_model=List[schemas.Venta], tags=["Ventas"])
 def ventas_recientes(limit: int = 5, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    return q(db, models.Venta, usuario).order_by(models.Venta.fecha_venta.desc()).limit(limit).all()
+    return q(db, models.Venta, usuario).filter(models.Venta.anulada == False).order_by(models.Venta.fecha_venta.desc()).limit(limit).all()
 
 
 class VentaUpdateAdmin(schemas.BaseModel):
@@ -5226,6 +5283,8 @@ def editar_venta(
     venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
     if not venta:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
+    if venta.anulada:
+        raise HTTPException(status_code=409, detail="Una venta anulada no se puede editar")
     datos_dict = datos.model_dump(exclude_unset=True)
     if datos_dict.get("cliente_id") is not None and not _del_gym(db, models.Cliente, datos_dict["cliente_id"], usuario):
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -5237,18 +5296,23 @@ def editar_venta(
 
 
 @app.delete("/ventas/{venta_id}", tags=["Ventas"])
-def eliminar_venta(venta_id: int, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
-    """Elimina una venta y restaura el stock de los productos vendidos. Solo administrador (corrige errores de registro)."""
+def eliminar_venta(venta_id: int, datos: schemas.AnulacionOperacionRequest, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_administrador)):
+    """Anula una venta y restaura stock conservando toda la evidencia."""
     venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
     if not venta:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
+    if venta.anulada:
+        raise HTTPException(status_code=409, detail="La venta ya fue anulada")
     for detalle in venta.detalles:
         producto = db.query(models.Producto).filter(models.Producto.id == detalle.producto_id).first()
         if producto:
             producto.stock += detalle.cantidad
-    db.delete(venta)
+    venta.anulada = True
+    venta.anulada_en = ahora_lima()
+    venta.anulada_por_id = usuario.id
+    venta.motivo_anulacion = datos.motivo.strip()
     db.commit()
-    return {"message": "Venta eliminada y stock restaurado"}
+    return {"message": "Venta anulada y stock restaurado"}
 
 
 @app.get("/ventas/{venta_id}/boleta.pdf", tags=["Ventas"])
@@ -5256,13 +5320,15 @@ def boleta_venta_pdf(venta_id: int, db: Session = Depends(get_db), usuario: mode
     venta = db.query(models.Venta).filter(models.Venta.id == venta_id, models.Venta.gimnasio_id == get_gid(usuario)).first()
     if not venta:
         raise HTTPException(status_code=404, detail="Venta no encontrada")
+    if venta.anulada:
+        raise HTTPException(status_code=409, detail="No se emite recibo de una venta anulada")
     cliente = db.query(models.Cliente).filter(models.Cliente.id == venta.cliente_id).first() if venta.cliente_id else None
     config = _configuracion_del_gym(db, usuario)
     pdf_bytes = pdf_generator.generar_boleta_pdf(venta, cliente, config)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"inline; filename=boleta_{venta_id}.pdf"},
+        headers={"Content-Disposition": f"inline; filename=recibo_interno_venta_{venta_id}.pdf"},
     )
 
 
@@ -7209,6 +7275,7 @@ def _calcular_comisiones_periodo(db: Session, usuario_id: int, gimnasio_id: int,
         db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
         .filter(
             models.Venta.usuario_id == usuario_id,
+            models.Venta.anulada == False,
             models.Venta.fecha_venta >= desde,
             models.Venta.fecha_venta < hasta,
         )
@@ -8425,6 +8492,7 @@ def resumen_comisiones(
             db.query(func.coalesce(func.sum(models.Venta.total), 0.0))
             .filter(
                 models.Venta.usuario_id == usuario.id,
+                models.Venta.anulada == False,
                 models.Venta.fecha_venta >= desde,
                 models.Venta.fecha_venta < hasta,
             )
@@ -8508,6 +8576,7 @@ def evolucion_metas_anual(
             func.coalesce(func.sum(models.Venta.total), 0.0),
         ).filter(
             models.Venta.gimnasio_id == gid,
+            models.Venta.anulada == False,
             models.Venta.fecha_venta >= desde,
             models.Venta.fecha_venta < hasta,
         ).group_by(models.Venta.usuario_id).all())

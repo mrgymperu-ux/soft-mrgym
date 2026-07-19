@@ -264,10 +264,12 @@
     async function eliminarMovimiento(categoria, id) {
         const ruta = _MOVIMIENTO_ENDPOINTS[categoria];
         if (!ruta) { showError("Este movimiento no se puede eliminar directamente"); return; }
-        if (!(await confirmDialog("¿Eliminar este movimiento? Esta acción no se puede deshacer."))) return;
+        if (!(await confirmDialog("¿Corregir este movimiento? Las ventas, compras y pagos se conservarán como anulados."))) return;
+        const motivo = (prompt("Motivo de la corrección (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(ruta(id), { method: "DELETE" });
-            showSuccess("Movimiento eliminado");
+            await apiFetch(ruta(id), { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Movimiento corregido");
             cargar();
         } catch (e) { showError(e.message); }
     }

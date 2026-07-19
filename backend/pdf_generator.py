@@ -1,6 +1,6 @@
 """
 pdf_generator.py
-Generacion de PDFs: boletas de venta, recibos de pago de
+Generacion de PDFs: recibos internos de venta, recibos de pago de
 membresia, y contratos de matricula personalizados.
 
 Usa reportlab (agregado a requirements.txt). Todas las funciones
@@ -43,10 +43,12 @@ def _encabezado_gimnasio(config, subtitulo_doc: str):
 
 
 def generar_boleta_pdf(venta, cliente, config) -> bytes:
-    """Boleta de una venta (productos) o de un pago (parcial o total) de membresia. Formato A5 horizontal (apaisado), pensado para compartir como comprobante corto."""
+    """Recibo interno de una venta; no sustituye un comprobante tributario."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A5), topMargin=1 * cm, bottomMargin=1 * cm, leftMargin=1.3 * cm, rightMargin=1.3 * cm)
-    elementos = _encabezado_gimnasio(config, f"Boleta de Venta N° {venta.id:06d}")
+    elementos = _encabezado_gimnasio(config, f"Recibo interno de venta N° {venta.id:06d}")
+    elementos.append(Paragraph("DOCUMENTO INTERNO - NO ES COMPROBANTE DE PAGO ELECTRONICO SUNAT", _estilo_subtitulo))
+    elementos.append(Spacer(1, 6))
 
     nombre_cliente = f"{cliente.nombre} {cliente.apellidos or ''}".strip() if cliente else "Cliente sin registrar"
     elementos.append(Paragraph(f"<b>Cliente:</b> {nombre_cliente} &nbsp;&nbsp; <b>Fecha:</b> {venta.fecha_venta.strftime('%d/%m/%Y %H:%M')} &nbsp;&nbsp; <b>Pago:</b> {venta.metodo_pago.value.capitalize()}", _estilo_normal))
@@ -82,6 +84,8 @@ def generar_recibo_membresia_pdf(cliente_membresia, cliente, membresia, config) 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=2 * cm, bottomMargin=2 * cm)
     elementos = _encabezado_gimnasio(config, f"Recibo de Membresia N° {cliente_membresia.id:06d}")
+    elementos.append(Paragraph("DOCUMENTO INTERNO - NO ES COMPROBANTE DE PAGO ELECTRONICO SUNAT", _estilo_subtitulo))
+    elementos.append(Spacer(1, 6))
 
     nombre_cliente = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
     deuda = max(membresia.precio - (cliente_membresia.monto_pagado or 0.0), 0.0)

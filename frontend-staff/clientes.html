@@ -1008,14 +1008,16 @@
                 html += `</tr></thead><tbody>`;
 
                 if (pagos.length) {
-                    const pagosCronologicos = [...pagos].sort((a,b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago)) || a.id - b.id);
+                    const pagosVigentes = pagos.filter(p => !p.anulada);
+                    const pagosAnulados = pagos.filter(p => p.anulada);
+                    const pagosCronologicos = [...pagosVigentes].sort((a,b) => String(a.fecha_pago).localeCompare(String(b.fecha_pago)) || a.id - b.id);
                     let saldoProgresivo = precio;
                     const saldoPorPago = new Map();
                     pagosCronologicos.forEach(p => {
                         saldoProgresivo = Math.max(saldoProgresivo - (p.monto || 0), 0);
                         saldoPorPago.set(p.id, saldoProgresivo);
                     });
-                    const pagosVisuales = [...pagos].sort((a,b) => String(b.fecha_pago).localeCompare(String(a.fecha_pago)) || b.id - a.id);
+                    const pagosVisuales = [...pagosVigentes].sort((a,b) => String(b.fecha_pago).localeCompare(String(a.fecha_pago)) || b.id - a.id);
                     pagosVisuales.forEach((p, indicePago) => {
                         const saldoDespuesPago = saldoPorPago.get(p.id) ?? saldoActual;
                         html += `<tr>`;
@@ -1027,6 +1029,15 @@
                         html += `<td>${p.metodo_pago || '\u2014'}</td>`;
                         html += `<td style="font-size:0.82em;color:var(--color-texto-secundario);">${p.notas || ''}</td>`;
                         if (esAdmin) html += `<td style="text-align:center;">${indicePago === 0 ? `<input class="pago-borrar-check" type="checkbox" title="Borrar el último pago" aria-label="Borrar el último pago" onchange="eliminarUltimoPago(${p.id},this)">` : ''}</td>`;
+                        html += `</tr>`;
+                    });
+                    pagosAnulados.sort((a,b) => String(b.anulada_en || b.fecha_pago).localeCompare(String(a.anulada_en || a.fecha_pago))).forEach(p => {
+                        html += `<tr style="opacity:.62;text-decoration:line-through;">`;
+                        html += `<td>${formatFechaHora ? formatFechaHora(p.fecha_pago) : formatFecha(p.fecha_pago)}<br><small>Anulado</small></td>`;
+                        html += `<td style="text-align:right;">${fmtNum(p.monto)}</td><td>—</td><td>—</td>`;
+                        html += `<td>${p.metodo_pago || '—'}</td>`;
+                        html += `<td style="font-size:0.82em;">${escapeHTML(p.motivo_anulacion || 'Anulado')}</td>`;
+                        if (esAdmin) html += `<td></td>`;
                         html += `</tr>`;
                     });
                 } else if (totalPagado > 0) {
@@ -1105,11 +1116,13 @@
     }
 
     async function eliminarUltimoPago(pagoId, casilla) {
-        const confirmar = await confirmDialog("¿Borrar el último pago registrado? El saldo volverá a calcularse.");
+        const confirmar = await confirmDialog("¿Anular el último pago registrado? El registro se conservará y el saldo volverá a calcularse.");
         if (!confirmar) { casilla.checked = false; return; }
+        const motivo = (prompt("Motivo de la anulación (obligatorio):") || "").trim();
+        if (motivo.length < 5) { casilla.checked = false; showError("Escribe un motivo de al menos 5 caracteres"); return; }
         try {
-            await apiFetch(`/pagos-membresia/${pagoId}`, { method: "DELETE" });
-            showSuccess("Último pago eliminado");
+            await apiFetch(`/pagos-membresia/${pagoId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
+            showSuccess("Último pago anulado; el historial fue conservado");
             await verCliente(clienteActual.id, "membresias");
         } catch (e) {
             casilla.checked = false;

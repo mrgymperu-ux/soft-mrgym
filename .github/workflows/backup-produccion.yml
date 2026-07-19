@@ -1,0 +1,33 @@
+name: Respaldo diario de produccion
+
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias minimas
+        run: pip install sqlalchemy==2.0.23 psycopg2-binary==2.9.9
+      - name: Crear y verificar respaldo
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: python scripts/backup_database.py --output-dir backups
+      - name: Conservar respaldo cifrado por GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: soft-gym-backup-${{ github.run_id }}
+          path: backups/
+          retention-days: 30
+          if-no-files-found: error

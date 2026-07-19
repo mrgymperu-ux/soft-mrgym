@@ -514,6 +514,10 @@ class PagoMembresiaOut(BaseModel):
     fecha_proximo_pago: Optional[date] = None
     registrado_por_id: Optional[int] = None
     notas: Optional[str] = None
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    anulada_por_id: Optional[int] = None
+    motivo_anulacion: Optional[str] = None
 
 
 class ClienteMembresia(BaseModel):
@@ -627,6 +631,10 @@ class Venta(BaseModel):
     notas: Optional[str] = None
     usuario_id: Optional[int] = None
     costo_comision_gym: float = 0.0
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    anulada_por_id: Optional[int] = None
+    motivo_anulacion: Optional[str] = None
     detalles: List[DetalleVenta] = []
 
 
@@ -649,7 +657,15 @@ class Compra(BaseModel):
     usuario_id: Optional[int] = None
     notas: Optional[str] = None
     metodo_pago: Optional[str] = None
+    anulada: bool = False
+    anulada_en: Optional[datetime] = None
+    anulada_por_id: Optional[int] = None
+    motivo_anulacion: Optional[str] = None
     producto: Optional[Producto] = None
+
+
+class AnulacionOperacionRequest(BaseModel):
+    motivo: str = Field(min_length=5, max_length=500)
 
 
 # ==================================================================
