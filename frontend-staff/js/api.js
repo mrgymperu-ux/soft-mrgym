@@ -3,7 +3,11 @@
    Comunicacion con el backend FastAPI para el panel de staff.
    ================================================================== */
 
-const API_BASE_URL = "http://localhost:8000";
+// En desarrollo el frontend corre en :3000 y la API en :8000.
+// En Render ambos se publican bajo el mismo dominio mediante nginx.
+const API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+    ? "http://localhost:8000"
+    : window.location.origin;
 
 function escapeHTML(valor) {
     return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
@@ -186,7 +190,8 @@ async function login(username, password) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
     });
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
+    if (!data) throw new Error("El servidor respondió en un formato incorrecto. Recarga la página e intenta nuevamente.");
     if (!response.ok) throw new Error(data.detail || "No se pudo iniciar sesion");
     guardarSesion(data.access_token, data.rol, data.nombre, {
         es_administrador: data.es_administrador,
@@ -201,7 +206,8 @@ async function login(username, password) {
 
 async function obtenerUsuariosCounter(dispositivoToken) {
     const response = await fetch(`${API_BASE_URL}/counter/usuarios?dispositivo_token=${encodeURIComponent(dispositivoToken)}`);
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
+    if (!data) throw new Error("El servidor respondió en un formato incorrecto");
     if (!response.ok) throw new Error(data.detail || "No se pudo abrir el Counter");
     return data;
 }
@@ -211,7 +217,8 @@ async function loginCounter(dispositivoToken, usuarioId, pin) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dispositivo_token: dispositivoToken, usuario_id: usuarioId, pin }),
     });
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
+    if (!data) throw new Error("El servidor respondió en un formato incorrecto");
     if (!response.ok) throw new Error(data.detail || "No se pudo iniciar el turno");
     guardarSesion(data.access_token, data.rol, data.nombre, data);
     return data;

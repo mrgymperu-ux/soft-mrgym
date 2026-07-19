@@ -115,7 +115,10 @@ _aplicarTodo(
 (function sincronizarTemaConBackend() {
     const token = sessionStorage.getItem("mrgym_token");
     if (!token) return;
-    fetch("http://localhost:8000/configuracion/", { headers: { "Authorization": `Bearer ${token}` } })
+    const apiBase = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://localhost:8000"
+        : window.location.origin;
+    fetch(`${apiBase}/configuracion/`, { headers: { "Authorization": `Bearer ${token}` } })
         .then(res => (res.ok ? res.json() : null))
         .then(config => {
             if (!config) return;
