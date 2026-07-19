@@ -1,7 +1,7 @@
 /* api.js - Portal del alumno */
 const API_BASE = ["localhost", "127.0.0.1"].includes(window.location.hostname)
     ? "http://localhost:8000"
-    : window.location.origin;
+    : `${window.location.origin}/api`;
 
 /* Slug del gimnasio: se lee de ?gym=slug en la URL */
 function getSlug() {

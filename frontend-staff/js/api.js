@@ -7,7 +7,7 @@
 // En Render ambos se publican bajo el mismo dominio mediante nginx.
 const API_BASE_URL = ["localhost", "127.0.0.1"].includes(window.location.hostname)
     ? "http://localhost:8000"
-    : window.location.origin;
+    : `${window.location.origin}/api`;
 
 function escapeHTML(valor) {
     return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);

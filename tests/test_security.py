@@ -1,5 +1,6 @@
 import pytest
 import io
+from pathlib import Path
 from pydantic import ValidationError
 from fastapi import HTTPException
 from PIL import Image
@@ -168,3 +169,17 @@ def test_libro_financiero_registra_comision_de_otro_ingreso():
         assert libro_egresos["comisiones"] == 4
     finally:
         db.close()
+
+
+def test_frontends_produccion_usan_canal_api_estable():
+    raiz = Path(__file__).resolve().parents[1]
+    nginx = (raiz / "deploy" / "nginx.conf").read_text(encoding="utf-8")
+    assert "location /api/" in nginx
+    assert "proxy_pass http://127.0.0.1:8000/;" in nginx
+    for ruta in (
+        "frontend-staff/js/api.js",
+        "frontend-alumno/js/api.js",
+        "frontend-profesor/js/api.js",
+    ):
+        contenido = (raiz / ruta).read_text(encoding="utf-8")
+        assert "${window.location.origin}/api" in contenido

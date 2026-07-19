@@ -117,7 +117,7 @@ _aplicarTodo(
     if (!token) return;
     const apiBase = ["localhost", "127.0.0.1"].includes(window.location.hostname)
         ? "http://localhost:8000"
-        : window.location.origin;
+        : `${window.location.origin}/api`;
     fetch(`${apiBase}/configuracion/`, { headers: { "Authorization": `Bearer ${token}` } })
         .then(res => (res.ok ? res.json() : null))
         .then(config => {
