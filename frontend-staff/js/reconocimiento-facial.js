@@ -7,7 +7,7 @@
     const UMBRAL_COINCIDENCIA = 0.55;
     const UMBRAL_REAL = 0.60;
     const UMBRAL_VIVO = 0.60;
-    const INTERVALO_MS = 520;
+    const INTERVALO_MS = 220;
     const CONFIG = {
         backend: "webgl",
         modelBasePath: "vendor/human/models/",
@@ -15,7 +15,9 @@
         filter: { enabled: true, equalization: true },
         face: {
             enabled: true,
-            detector: { rotation: true, maxDetected: 2, minConfidence: 0.55 },
+            // La webcam del counter permanece vertical; evitar buscar rotaciones
+            // reduce trabajo sin afectar el uso normal de frente.
+            detector: { rotation: false, maxDetected: 2, minConfidence: 0.55 },
             mesh: { enabled: true },
             iris: { enabled: true },
             description: { enabled: true },
@@ -30,6 +32,7 @@
     };
 
     let human = null;
+    let promesaMotor = null;
     let stream = null;
     let temporizador = null;
     let ejecutando = false;
@@ -62,11 +65,23 @@
 
     async function cargarMotor() {
         if (human) return human;
-        if (!window.Human || !window.Human.Human) throw new Error("No se pudo cargar el motor facial");
-        estado("Cargando reconocimiento facial por primera vez...");
-        human = new window.Human.Human(CONFIG);
-        await human.load();
-        return human;
+        if (promesaMotor) return promesaMotor;
+        promesaMotor = (async () => {
+            if (!window.Human || !window.Human.Human) throw new Error("No se pudo cargar el motor facial");
+            estado("Preparando reconocimiento facial por primera vez...");
+            const instancia = new window.Human.Human(CONFIG);
+            await instancia.load();
+            // Compila los modelos antes de abrir la webcam: la primera lectura
+            // deja de pagar este costo y el reconocimiento se siente inmediato.
+            await instancia.warmup({ warmup: "face" });
+            human = instancia;
+            return human;
+        })().catch((error) => {
+            human = null;
+            promesaMotor = null;
+            throw error;
+        });
+        return promesaMotor;
     }
 
     async function encenderCamara() {
@@ -207,6 +222,7 @@
 
     async function prepararCamara() {
         try {
+            estado("Iniciando webcam y motor facial...");
             await Promise.all([cargarMotor(), encenderCamara()]);
             estado("Mira al frente y parpadea una vez");
             ciclo();
@@ -276,4 +292,10 @@
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden" && stream) window.cerrarReconocimientoFacial();
     });
+
+    // Aprovecha el tiempo ocioso después de cargar el panel. No abre la cámara
+    // ni pide permisos; solo deja modelos y shaders listos para el primer clic.
+    const precargar = () => cargarMotor().catch(() => {});
+    if ("requestIdleCallback" in window) window.requestIdleCallback(precargar, { timeout: 4000 });
+    else window.setTimeout(precargar, 2500);
 })();
