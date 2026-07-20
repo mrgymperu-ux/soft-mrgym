@@ -70,6 +70,19 @@
         .vr-carrito-item { display: flex; align-items: center; gap: 6px; padding: 6px 18px; font-size: 0.8em; }
         .vr-ci-btn { width: 20px; height: 20px; border: 1px solid var(--color-borde); background: var(--color-blanco); border-radius: 5px; cursor: pointer; font-size: 0.85em; padding: 0; line-height: 1; }
         .vr-footer { padding: 14px 18px; border-top: 1px solid var(--color-borde); }
+        .oi-modal-content { max-height:min(90vh, calc(100dvh - 20px)); }
+        .oi-concepto-row { display:flex; align-items:flex-end; gap:8px; margin-bottom:16px; }
+        .oi-concepto-row .form-group { flex:1; min-width:0; margin-bottom:0; }
+        .oi-concepto-row .btn { flex-shrink:0; white-space:nowrap; }
+        .oi-concepto-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+        @media (max-width:520px) {
+            .oi-modal-content { width:calc(100% - 16px) !important; max-height:calc(100dvh - 16px) !important; padding:16px !important; border-radius:14px; }
+            .oi-concepto-grid { grid-template-columns:1fr; gap:0; }
+            .oi-concepto-row { align-items:stretch; }
+            .oi-concepto-row .btn { align-self:flex-end; padding:10px 12px; }
+            .oi-modal-content .form-actions { position:sticky; bottom:-16px; margin:16px -16px -16px; padding:12px 16px; background:var(--color-blanco); border-top:1px solid var(--color-borde); }
+            .oi-modal-content .form-actions .btn { flex:1; }
+        }
 
         /* ---- Reconocimiento facial ---- */
         .rf-header-actions { display:flex; align-items:center; gap:8px; }
@@ -209,7 +222,10 @@
             <div class="panel-card" id="panel-ventas">
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>⚡ Venta rapida</span>
-                    <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.85em;line-height:1;" title="Abrir Venta Rápida completa (con el cliente seleccionado, si hay uno)" onclick="irAVentaRapidaCompleta()">🔗</button>
+                    <span style="display:flex;align-items:center;gap:6px;">
+                        <button id="btn-otros-ingresos" class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.78em;line-height:1.2;" onclick="abrirOtroIngreso()">Otros</button>
+                        <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.85em;line-height:1;" title="Abrir Venta Rápida completa (con el cliente seleccionado, si hay uno)" onclick="irAVentaRapidaCompleta()">🔗</button>
+                    </span>
                 </div>
                 <div class="vr-cliente-badge vacio" id="vr-cliente-badge">
                     <span id="vr-cliente-texto" class="nombre-cliente">Sin cliente seleccionado</span>
@@ -239,27 +255,18 @@
                 </div>
             </div>
 
-            <!-- Panel 4: Otros ingresos -->
-            <div class="panel-card" id="panel-sistema">
-                <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-                    <span>Otros ingresos</span>
-                    <span style="display:flex;gap:6px;"><button class="btn btn-secondary btn-sm" onclick="abrirConceptosIngreso()">Conceptos</button><button class="btn btn-primary btn-sm" onclick="abrirOtroIngreso()">+ Registrar</button></span>
-                </div>
-                <div id="oi-lista" style="max-height:320px;overflow-y:auto;"><p style="text-align:center;color:#636E72;padding:20px;">Cargando...</p></div>
-            </div>
-
         </div>
     </main>
 </div>
 
 <div id="modal-conceptos-ingreso" class="modal">
-    <div class="modal-content" style="max-width:620px;">
-        <div class="modal-header"><h3 class="modal-title">Conceptos de otros ingresos</h3><button class="modal-close" onclick="cerrarModal('modal-conceptos-ingreso')">✕</button></div>
+    <div class="modal-content oi-modal-content" style="max-width:620px;">
+        <div class="modal-header"><h3 class="modal-title">Conceptos de otros ingresos</h3><button class="modal-close" onclick="cerrarConceptosIngreso()">✕</button></div>
         <div id="conceptos-ingreso-lista" style="max-height:180px;overflow:auto;margin-bottom:14px;"></div>
         <h4 id="ci-titulo" style="margin:0 0 10px;">Crear concepto</h4>
         <div class="form-group"><label>Concepto *</label><input id="ci-nombre" placeholder="Ej. Alquiler de sala de baile"></div>
         <div class="form-group"><label>Descripción</label><textarea id="ci-descripcion" rows="2" placeholder="Condiciones o detalle del servicio"></textarea></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="oi-concepto-grid">
             <div class="form-group"><label>Monto sugerido</label><input id="ci-monto" type="number" min="0" step="0.01"></div>
             <div class="form-group"><label>Sala sugerida</label><input id="ci-sala" placeholder="Sala de baile"></div>
         </div>
@@ -269,10 +276,13 @@
 </div>
 
 <div id="modal-otro-ingreso" class="modal">
-    <div class="modal-content" style="max-width:450px;">
+    <div class="modal-content oi-modal-content" style="max-width:450px;">
         <div class="modal-header"><h3 class="modal-title">Registrar otro ingreso</h3><button class="modal-close" onclick="cerrarModal('modal-otro-ingreso')">✕</button></div>
         <div class="form-group"><label>Fecha *</label><input id="oi-fecha" type="date"></div>
-        <div class="form-group"><label>Concepto *</label><select id="oi-concepto" onchange="onConceptoOtroIngreso()"><option value="">Seleccionar...</option></select></div>
+        <div class="oi-concepto-row">
+            <div class="form-group"><label>Concepto *</label><select id="oi-concepto" onchange="onConceptoOtroIngreso()"><option value="">Seleccionar...</option></select></div>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="abrirConceptosIngreso(true)">+ Nuevo</button>
+        </div>
         <div class="form-group"><label>Monto *</label><input id="oi-monto" type="number" min="0.01" step="0.01"></div>
         <div class="form-group"><label>Método</label><select id="oi-metodo"><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="qr">QR</option></select></div>
         <div class="form-group"><label>Descripción adicional</label><input id="oi-descripcion" placeholder="Persona, comprobante u observación"></div>
@@ -367,7 +377,7 @@
         document.getElementById("panel-clientes").style.display = ACCESO_PRINCIPAL.clientes ? "flex" : "none";
         document.getElementById("panel-asistencias").style.display = ACCESO_PRINCIPAL.asistencias ? "flex" : "none";
         document.getElementById("panel-ventas").style.display = ACCESO_PRINCIPAL.ventas ? "flex" : "none";
-        document.getElementById("panel-sistema").style.display = ACCESO_PRINCIPAL.sistema ? "flex" : "none";
+        document.getElementById("btn-otros-ingresos").style.display = ACCESO_PRINCIPAL.sistema ? "inline-flex" : "none";
         const botonFacial = document.getElementById("btn-reconocimiento-facial");
         if (botonFacial) botonFacial.style.display = ACCESO_PRINCIPAL.asistencias && getRol() === "staff" ? "inline-flex" : "none";
 
@@ -1076,31 +1086,30 @@
     }
 
     // ============================================================
-    // Panel 4: Otros ingresos
+    // Otros ingresos, accesible desde Venta rapida
     // ============================================================
     let conceptosIngresoCache = [], conceptoIngresoEditando = null;
-
-    async function cargarOtrosIngresos() {
-        if (!ACCESO_PRINCIPAL.sistema) return;
-        try {
-            const hoy = fechaLocalISO();
-            const ingresos = await apiFetch(`/otros-ingresos/?desde=${hoy}&hasta=${hoy}&limit=30`);
-            const cont = document.getElementById("oi-lista");
-            if (!ingresos.length) { cont.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">Sin otros ingresos hoy</p>'; return; }
-            cont.innerHTML = ingresos.map(i => `<div class="ui-item"><div class="ui-item-info"><div style="font-size:.82em;font-weight:600;">${escapeHTML(i.concepto ? i.concepto.nombre : "Otro ingreso")}</div><div style="font-size:.7em;color:var(--color-texto-secundario);">${escapeHTML(i.descripcion || "")} · ${escapeHTML(i.metodo_pago)}</div></div><strong style="color:var(--color-exito);font-weight:500;">+ ${formatCurrency(i.monto)}</strong></div>`).join("");
-        } catch(e) { showError(e.message); }
-    }
+    let volverARegistroIngreso = false;
 
     async function cargarConceptosIngreso() {
         conceptosIngresoCache = await apiFetch("/conceptos-ingreso/");
         return conceptosIngresoCache;
     }
 
-    async function abrirConceptosIngreso() {
+    async function abrirConceptosIngreso(desdeRegistro = false) {
+        volverARegistroIngreso = desdeRegistro;
+        if (desdeRegistro) cerrarModal("modal-otro-ingreso");
         await cargarConceptosIngreso();
         limpiarConceptoIngreso();
         renderConceptosIngreso();
         document.getElementById("modal-conceptos-ingreso").classList.add("active");
+    }
+
+    async function cerrarConceptosIngreso(conceptoId = null) {
+        cerrarModal("modal-conceptos-ingreso");
+        if (!volverARegistroIngreso) return;
+        volverARegistroIngreso = false;
+        await abrirOtroIngreso(conceptoId);
     }
 
     function renderConceptosIngreso() {
@@ -1131,18 +1140,25 @@
         if (!nombre) return showError("Ingresa el nombre del concepto");
         const datos = {nombre,descripcion:document.getElementById("ci-descripcion").value.trim()||null,monto_sugerido:parseFloat(document.getElementById("ci-monto").value)||0,mostrar_agenda:document.getElementById("ci-agenda").checked,sala_sugerida:document.getElementById("ci-sala").value.trim()||null};
         try {
-            await apiFetch(conceptoIngresoEditando ? `/conceptos-ingreso/${conceptoIngresoEditando.id}` : "/conceptos-ingreso/",{method:conceptoIngresoEditando?"PUT":"POST",body:JSON.stringify(datos)});
-            showSuccess("Concepto guardado"); await cargarConceptosIngreso(); renderConceptosIngreso(); limpiarConceptoIngreso();
+            const guardado = await apiFetch(conceptoIngresoEditando ? `/conceptos-ingreso/${conceptoIngresoEditando.id}` : "/conceptos-ingreso/",{method:conceptoIngresoEditando?"PUT":"POST",body:JSON.stringify(datos)});
+            showSuccess("Concepto guardado");
+            await cargarConceptosIngreso();
+            if (volverARegistroIngreso) return cerrarConceptosIngreso(guardado.id);
+            renderConceptosIngreso(); limpiarConceptoIngreso();
         } catch(e) { showError(e.message); }
     }
 
-    async function abrirOtroIngreso() {
+    async function abrirOtroIngreso(conceptoSeleccionado = null) {
         await cargarConceptosIngreso();
-        if (!conceptosIngresoCache.length) { showInfo("Primero crea un concepto de ingreso"); return abrirConceptosIngreso(); }
         document.getElementById("oi-fecha").value = fechaLocalISO();
         document.getElementById("oi-concepto").innerHTML = '<option value="">Seleccionar...</option>' + conceptosIngresoCache.map(c => `<option value="${Number(c.id)}">${escapeHTML(c.nombre)}</option>`).join("");
         document.getElementById("oi-monto").value = ""; document.getElementById("oi-metodo").value = "efectivo"; document.getElementById("oi-descripcion").value = "";
+        if (conceptoSeleccionado) {
+            document.getElementById("oi-concepto").value = String(conceptoSeleccionado);
+            onConceptoOtroIngreso();
+        }
         document.getElementById("modal-otro-ingreso").classList.add("active");
+        if (!conceptosIngresoCache.length) showInfo("Crea el primer concepto con el botón + Nuevo");
     }
 
     function onConceptoOtroIngreso() {
@@ -1155,7 +1171,7 @@
         if (!conceptoId || !fecha || !monto || monto <= 0) return showError("Completa fecha, concepto y monto");
         try {
             await apiFetch("/otros-ingresos/",{method:"POST",body:JSON.stringify({concepto_id:conceptoId,fecha:`${fecha}T12:00:00`,monto,metodo_pago:document.getElementById("oi-metodo").value,descripcion:document.getElementById("oi-descripcion").value.trim()||null})});
-            showSuccess("Ingreso registrado"); cerrarModal("modal-otro-ingreso"); await Promise.all([cargarOtrosIngresos(),cargarDashboard()]);
+            showSuccess("Ingreso registrado"); cerrarModal("modal-otro-ingreso"); await cargarDashboard();
         } catch(e) { showError(e.message); }
     }
 
@@ -1165,7 +1181,6 @@
     cargarDashboard();
     cargarUltimosIngresos();
     cargarProductosMini();
-    cargarOtrosIngresos();
     setInterval(cargarDashboard, 120000);
     setInterval(cargarUltimosIngresos, 15000);
     window.addEventListener("mrgym:datos-actualizados", () => {
