@@ -437,10 +437,35 @@ class Cliente(Base):
     planes_nutricion = relationship("PlanNutricion", back_populates="cliente")
     membresias_cliente = relationship("ClienteMembresia", back_populates="cliente")
     medidas = relationship("Medida", back_populates="cliente")
+    biometria_facial = relationship(
+        "BiometriaFacial",
+        back_populates="cliente",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     @property
     def password_configurada(self):
         return bool(self.codigo_acceso and self.codigo_acceso.strip())
+
+
+class BiometriaFacial(Base):
+    """Plantilla facial cifrada; nunca almacena fotos ni video de la camara."""
+    __tablename__ = "biometrias_faciales"
+    __table_args__ = (
+        UniqueConstraint("cliente_id", name="uq_biometria_facial_cliente"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes.id", ondelete="CASCADE"), nullable=False, index=True)
+    descriptor_cifrado = Column(Text, nullable=False)
+    version_modelo = Column(String(40), nullable=False, default="human-3.3.6-faceres")
+    consentimiento_en = Column(DateTime, nullable=False, default=ahora_lima)
+    actualizado_en = Column(DateTime, nullable=False, default=ahora_lima, onupdate=ahora_lima)
+    actualizado_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+
+    cliente = relationship("Cliente", back_populates="biometria_facial")
 
 
 # ==================================================================

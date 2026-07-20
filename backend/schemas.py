@@ -376,6 +376,26 @@ class ClienteListItem(BaseModel):
     membresia_texto: Optional[str] = None
 
 
+class BiometriaFacialGuardar(BaseModel):
+    descriptor: List[float] = Field(min_length=1024, max_length=1024)
+    consentimiento: bool
+    version_modelo: str = Field(default="human-3.3.6-faceres", min_length=3, max_length=40)
+
+
+class BiometriaFacialDescriptor(BaseModel):
+    cliente_id: int
+    nombre_completo: str
+    foto_url: Optional[str] = None
+    descriptor: List[float]
+
+
+class BiometriaFacialEstado(BaseModel):
+    registrada: bool
+    consentimiento_en: Optional[datetime] = None
+    actualizado_en: Optional[datetime] = None
+    version_modelo: Optional[str] = None
+
+
 # ==================================================================
 # 2b. CLIENTES ANTIGUOS / HISTORICOS
 # ==================================================================

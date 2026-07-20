@@ -14,6 +14,7 @@ Convencion de permisos:
 from datetime import datetime, date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
+import base64
 import calendar
 import math
 import os
@@ -30,6 +31,7 @@ import urllib.request
 import unicodedata
 from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
+from cryptography.fernet import Fernet, InvalidToken
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, File, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -203,6 +205,29 @@ def q(db: Session, Model, usuario: models.Usuario):
     """
     gid = get_gid(usuario)
     return db.query(Model).filter(Model.gimnasio_id == gid)
+
+
+def _cifrador_biometrico() -> Fernet:
+    """Deriva una clave exclusiva para biometria sin guardar otra clave en la BD."""
+    secreto = os.getenv("BIOMETRIC_ENCRYPTION_KEY") or auth.SECRET_KEY
+    material = hashlib.sha256(f"soft-gym-biometria:{secreto}".encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(material))
+
+
+def _cifrar_descriptor_facial(descriptor: List[float]) -> str:
+    payload = json.dumps(descriptor, separators=(",", ":")).encode("utf-8")
+    return _cifrador_biometrico().encrypt(payload).decode("ascii")
+
+
+def _descifrar_descriptor_facial(valor: str) -> List[float]:
+    try:
+        payload = _cifrador_biometrico().decrypt(valor.encode("ascii"))
+        descriptor = json.loads(payload)
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("La plantilla facial no se puede descifrar") from exc
+    if not isinstance(descriptor, list) or len(descriptor) != 1024:
+        raise ValueError("La plantilla facial tiene un formato incompatible")
+    return [float(valor) for valor in descriptor]
 
 
 def _buscar_idempotente(db: Session, usuario: models.Usuario, endpoint: str, clave: Optional[str], payload: dict, Modelo):
@@ -3925,6 +3950,136 @@ def ultimos_clientes_con_ingreso(
         .limit(limit)
         .all()
     )
+
+
+# ---- Biometria facial (plantillas cifradas, sin fotografias) ----
+
+def _validar_descriptor_facial(descriptor: List[float]):
+    if len(descriptor) != 1024 or any(not math.isfinite(float(valor)) for valor in descriptor):
+        raise HTTPException(status_code=400, detail="Plantilla facial invalida")
+    if any(abs(float(valor)) > 100 for valor in descriptor):
+        raise HTTPException(status_code=400, detail="Plantilla facial fuera de rango")
+
+
+@app.get("/biometria-facial/descriptores", response_model=List[schemas.BiometriaFacialDescriptor], tags=["Asistencias"])
+def listar_descriptores_faciales(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    registros = (
+        db.query(models.BiometriaFacial, models.Cliente)
+        .join(models.Cliente, models.Cliente.id == models.BiometriaFacial.cliente_id)
+        .filter(
+            models.BiometriaFacial.gimnasio_id == get_gid(usuario),
+            models.Cliente.gimnasio_id == get_gid(usuario),
+            models.Cliente.activo == True,
+        )
+        .all()
+    )
+    respuesta = []
+    for biometria, cliente in registros:
+        try:
+            descriptor = _descifrar_descriptor_facial(biometria.descriptor_cifrado)
+        except ValueError:
+            logger.exception("Plantilla facial ilegible para cliente %s", cliente.id)
+            continue
+        respuesta.append({
+            "cliente_id": cliente.id,
+            "nombre_completo": f"{cliente.nombre} {cliente.apellidos or ''}".strip(),
+            "foto_url": cliente.foto_url,
+            "descriptor": descriptor,
+        })
+    return respuesta
+
+
+@app.get("/clientes/{cliente_id}/biometria-facial", response_model=schemas.BiometriaFacialEstado, tags=["Clientes"])
+def estado_biometria_facial(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    cliente = db.query(models.Cliente).filter(
+        models.Cliente.id == cliente_id,
+        models.Cliente.gimnasio_id == get_gid(usuario),
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    registro = db.query(models.BiometriaFacial).filter(
+        models.BiometriaFacial.cliente_id == cliente_id,
+        models.BiometriaFacial.gimnasio_id == get_gid(usuario),
+    ).first()
+    return {
+        "registrada": bool(registro),
+        "consentimiento_en": registro.consentimiento_en if registro else None,
+        "actualizado_en": registro.actualizado_en if registro else None,
+        "version_modelo": registro.version_modelo if registro else None,
+    }
+
+
+@app.put("/clientes/{cliente_id}/biometria-facial", response_model=schemas.BiometriaFacialEstado, tags=["Clientes"])
+def guardar_biometria_facial(
+    cliente_id: int,
+    datos: schemas.BiometriaFacialGuardar,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    if not datos.consentimiento:
+        raise HTTPException(status_code=400, detail="Se requiere el consentimiento expreso del cliente")
+    _validar_descriptor_facial(datos.descriptor)
+    cliente = db.query(models.Cliente).filter(
+        models.Cliente.id == cliente_id,
+        models.Cliente.gimnasio_id == get_gid(usuario),
+        models.Cliente.activo == True,
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    registro = db.query(models.BiometriaFacial).filter(
+        models.BiometriaFacial.cliente_id == cliente_id,
+        models.BiometriaFacial.gimnasio_id == get_gid(usuario),
+    ).first()
+    ahora = ahora_lima()
+    if not registro:
+        registro = models.BiometriaFacial(
+            gimnasio_id=get_gid(usuario),
+            cliente_id=cliente_id,
+            descriptor_cifrado=_cifrar_descriptor_facial(datos.descriptor),
+            version_modelo=datos.version_modelo,
+            consentimiento_en=ahora,
+            actualizado_en=ahora,
+            actualizado_por_id=usuario.id,
+        )
+        db.add(registro)
+    else:
+        registro.descriptor_cifrado = _cifrar_descriptor_facial(datos.descriptor)
+        registro.version_modelo = datos.version_modelo
+        registro.consentimiento_en = ahora
+        registro.actualizado_en = ahora
+        registro.actualizado_por_id = usuario.id
+    db.commit()
+    db.refresh(registro)
+    return {
+        "registrada": True,
+        "consentimiento_en": registro.consentimiento_en,
+        "actualizado_en": registro.actualizado_en,
+        "version_modelo": registro.version_modelo,
+    }
+
+
+@app.delete("/clientes/{cliente_id}/biometria-facial", tags=["Clientes"])
+def eliminar_biometria_facial(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    registro = db.query(models.BiometriaFacial).filter(
+        models.BiometriaFacial.cliente_id == cliente_id,
+        models.BiometriaFacial.gimnasio_id == get_gid(usuario),
+    ).first()
+    if not registro:
+        raise HTTPException(status_code=404, detail="El cliente no tiene reconocimiento facial registrado")
+    db.delete(registro)
+    db.commit()
+    return {"message": "Plantilla facial eliminada"}
 
 
 @app.post("/clientes/", response_model=schemas.Cliente, tags=["Clientes"])

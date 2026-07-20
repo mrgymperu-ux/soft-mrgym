@@ -44,7 +44,10 @@ from backend.main import (
     eliminar_pago_membresia,
     eliminar_venta,
     emitir_documento_financiero,
+    eliminar_biometria_facial,
+    estado_biometria_facial,
     generar_rutinas_por_equipamiento,
+    guardar_biometria_facial,
     obtener_equipamiento_gimnasio,
     registrar_compra,
     registrar_entrada,
@@ -55,6 +58,7 @@ from backend.main import (
     renovar_suscripcion_saas,
     guardar_recomendacion_rutina,
     listar_whatsapp_mensajes,
+    listar_descriptores_faciales,
     listar_usuarios_counter,
     login_counter,
     obtener_whatsapp_configuracion,
@@ -120,6 +124,47 @@ class MultiTenantTest(unittest.TestCase):
 
     def test_exportacion_no_incluye_credenciales_de_alumnos(self):
         self.assertNotIn("codigo_acceso", _CAMPOS_CLIENTE_EXPORTABLES)
+
+    def test_biometria_facial_se_cifra_y_respeta_el_gimnasio(self):
+        descriptor = [((i % 17) - 8) / 100 for i in range(1024)]
+        guardado = guardar_biometria_facial(
+            self.cliente1.id,
+            schemas.BiometriaFacialGuardar(
+                descriptor=descriptor,
+                consentimiento=True,
+                version_modelo="human-3.3.6-faceres",
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertTrue(guardado["registrada"])
+
+        registro = self.db.query(models.BiometriaFacial).filter_by(cliente_id=self.cliente1.id).one()
+        self.assertNotIn(str(descriptor[:3]), registro.descriptor_cifrado)
+        self.assertGreater(len(registro.descriptor_cifrado), 100)
+
+        disponibles = listar_descriptores_faciales(db=self.db, usuario=self.admin1)
+        self.assertEqual([item["cliente_id"] for item in disponibles], [self.cliente1.id])
+        self.assertEqual(len(disponibles[0]["descriptor"]), 1024)
+        self.assertAlmostEqual(disponibles[0]["descriptor"][9], descriptor[9])
+        self.assertTrue(estado_biometria_facial(self.cliente1.id, db=self.db, usuario=self.admin1)["registrada"])
+
+        with self.assertRaises(HTTPException) as otro_gimnasio:
+            estado_biometria_facial(self.cliente2.id, db=self.db, usuario=self.admin1)
+        self.assertEqual(otro_gimnasio.exception.status_code, 404)
+
+        eliminar_biometria_facial(self.cliente1.id, db=self.db, usuario=self.admin1)
+        self.assertFalse(estado_biometria_facial(self.cliente1.id, db=self.db, usuario=self.admin1)["registrada"])
+
+    def test_biometria_facial_exige_consentimiento(self):
+        with self.assertRaises(HTTPException) as sin_consentimiento:
+            guardar_biometria_facial(
+                self.cliente1.id,
+                schemas.BiometriaFacialGuardar(descriptor=[0.0] * 1024, consentimiento=False),
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(sin_consentimiento.exception.status_code, 400)
 
     def test_foto_alumno_exige_token_opaco_correcto(self):
         token = "token-opaco-de-prueba-1234567890"

@@ -1,0 +1,278 @@
+/* Reconocimiento facial local para el panel de staff.
+   La webcam nunca se transmite: Human calcula el descriptor en este navegador. */
+(function () {
+    "use strict";
+
+    const MODELO_VERSION = "human-3.3.6-faceres";
+    const UMBRAL_COINCIDENCIA = 0.55;
+    const UMBRAL_REAL = 0.60;
+    const UMBRAL_VIVO = 0.60;
+    const INTERVALO_MS = 520;
+    const CONFIG = {
+        backend: "webgl",
+        modelBasePath: "vendor/human/models/",
+        cacheSensitivity: 0.01,
+        filter: { enabled: true, equalization: true },
+        face: {
+            enabled: true,
+            detector: { rotation: true, maxDetected: 2, minConfidence: 0.55 },
+            mesh: { enabled: true },
+            iris: { enabled: true },
+            description: { enabled: true },
+            antispoof: { enabled: true },
+            liveness: { enabled: true },
+            emotion: { enabled: false },
+        },
+        body: { enabled: false },
+        hand: { enabled: false },
+        object: { enabled: false },
+        gesture: { enabled: true },
+    };
+
+    let human = null;
+    let stream = null;
+    let temporizador = null;
+    let ejecutando = false;
+    let modo = null;
+    let objetivoClienteId = null;
+    let descriptores = [];
+    let parpadeoDetectado = false;
+    let capturas = [];
+    let ultimaCaptura = 0;
+    let ultimoCandidato = null;
+    let repeticionesCandidato = 0;
+
+    const elemento = (id) => document.getElementById(id);
+
+    function estado(mensaje, tipo = "") {
+        const nodo = elemento("rf-status");
+        if (!nodo) return;
+        nodo.textContent = mensaje;
+        nodo.className = `rf-status ${tipo}`.trim();
+    }
+
+    function marcarBoton(activo) {
+        const boton = elemento("btn-reconocimiento-facial");
+        if (!boton) return;
+        boton.classList.toggle("activo", activo);
+        boton.setAttribute("aria-pressed", String(activo));
+        boton.setAttribute("aria-label", activo ? "Desactivar reconocimiento facial" : "Activar reconocimiento facial");
+        boton.title = activo ? "Reconocimiento facial encendido" : "Reconocimiento facial apagado";
+    }
+
+    async function cargarMotor() {
+        if (human) return human;
+        if (!window.Human || !window.Human.Human) throw new Error("No se pudo cargar el motor facial");
+        estado("Cargando reconocimiento facial por primera vez...");
+        human = new window.Human.Human(CONFIG);
+        await human.load();
+        return human;
+    }
+
+    async function encenderCamara() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Este navegador no permite usar la cámara");
+        stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        });
+        const video = elemento("rf-video");
+        video.srcObject = stream;
+        await video.play();
+        elemento("rf-camera").style.display = "block";
+        marcarBoton(true);
+    }
+
+    function apagarCamara() {
+        if (temporizador) window.clearTimeout(temporizador);
+        temporizador = null;
+        ejecutando = false;
+        if (stream) stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+        const video = elemento("rf-video");
+        if (video) video.srcObject = null;
+        marcarBoton(false);
+    }
+
+    function abrirModal(titulo) {
+        elemento("rf-titulo").textContent = titulo;
+        elemento("modal-reconocimiento-facial").classList.add("active");
+        elemento("rf-camera").style.display = "none";
+        elemento("rf-consentimiento").style.display = "none";
+        elemento("rf-ayuda").style.display = "block";
+        estado("Preparando...");
+    }
+
+    function reiniciarPruebaDeVida() {
+        parpadeoDetectado = false;
+        ultimoCandidato = null;
+        repeticionesCandidato = 0;
+    }
+
+    function huboParpadeo(resultado) {
+        return (resultado.gesture || []).some((item) => String(item.gesture || "").toLowerCase().includes("blink"));
+    }
+
+    function validarRostro(resultado) {
+        const caras = resultado.face || [];
+        if (caras.length === 0) return { mensaje: "Coloca tu rostro dentro del óvalo" };
+        if (caras.length > 1) return { mensaje: "Debe aparecer una sola persona" };
+        const cara = caras[0];
+        if (!cara.embedding || cara.embedding.length !== 1024) return { mensaje: "Acércate un poco a la cámara" };
+        if ((cara.faceScore || 0) < 0.65 || !cara.box || cara.box[2] < 120) return { mensaje: "Acércate y mantén el rostro al frente" };
+        if (typeof cara.real === "number" && cara.real < UMBRAL_REAL) return { mensaje: "No se detecta un rostro real" };
+        if (typeof cara.live === "number" && cara.live < UMBRAL_VIVO) return { mensaje: "Muévete ligeramente y parpadea" };
+        return { cara };
+    }
+
+    function similitud(a, b) {
+        return human.match.similarity(a, b, { order: 2, multiplier: 25, min: 0.2, max: 0.8 });
+    }
+
+    async function procesarReconocimiento(cara) {
+        const candidatos = descriptores
+            .map((item) => ({ ...item, similitud: similitud(cara.embedding, item.descriptor) }))
+            .sort((a, b) => b.similitud - a.similitud);
+        const mejor = candidatos[0];
+        const segundo = candidatos[1];
+        const margenSeguro = !segundo || mejor.similitud - segundo.similitud >= 0.03;
+
+        if (!mejor || mejor.similitud < UMBRAL_COINCIDENCIA || !margenSeguro) {
+            ultimoCandidato = null;
+            repeticionesCandidato = 0;
+            estado("Rostro no reconocido. Intenta de nuevo.");
+            return;
+        }
+        if (ultimoCandidato === mejor.cliente_id) repeticionesCandidato += 1;
+        else {
+            ultimoCandidato = mejor.cliente_id;
+            repeticionesCandidato = 1;
+        }
+        if (repeticionesCandidato < 2) {
+            estado("Verificando identidad...");
+            return;
+        }
+
+        const clienteId = mejor.cliente_id;
+        const nombre = mejor.nombre_completo;
+        window.cerrarReconocimientoFacial();
+        if (typeof window.showSuccess === "function") window.showSuccess(`Rostro reconocido: ${nombre}`);
+        if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
+    }
+
+    function promedio(vectores) {
+        const salida = new Array(1024).fill(0);
+        vectores.forEach((vector) => vector.forEach((valor, i) => { salida[i] += valor; }));
+        return salida.map((valor) => valor / vectores.length);
+    }
+
+    async function procesarRegistro(cara) {
+        if (Date.now() - ultimaCaptura < 650) return;
+        capturas.push(Array.from(cara.embedding));
+        ultimaCaptura = Date.now();
+        if (capturas.length < 3) {
+            estado(`Captura ${capturas.length} de 3. Gira ligeramente el rostro.`);
+            return;
+        }
+        estado("Guardando registro facial...", "ok");
+        apagarCamara();
+        await window.apiFetch(`/clientes/${objetivoClienteId}/biometria-facial`, {
+            method: "PUT",
+            body: JSON.stringify({ descriptor: promedio(capturas), consentimiento: true, version_modelo: MODELO_VERSION }),
+        });
+        const clienteId = objetivoClienteId;
+        window.cerrarReconocimientoFacial();
+        if (typeof window.showSuccess === "function") window.showSuccess("Rostro registrado correctamente");
+        if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
+    }
+
+    async function ciclo() {
+        if (!stream || ejecutando) return;
+        ejecutando = true;
+        try {
+            const resultado = await human.detect(elemento("rf-video"));
+            if (huboParpadeo(resultado)) parpadeoDetectado = true;
+            const validacion = validarRostro(resultado);
+            if (!validacion.cara) estado(validacion.mensaje);
+            else if (!parpadeoDetectado) estado("Parpadea una vez para comprobar que eres una persona");
+            else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
+            else if (modo === "registrar") await procesarRegistro(validacion.cara);
+        } catch (error) {
+            estado(error.message || "No se pudo analizar la imagen", "error");
+        } finally {
+            ejecutando = false;
+            if (stream) temporizador = window.setTimeout(ciclo, INTERVALO_MS);
+        }
+    }
+
+    async function prepararCamara() {
+        try {
+            await Promise.all([cargarMotor(), encenderCamara()]);
+            estado("Mira al frente y parpadea una vez");
+            ciclo();
+        } catch (error) {
+            apagarCamara();
+            const denegado = error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
+            estado(denegado ? "Permite el acceso a la webcam para continuar" : (error.message || "No se pudo iniciar la webcam"), "error");
+        }
+    }
+
+    window.alternarReconocimientoFacial = async function () {
+        if (stream || elemento("modal-reconocimiento-facial").classList.contains("active")) {
+            window.cerrarReconocimientoFacial();
+            return;
+        }
+        modo = "reconocer";
+        objetivoClienteId = null;
+        reiniciarPruebaDeVida();
+        abrirModal("Reconocimiento facial");
+        try {
+            descriptores = await window.apiFetch("/biometria-facial/descriptores");
+            if (!descriptores.length) {
+                estado("Aún no hay rostros registrados. Busca un cliente y usa Registrar rostro.");
+                elemento("rf-ayuda").style.display = "none";
+                return;
+            }
+            await prepararCamara();
+        } catch (error) {
+            estado(error.message, "error");
+        }
+    };
+
+    window.abrirRegistroFacial = function (clienteId) {
+        apagarCamara();
+        modo = "registrar";
+        objetivoClienteId = clienteId;
+        capturas = [];
+        ultimaCaptura = 0;
+        reiniciarPruebaDeVida();
+        abrirModal("Registrar rostro del cliente");
+        elemento("rf-consentimiento-check").checked = false;
+        elemento("rf-consentimiento").style.display = "block";
+        elemento("rf-ayuda").style.display = "none";
+        estado("Confirma el consentimiento para comenzar");
+    };
+
+    window.iniciarRegistroFacial = async function () {
+        if (!elemento("rf-consentimiento-check").checked) {
+            estado("Debes confirmar la autorización del cliente", "error");
+            return;
+        }
+        elemento("rf-consentimiento").style.display = "none";
+        elemento("rf-ayuda").style.display = "block";
+        await prepararCamara();
+    };
+
+    window.cerrarReconocimientoFacial = function () {
+        apagarCamara();
+        const modal = elemento("modal-reconocimiento-facial");
+        if (modal) modal.classList.remove("active");
+        modo = null;
+        objetivoClienteId = null;
+        capturas = [];
+    };
+
+    window.addEventListener("pagehide", apagarCamara);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden" && stream) window.cerrarReconocimientoFacial();
+    });
+})();
