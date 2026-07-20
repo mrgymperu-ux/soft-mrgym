@@ -182,6 +182,7 @@
         const clienteId = objetivoClienteId;
         window.cerrarReconocimientoFacial();
         if (typeof window.showSuccess === "function") window.showSuccess("Rostro registrado correctamente");
+        window.dispatchEvent(new CustomEvent("mrgym:biometria-actualizada", { detail: { clienteId } }));
         if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
     }
 
