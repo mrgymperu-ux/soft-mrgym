@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 
 revision = "0012_modo_reconocimiento_facial"
-down_revision = "0011_horario_semanal_staff"
+down_revision = "0011_horario_staff"
 branch_labels = None
 depends_on = None
 
