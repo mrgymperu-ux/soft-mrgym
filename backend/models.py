@@ -102,6 +102,7 @@ class Gimnasio(Base):
     latitud = Column(Float, nullable=True)
     longitud = Column(Float, nullable=True)
     radio_asistencia_metros = Column(Float, default=150.0)
+    reconocimiento_facial_modo = Column(String(20), default="desactivado")
 
     # --- Configuracion (antes en tabla Configuracion) ---
     moneda = Column(String, default="S/")

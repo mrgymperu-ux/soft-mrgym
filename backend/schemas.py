@@ -11,7 +11,7 @@ Convencion usada en todo el archivo:
 """
 
 from datetime import datetime, date
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, model_validator
 
@@ -1692,6 +1692,7 @@ class ConfiguracionBase(BaseModel):
     latitud: Optional[float] = Field(default=None, ge=-90, le=90)
     longitud: Optional[float] = Field(default=None, ge=-180, le=180)
     radio_asistencia_metros: float = Field(default=150.0, ge=20, le=2000)
+    reconocimiento_facial_modo: Literal["desactivado", "movil", "webcam_1080p"] = "desactivado"
     comision_tarjeta: float = 3.5
     comision_qr: float = 2.0
     dias_aviso_vencimiento: int = 7

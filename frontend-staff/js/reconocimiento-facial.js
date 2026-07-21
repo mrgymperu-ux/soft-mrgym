@@ -5,9 +5,14 @@
 
     const MODELO_VERSION = "human-3.3.6-faceres";
     const UMBRAL_COINCIDENCIA = 0.55;
-    const UMBRAL_REAL = 0.60;
-    const UMBRAL_VIVO = 0.60;
-    const INTERVALO_MS = 220;
+    const CAPTURAS_REGISTRO = 5;
+    let modoDispositivo = "desactivado";
+    let umbralReal = 0.60;
+    let umbralVivo = 0.60;
+    let umbralRostro = 0.65;
+    let anchoRostroMinimo = 120;
+    let requiereParpadeo = true;
+    let intervaloMs = 220;
     const CONFIG = {
         backend: "webgl",
         modelBasePath: "vendor/human/models/",
@@ -46,6 +51,27 @@
     let repeticionesCandidato = 0;
 
     const elemento = (id) => document.getElementById(id);
+
+    async function cargarModoDispositivo() {
+        const config = await window.getConfiguracion();
+        modoDispositivo = config.reconocimiento_facial_modo || "desactivado";
+        if (modoDispositivo === "movil") {
+            umbralReal = 0.45;
+            umbralVivo = 0.45;
+            umbralRostro = 0.55;
+            anchoRostroMinimo = 85;
+            requiereParpadeo = false;
+            intervaloMs = 350;
+            CONFIG.face.detector.minConfidence = 0.45;
+            CONFIG.face.iris.enabled = false;
+            CONFIG.gesture.enabled = false;
+        }
+        return modoDispositivo;
+    }
+
+    function exigirModoActivo() {
+        if (modoDispositivo === "desactivado") throw new Error("El reconocimiento facial está desactivado en Configuración");
+    }
 
     function estado(mensaje, tipo = "") {
         const nodo = elemento("rf-status");
@@ -86,9 +112,13 @@
 
     async function encenderCamara() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Este navegador no permite usar la cámara");
+        if (!window.isSecureContext) throw new Error("En el móvil abre el sistema con HTTPS para permitir la cámara");
+        const videoConfig = modoDispositivo === "webcam_1080p"
+            ? { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }
+            : { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } };
         stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+            video: videoConfig,
         });
         const video = elemento("rf-video");
         video.srcObject = stream;
@@ -121,6 +151,17 @@
         parpadeoDetectado = false;
         ultimoCandidato = null;
         repeticionesCandidato = 0;
+        actualizarProgresoCaptura(0);
+    }
+
+    function actualizarProgresoCaptura(cantidad) {
+        const guia = elemento("rf-camera")?.querySelector(".rf-guide");
+        if (!guia) return;
+        const porcentaje = Math.min(100, Math.round((cantidad / CAPTURAS_REGISTRO) * 100));
+        guia.style.setProperty("--rf-progreso", porcentaje);
+        const trazo = guia.querySelector(".rf-guide-progress ellipse");
+        if (trazo) trazo.style.strokeDashoffset = String(100 - porcentaje);
+        guia.classList.toggle("completo", porcentaje === 100);
     }
 
     function huboParpadeo(resultado) {
@@ -133,9 +174,9 @@
         if (caras.length > 1) return { mensaje: "Debe aparecer una sola persona" };
         const cara = caras[0];
         if (!cara.embedding || cara.embedding.length !== 1024) return { mensaje: "Acércate un poco a la cámara" };
-        if ((cara.faceScore || 0) < 0.65 || !cara.box || cara.box[2] < 120) return { mensaje: "Acércate y mantén el rostro al frente" };
-        if (typeof cara.real === "number" && cara.real < UMBRAL_REAL) return { mensaje: "No se detecta un rostro real" };
-        if (typeof cara.live === "number" && cara.live < UMBRAL_VIVO) return { mensaje: "Muévete ligeramente y parpadea" };
+        if ((cara.faceScore || 0) < umbralRostro || !cara.box || cara.box[2] < anchoRostroMinimo) return { mensaje: "Acércate y mantén el rostro al frente" };
+        if (typeof cara.real === "number" && cara.real < umbralReal) return { mensaje: "No se detecta un rostro real" };
+        if (typeof cara.live === "number" && cara.live < umbralVivo) return { mensaje: "Muévete ligeramente y parpadea" };
         return { cara };
     }
 
@@ -183,9 +224,10 @@
     async function procesarRegistro(cara) {
         if (Date.now() - ultimaCaptura < 650) return;
         capturas.push(Array.from(cara.embedding));
+        actualizarProgresoCaptura(capturas.length);
         ultimaCaptura = Date.now();
-        if (capturas.length < 3) {
-            estado(`Captura ${capturas.length} de 3. Gira ligeramente el rostro.`);
+        if (capturas.length < CAPTURAS_REGISTRO) {
+            estado(`Registrando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}. Muévete ligeramente.`);
             return;
         }
         estado("Guardando registro facial...", "ok");
@@ -209,22 +251,23 @@
             if (huboParpadeo(resultado)) parpadeoDetectado = true;
             const validacion = validarRostro(resultado);
             if (!validacion.cara) estado(validacion.mensaje);
-            else if (!parpadeoDetectado) estado("Parpadea una vez para comprobar que eres una persona");
+            else if (requiereParpadeo && !parpadeoDetectado) estado("Parpadea una vez para comprobar que eres una persona");
             else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
             else if (modo === "registrar") await procesarRegistro(validacion.cara);
         } catch (error) {
             estado(error.message || "No se pudo analizar la imagen", "error");
         } finally {
             ejecutando = false;
-            if (stream) temporizador = window.setTimeout(ciclo, INTERVALO_MS);
+            if (stream) temporizador = window.setTimeout(ciclo, intervaloMs);
         }
     }
 
     async function prepararCamara() {
         try {
-            estado("Iniciando webcam y motor facial...");
+            exigirModoActivo();
+            estado(modoDispositivo === "movil" ? "Iniciando cámara frontal..." : "Iniciando webcam 1080p...");
             await Promise.all([cargarMotor(), encenderCamara()]);
-            estado("Mira al frente y parpadea una vez");
+            estado(requiereParpadeo ? "Mira al frente y parpadea una vez" : "Mira al frente y muévete ligeramente");
             ciclo();
         } catch (error) {
             apagarCamara();
@@ -243,6 +286,8 @@
         reiniciarPruebaDeVida();
         abrirModal("Reconocimiento facial");
         try {
+            await cargarModoDispositivo();
+            exigirModoActivo();
             descriptores = await window.apiFetch("/biometria-facial/descriptores");
             if (!descriptores.length) {
                 estado("Aún no hay rostros registrados. Busca un cliente y usa Registrar rostro.");
@@ -255,7 +300,14 @@
         }
     };
 
-    window.abrirRegistroFacial = function (clienteId) {
+    window.abrirRegistroFacial = async function (clienteId) {
+        try {
+            await cargarModoDispositivo();
+            exigirModoActivo();
+        } catch (error) {
+            if (typeof window.showError === "function") window.showError(error.message);
+            return;
+        }
         apagarCamara();
         modo = "registrar";
         objetivoClienteId = clienteId;
@@ -295,7 +347,17 @@
 
     // Aprovecha el tiempo ocioso después de cargar el panel. No abre la cámara
     // ni pide permisos; solo deja modelos y shaders listos para el primer clic.
-    const precargar = () => cargarMotor().catch(() => {});
+    const precargar = async () => {
+        try {
+            await cargarModoDispositivo();
+            const activo = modoDispositivo !== "desactivado";
+            const botonPrincipal = elemento("btn-reconocimiento-facial");
+            if (botonPrincipal && !activo) botonPrincipal.style.display = "none";
+            const botonRegistro = elemento("btn-registro-facial-cliente");
+            if (botonRegistro && !activo) botonRegistro.style.display = "none";
+            if (activo) await cargarMotor();
+        } catch (_) {}
+    };
     if ("requestIdleCallback" in window) window.requestIdleCallback(precargar, { timeout: 4000 });
     else window.setTimeout(precargar, 2500);
 })();

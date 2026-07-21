@@ -89,7 +89,7 @@ class MultiTenantTest(unittest.TestCase):
         self.plan_saas = models.PlanSaas(nombre="Pro Test", precio_mensual=49, activo=True)
         self.db.add(self.plan_saas)
         self.db.flush()
-        self.gym1 = models.Gimnasio(nombre="Gym Uno", slug="gym-uno", activo=True, moneda="S/", plan_id=self.plan_saas.id)
+        self.gym1 = models.Gimnasio(nombre="Gym Uno", slug="gym-uno", activo=True, moneda="S/", plan_id=self.plan_saas.id, reconocimiento_facial_modo="movil")
         self.gym2 = models.Gimnasio(nombre="Gym Dos", slug="gym-dos", activo=True, moneda="USD")
         self.db.add_all([self.gym1, self.gym2])
         self.db.flush()

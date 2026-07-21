@@ -99,6 +99,21 @@
                 <p style="font-size:.78em;color:var(--color-texto-secundario);margin-top:10px;">Configura el PIN de cada trabajador desde Personal → Usuarios Staff.</p>
             </div>
 
+            <div class="config-section">
+                <h3>Reconocimiento facial</h3>
+                <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Elige el equipo que quedará en el counter. Al desactivarlo, se ocultan la captura y el registro de rostros.</p>
+                <div class="form-group">
+                    <label>Modo de captura</label>
+                    <select id="c-reconocimiento-facial" onchange="actualizarAyudaReconocimientoFacial()">
+                        <option value="desactivado">Desactivado</option>
+                        <option value="movil">Usar un móvil (cámara frontal)</option>
+                        <option value="webcam_1080p">Usar webcam 1080p</option>
+                    </select>
+                </div>
+                <p id="ayuda-reconocimiento-facial" style="font-size:.78em;color:var(--color-texto-secundario);margin:0 0 14px;"></p>
+                <button class="btn btn-primary" type="button" onclick="guardarReconocimientoFacial()">Guardar modo</button>
+            </div>
+
             <div class="config-section" id="seccion-whatsapp">
                 <h3>WhatsApp Automatico</h3>
                 <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Modulo adicional conectado a la cuenta y facturacion de Meta de este gimnasio.</p>
@@ -224,6 +239,8 @@
         document.getElementById("c-longitud").value = config.longitud ?? "";
         document.getElementById("c-buscar-direccion").value = config.direccion || "";
         document.getElementById("c-radio-asistencia").value = config.radio_asistencia_metros || 150;
+        document.getElementById("c-reconocimiento-facial").value = config.reconocimiento_facial_modo || "desactivado";
+        actualizarAyudaReconocimientoFacial();
         inicializarMapaUbicacion(config.latitud, config.longitud);
         document.getElementById("estado-ubicacion").textContent = config.latitud != null && config.longitud != null
             ? "Ubicación configurada. Puedes actualizarla cuando lo necesites."
@@ -247,6 +264,25 @@
             await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ clausulas_contrato: document.getElementById("c-clausulas").value }) });
             configuracionCache = null;
             showSuccess("Modelo de contrato guardado");
+        } catch (e) { showError(e.message); }
+    }
+
+    function actualizarAyudaReconocimientoFacial() {
+        const modo = document.getElementById("c-reconocimiento-facial").value;
+        const textos = {
+            desactivado: "No se solicitará acceso a ninguna cámara.",
+            movil: "Optimizado para cámara frontal y menor consumo. En el celular debes abrir el sistema mediante HTTPS.",
+            webcam_1080p: "Usa captura Full HD y validaciones más exigentes para una cámara fija.",
+        };
+        document.getElementById("ayuda-reconocimiento-facial").textContent = textos[modo];
+    }
+
+    async function guardarReconocimientoFacial() {
+        const modo = document.getElementById("c-reconocimiento-facial").value;
+        try {
+            await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ reconocimiento_facial_modo: modo }) });
+            configuracionCache = null;
+            showSuccess(modo === "desactivado" ? "Reconocimiento facial desactivado" : "Modo de reconocimiento facial guardado");
         } catch (e) { showError(e.message); }
     }
 

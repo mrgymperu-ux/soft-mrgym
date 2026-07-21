@@ -622,6 +622,7 @@ def _migrar_columnas_nuevas():
             ("latitud", "FLOAT"),
             ("longitud", "FLOAT"),
             ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
+            ("reconocimiento_facial_modo", "VARCHAR DEFAULT 'desactivado'"),
             ("equipamiento_disponible", "TEXT"),
             ("equipamiento_personalizado", "TEXT"),
             ("logo_datos", "BLOB"),
@@ -3970,11 +3971,19 @@ def _validar_descriptor_facial(descriptor: List[float]):
         raise HTTPException(status_code=400, detail="Plantilla facial fuera de rango")
 
 
+def _exigir_reconocimiento_facial_activo(db: Session, usuario: models.Usuario):
+    modo = _configuracion_del_gym(db, usuario).reconocimiento_facial_modo or "desactivado"
+    if modo == "desactivado":
+        raise HTTPException(status_code=409, detail="El reconocimiento facial está desactivado en Configuración")
+    return modo
+
+
 @app.get("/biometria-facial/descriptores", response_model=List[schemas.BiometriaFacialDescriptor], tags=["Asistencias"])
 def listar_descriptores_faciales(
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
+    _exigir_reconocimiento_facial_activo(db, usuario)
     registros = (
         db.query(models.BiometriaFacial, models.Cliente)
         .join(models.Cliente, models.Cliente.id == models.BiometriaFacial.cliente_id)
@@ -4034,6 +4043,7 @@ def guardar_biometria_facial(
 ):
     if not datos.consentimiento:
         raise HTTPException(status_code=400, detail="Se requiere el consentimiento expreso del cliente")
+    _exigir_reconocimiento_facial_activo(db, usuario)
     _validar_descriptor_facial(datos.descriptor)
     cliente = db.query(models.Cliente).filter(
         models.Cliente.id == cliente_id,

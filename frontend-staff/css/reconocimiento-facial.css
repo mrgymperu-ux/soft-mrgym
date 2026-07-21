@@ -1,6 +1,9 @@
 .rf-camera { position:relative; overflow:hidden; border-radius:14px; background:#111; aspect-ratio:4/3; max-height:54vh; }
 .rf-camera video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
 .rf-guide { position:absolute; inset:12% 24%; border:3px solid rgba(255,255,255,.75); border-radius:48%; box-shadow:0 0 0 999px rgba(0,0,0,.23); pointer-events:none; }
+.rf-guide-progress { position:absolute; inset:-5px; width:calc(100% + 10px); height:calc(100% + 10px); overflow:visible; }
+.rf-guide-progress ellipse { fill:none; stroke:#23C875; stroke-width:5; stroke-linecap:round; stroke-dasharray:100; stroke-dashoffset:100; transform:rotate(-90deg); transform-origin:50% 50%; transition:stroke-dashoffset .35s ease; filter:drop-shadow(0 0 5px rgba(35,200,117,.9)); }
+.rf-guide.completo { border-color:#23C875; box-shadow:0 0 0 999px rgba(0,0,0,.23),0 0 16px rgba(35,200,117,.8); }
 .rf-status { margin-top:12px; padding:10px 12px; border-radius:9px; background:var(--color-fondo); color:var(--color-texto-secundario); text-align:center; font-size:.86em; min-height:20px; }
 .rf-status.ok { color:#147A4B; background:#EAF9F1; }
 .rf-status.error { color:var(--color-error); background:#FFF0F0; }
@@ -8,3 +11,21 @@
 .rf-consent label { display:flex; align-items:flex-start; gap:8px; cursor:pointer; }
 .rf-consent input { width:auto; margin-top:3px; }
 @media (max-width:520px) { .rf-guide { inset:11% 19%; } }
+
+/* Captura inmersiva: la cámara ocupa toda la ventana y el sistema queda difuminado detrás. */
+#modal-reconocimiento-facial { padding:0; background:rgba(5,10,8,.72); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+#modal-reconocimiento-facial .modal-content { position:fixed; inset:0; width:100% !important; height:100dvh; max-width:none !important; max-height:none !important; padding:0; overflow:hidden; border-radius:0; background:#080b0a; color:#fff; }
+#modal-reconocimiento-facial .modal-header { position:absolute; z-index:5; top:0; left:0; right:0; margin:0; padding:18px 22px; background:linear-gradient(rgba(0,0,0,.72),transparent); }
+#modal-reconocimiento-facial .modal-title { color:#fff; }
+#modal-reconocimiento-facial .modal-close { color:#fff; width:44px; height:44px; border-radius:50%; background:rgba(0,0,0,.4); }
+#modal-reconocimiento-facial .rf-camera { position:absolute; inset:0; width:100%; height:100%; max-height:none; aspect-ratio:auto; border-radius:0; }
+#modal-reconocimiento-facial .rf-camera video { width:100%; height:100%; object-fit:cover; }
+#modal-reconocimiento-facial .rf-guide { inset:auto; left:50%; top:50%; width:min(56vw,430px); height:min(70vh,570px); transform:translate(-50%,-50%); border-width:2px; }
+#modal-reconocimiento-facial .rf-status { position:absolute; z-index:5; left:50%; bottom:58px; transform:translateX(-50%); width:min(560px,calc(100% - 32px)); margin:0; padding:13px 16px; color:#fff; background:rgba(0,0,0,.62); backdrop-filter:blur(8px); font-size:.95em; }
+#modal-reconocimiento-facial #rf-ayuda { position:absolute; z-index:5; left:16px; right:16px; bottom:20px; color:rgba(255,255,255,.8) !important; }
+#modal-reconocimiento-facial .rf-consent { position:absolute; z-index:6; left:50%; top:50%; transform:translate(-50%,-50%); width:min(520px,calc(100% - 32px)); margin:0; padding:22px; color:var(--color-texto); background:var(--color-blanco); }
+@media (max-width:520px) {
+    #modal-reconocimiento-facial .modal-header { padding:12px 14px; }
+    #modal-reconocimiento-facial .rf-guide { inset:auto; left:50%; top:48%; width:78vw; height:62vh; transform:translate(-50%,-50%); }
+    #modal-reconocimiento-facial .rf-status { bottom:52px; }
+}
