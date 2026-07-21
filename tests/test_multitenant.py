@@ -34,12 +34,14 @@ from backend.main import (
     crear_concepto_ingreso,
     crear_ajuste_caja,
     crear_documento_financiero,
+    crear_empleado,
     crear_paquete_rutina,
     crear_reserva_sala,
     crear_tipo_ejercicio,
     crear_usuario,
     crear_venta,
     cerrar_caja,
+    actualizar_empleado,
     caja_actual,
     consultar_auditoria,
     contenido_foto_cliente,
@@ -124,6 +126,42 @@ class MultiTenantTest(unittest.TestCase):
     def test_entidades_de_otro_gimnasio_no_se_resuelven(self):
         self.assertIsNone(_del_gym(self.db, models.Cliente, self.cliente2.id, self.admin1))
         self.assertIsNone(_cliente_membresia_del_gym(self.db, self.cm2.id, self.admin1))
+
+    def test_horario_staff_se_guarda_actualiza_y_valida(self):
+        empleado = crear_empleado(
+            schemas.EmpleadoCreate(
+                nombre_completo="Recepcion Test",
+                tipo=models.TipoEmpleado.STAFF_FIJO,
+                horario_semanal=[
+                    {"dias": [0, 1, 2, 3, 4], "hora_inicio": "08:00", "hora_fin": "17:00"},
+                    {"dias": [5], "hora_inicio": "09:00", "hora_fin": "13:00"},
+                ],
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertEqual(empleado.gimnasio_id, self.gym1.id)
+        self.assertEqual(empleado.horario_semanal[0]["dias"], [0, 1, 2, 3, 4])
+
+        actualizado = actualizar_empleado(
+            empleado.id,
+            schemas.EmpleadoUpdate(
+                horario_semanal=[{"dias": [0, 2, 4], "hora_inicio": "07:30", "hora_fin": "15:30"}]
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertEqual(actualizado.horario_semanal[0]["hora_inicio"], "07:30")
+
+        with self.assertRaises(ValueError):
+            schemas.EmpleadoUpdate(horario_semanal=[
+                {"dias": [0, 1], "hora_inicio": "08:00", "hora_fin": "17:00"},
+                {"dias": [1, 2], "hora_inicio": "18:00", "hora_fin": "22:00"},
+            ])
+        with self.assertRaises(ValueError):
+            schemas.EmpleadoUpdate(horario_semanal=[
+                {"dias": [6], "hora_inicio": "17:00", "hora_fin": "08:00"},
+            ])
 
     def test_exportacion_no_incluye_credenciales_de_alumnos(self):
         self.assertNotIn("codigo_acceso", _CAMPOS_CLIENTE_EXPORTABLES)

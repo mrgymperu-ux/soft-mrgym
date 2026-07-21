@@ -13,7 +13,7 @@ Convencion usada en todo el archivo:
 from datetime import datetime, date
 from typing import Optional, List
 
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, model_validator
 
 from .models import (
     RolUsuario,
@@ -1113,6 +1113,30 @@ class Puesto(BaseModel):
     activo: bool
 
 
+class HorarioStaffBloque(BaseModel):
+    dias: List[int] = Field(min_length=1, max_length=7)
+    hora_inicio: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    hora_fin: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def validar_bloque(self):
+        if len(set(self.dias)) != len(self.dias) or any(dia < 0 or dia > 6 for dia in self.dias):
+            raise ValueError("Los dias del horario deben ser unicos y estar entre lunes y domingo")
+        if self.hora_fin <= self.hora_inicio:
+            raise ValueError("La hora de salida debe ser posterior a la hora de entrada")
+        self.dias = sorted(self.dias)
+        return self
+
+
+def _validar_dias_sin_repetir(horario: Optional[List[HorarioStaffBloque]]):
+    vistos = set()
+    for bloque in horario or []:
+        repetidos = vistos.intersection(bloque.dias)
+        if repetidos:
+            raise ValueError("Un mismo dia no puede aparecer en dos franjas de horario")
+        vistos.update(bloque.dias)
+
+
 class EmpleadoBase(BaseModel):
     nombre_completo: str
     tipo: TipoEmpleado
@@ -1124,10 +1148,16 @@ class EmpleadoBase(BaseModel):
     codigo_acceso: Optional[str] = None
     # staff fijo:
     sueldo_fijo_mensual: Optional[float] = None
+    horario_semanal: List[HorarioStaffBloque] = Field(default_factory=list)
     # profesor de sala:
     tarifa_por_clase: Optional[float] = None
     minimo_alumnos_tarifa_completa: Optional[int] = None
     tarifa_reducida: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validar_horario_semanal(self):
+        _validar_dias_sin_repetir(self.horario_semanal)
+        return self
 
 
 class EmpleadoCreate(EmpleadoBase):
@@ -1143,10 +1173,16 @@ class EmpleadoUpdate(BaseModel):
     puesto: Optional[str] = None
     codigo_acceso: Optional[str] = None
     sueldo_fijo_mensual: Optional[float] = None
+    horario_semanal: Optional[List[HorarioStaffBloque]] = None
     tarifa_por_clase: Optional[float] = None
     minimo_alumnos_tarifa_completa: Optional[int] = None
     tarifa_reducida: Optional[float] = None
     activo: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def validar_horario_semanal(self):
+        _validar_dias_sin_repetir(self.horario_semanal)
+        return self
 
 
 class Empleado(EmpleadoBase):

@@ -651,6 +651,7 @@ def _migrar_columnas_nuevas():
             ("puesto", "VARCHAR"),
             ("codigo_acceso", "VARCHAR"),
             ("gimnasio_id", "INTEGER"),
+            ("horario_semanal", "TEXT DEFAULT '[]'"),
         ],
         "usuarios": [
             ("es_administrador", "BOOLEAN DEFAULT 1"),

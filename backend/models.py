@@ -33,6 +33,7 @@ from sqlalchemy import (
     Enum,
     UniqueConstraint,
     Numeric,
+    JSON,
 )
 from sqlalchemy.orm import relationship, deferred
 import enum
@@ -1131,6 +1132,8 @@ class Empleado(Base):
 
     # --- Solo aplica a STAFF_FIJO ---
     sueldo_fijo_mensual = Column(Numeric(12, 2, asdecimal=False), nullable=True)
+    # Franjas compactas por dias: [{"dias":[0,1,2],"hora_inicio":"08:00","hora_fin":"17:00"}]
+    horario_semanal = Column(JSON, nullable=False, default=list)
 
     # --- Solo aplica a PROFESOR_DE_SALA ---
     tarifa_por_clase = Column(Numeric(12, 2, asdecimal=False), nullable=True)

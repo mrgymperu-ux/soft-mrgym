@@ -6,6 +6,29 @@
     <title>Planilla Staff - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <script src="js/tema.js"></script>
+    <style>
+        #modal-empleado .modal-content { max-width: 680px; }
+        .horario-staff-lista { display: grid; gap: 8px; margin-top: 7px; }
+        .horario-staff-fila { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--color-borde); border-radius: 9px; background: var(--color-fondo); }
+        .horario-dias { display: flex; gap: 4px; flex: 1; min-width: 244px; }
+        .horario-dia { margin: 0; cursor: pointer; }
+        .horario-dia input { position: absolute; opacity: 0; pointer-events: none; }
+        .horario-dia span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--color-borde); border-radius: 7px; color: var(--color-texto-secundario); background: var(--color-input); font-size: 0.78rem; font-weight: 700; transition: 0.15s ease; }
+        .horario-dia input:checked + span { color: #fff; border-color: var(--color-primario); background: var(--color-primario); }
+        .horario-horas { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+        .horario-horas input[type="time"] { width: 104px; min-width: 0; padding: 6px; }
+        .horario-acciones { display: flex; gap: 4px; }
+        .horario-accion { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 7px; color: #fff; background: var(--color-primario); font-size: 1.15rem; cursor: pointer; }
+        .horario-accion.quitar { color: var(--color-texto); background: var(--color-borde); }
+        @media (max-width: 650px) {
+            #modal-empleado .modal-content { width: calc(100% - 16px); max-height: calc(100dvh - 16px); padding: 16px; }
+            .horario-staff-fila { flex-wrap: wrap; }
+            .horario-dias { min-width: 100%; justify-content: space-between; }
+            .horario-dia span { width: 32px; }
+            .horario-horas { flex: 1; }
+            .horario-horas input[type="time"] { width: 118px; flex: 1; }
+        }
+    </style>
 </head>
 <body>
 <div class="app-layout">
@@ -109,6 +132,11 @@
         <div class="form-group"><label>Telefono (para el recibo por WhatsApp)</label><input type="text" id="e-telefono" placeholder="999999999"></div>
         <div class="form-group"><label>Email</label><input type="email" id="e-email"></div>
         <div class="form-group"><label>Sueldo fijo mensual</label><input type="number" id="e-sueldo" step="0.01" min="0" placeholder="2000.00"></div>
+        <div class="form-group">
+            <label>Horario semanal</label>
+            <div id="e-horarios" class="horario-staff-lista"></div>
+            <small style="color:var(--color-texto-secundario);">Marca juntos los días que tienen el mismo horario. Usa + para agregar otra franja.</small>
+        </div>
         <p style="font-size:0.78em;color:var(--color-texto-secundario);">Para que las comisiones de este trabajador se calculen automaticamente, crea tambien su cuenta de acceso en <strong>Personal → Usuarios</strong> y vinculala a este empleado.</p>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
@@ -158,8 +186,90 @@
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
 <script>
-    let moneda = "S/", empleadoEditando = null, staffCache = [], ultimoResumen = null;
+    let moneda = "S/", empleadoEditando = null, staffCache = [], ultimoResumen = null, horarioStaffFilas = [];
     const NOMBRES_MES = ["", "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+    const DIAS_HORARIO_STAFF = [
+        { letra: "L", nombre: "Lunes" }, { letra: "M", nombre: "Martes" },
+        { letra: "X", nombre: "Miércoles" }, { letra: "J", nombre: "Jueves" },
+        { letra: "V", nombre: "Viernes" }, { letra: "S", nombre: "Sábado" },
+        { letra: "D", nombre: "Domingo" },
+    ];
+
+    function normalizarHorarioStaff(horario) {
+        if (typeof horario === "string") {
+            try { horario = JSON.parse(horario); } catch { horario = []; }
+        }
+        if (!Array.isArray(horario) || !horario.length) {
+            return [{ dias: [], hora_inicio: "08:00", hora_fin: "17:00" }];
+        }
+        return horario.map(bloque => ({
+            dias: Array.isArray(bloque.dias) ? [...bloque.dias] : [],
+            hora_inicio: bloque.hora_inicio || "08:00",
+            hora_fin: bloque.hora_fin || "17:00",
+        }));
+    }
+
+    function renderHorariosStaff() {
+        document.getElementById("e-horarios").innerHTML = horarioStaffFilas.map((bloque, indice) => {
+            const dias = DIAS_HORARIO_STAFF.map((dia, numero) => `
+                <label class="horario-dia" title="${dia.nombre}">
+                    <input type="checkbox" ${bloque.dias.includes(numero) ? "checked" : ""}
+                           onchange="cambiarDiaHorarioStaff(${indice}, ${numero}, this.checked)">
+                    <span>${dia.letra}</span>
+                </label>`).join("");
+            const quitar = horarioStaffFilas.length > 1
+                ? `<button type="button" class="horario-accion quitar" title="Quitar franja" onclick="quitarHorarioStaff(${indice})">−</button>` : "";
+            const agregar = indice === horarioStaffFilas.length - 1
+                ? `<button type="button" class="horario-accion" title="Agregar franja" onclick="agregarHorarioStaff()">+</button>` : "";
+            return `<div class="horario-staff-fila">
+                <div class="horario-dias">${dias}</div>
+                <div class="horario-horas">
+                    <input type="time" value="${bloque.hora_inicio}" aria-label="Hora de entrada" onchange="cambiarHoraHorarioStaff(${indice}, 'hora_inicio', this.value)">
+                    <span>–</span>
+                    <input type="time" value="${bloque.hora_fin}" aria-label="Hora de salida" onchange="cambiarHoraHorarioStaff(${indice}, 'hora_fin', this.value)">
+                </div>
+                <div class="horario-acciones">${quitar}${agregar}</div>
+            </div>`;
+        }).join("");
+    }
+
+    function cambiarDiaHorarioStaff(indice, dia, marcado) {
+        const dias = horarioStaffFilas[indice].dias;
+        if (marcado && !dias.includes(dia)) dias.push(dia);
+        if (!marcado) horarioStaffFilas[indice].dias = dias.filter(valor => valor !== dia);
+    }
+
+    function cambiarHoraHorarioStaff(indice, campo, valor) { horarioStaffFilas[indice][campo] = valor; }
+    function agregarHorarioStaff() {
+        horarioStaffFilas.push({ dias: [], hora_inicio: "08:00", hora_fin: "17:00" });
+        renderHorariosStaff();
+    }
+    function quitarHorarioStaff(indice) {
+        horarioStaffFilas.splice(indice, 1);
+        if (!horarioStaffFilas.length) horarioStaffFilas = normalizarHorarioStaff([]);
+        renderHorariosStaff();
+    }
+
+    function obtenerHorarioStaffValidado() {
+        const vacias = horarioStaffFilas.filter(bloque => !bloque.dias.length);
+        if (vacias.length && horarioStaffFilas.length > 1) throw new Error("Selecciona al menos un día en cada franja o elimina la fila vacía");
+        const horario = horarioStaffFilas.filter(bloque => bloque.dias.length).map(bloque => ({
+            dias: [...bloque.dias].sort((a, b) => a - b),
+            hora_inicio: bloque.hora_inicio,
+            hora_fin: bloque.hora_fin,
+        }));
+        const usados = new Set();
+        for (const bloque of horario) {
+            if (!bloque.hora_inicio || !bloque.hora_fin || bloque.hora_fin <= bloque.hora_inicio) {
+                throw new Error("La hora de salida debe ser posterior a la hora de entrada");
+            }
+            for (const dia of bloque.dias) {
+                if (usados.has(dia)) throw new Error(`${DIAS_HORARIO_STAFF[dia].nombre} está seleccionado en dos franjas`);
+                usados.add(dia);
+            }
+        }
+        return horario;
+    }
 
     function setPeriodoPorDefecto() {
         const hoy = new Date();
@@ -345,6 +455,8 @@
         empleadoEditando = null;
         document.getElementById("modal-titulo").textContent = "Nuevo Staff";
         ["nombre","puesto","telefono","email","sueldo"].forEach(f => { const el = document.getElementById(`e-${f}`); if (el) el.value = ""; });
+        horarioStaffFilas = normalizarHorarioStaff([]);
+        renderHorariosStaff();
         document.getElementById("modal-empleado").classList.add("active");
     }
 
@@ -357,12 +469,17 @@
         document.getElementById("e-telefono").value = empleadoEditando.telefono || "";
         document.getElementById("e-email").value = empleadoEditando.email || "";
         document.getElementById("e-sueldo").value = empleadoEditando.sueldo_fijo_mensual || "";
+        horarioStaffFilas = normalizarHorarioStaff(empleadoEditando.horario_semanal);
+        renderHorariosStaff();
         document.getElementById("modal-empleado").classList.add("active");
     }
 
     function cerrarModal() { document.getElementById("modal-empleado").classList.remove("active"); empleadoEditando = null; }
 
     async function guardarEmpleado() {
+        let horarioSemanal;
+        try { horarioSemanal = obtenerHorarioStaffValidado(); }
+        catch (e) { showError(e.message); return; }
         const datos = {
             nombre_completo: document.getElementById("e-nombre").value.trim(),
             tipo: "staff_fijo",
@@ -370,6 +487,7 @@
             telefono: document.getElementById("e-telefono").value.trim() || null,
             email: document.getElementById("e-email").value.trim() || null,
             sueldo_fijo_mensual: parseFloat(document.getElementById("e-sueldo").value) || null,
+            horario_semanal: horarioSemanal,
         };
         if (!datos.nombre_completo) { showError("El nombre es obligatorio"); return; }
         try {
