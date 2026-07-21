@@ -30,9 +30,14 @@
         .fila-porvencer { color:#B7860B; font-weight:600; }
         .fila-saldo { color:var(--color-error); font-weight:600; }
         .pago-borrar-check { width:17px;height:17px;accent-color:var(--color-error);cursor:pointer; }
-        .ficha-acciones-cliente { margin-left:auto; display:grid; grid-template-columns:repeat(3,minmax(126px,1fr)); gap:8px; }
-        .ficha-acciones-cliente .btn { width:100%; justify-content:center; }
-        @media (max-width:760px) { .ficha-acciones-cliente { width:100%; grid-template-columns:1fr; } }
+        .ficha-cabecera-cliente { padding:24px; display:flex; flex-wrap:wrap; align-items:center; gap:20px; border-bottom:1px solid var(--color-borde); }
+        .ficha-acciones-cliente { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; max-width:100%; }
+        .ficha-acciones-cliente .btn { width:150px; min-width:150px; justify-content:center; }
+        @media (max-width:760px) {
+            .ficha-cabecera-cliente { padding:18px; }
+            .ficha-acciones-cliente { width:100%; margin-left:0; display:grid; grid-template-columns:1fr; }
+            .ficha-acciones-cliente .btn { width:100%; min-width:0; }
+        }
 
         /* Fila verde para clientes con membresia vigente del catalogo.
            Se usa color-mix para que funcione bien en tema claro Y oscuro:
@@ -155,7 +160,7 @@
         </div>
         <div id="ficha-detalle" style="display:none;">
             <div class="card">
-                <div style="padding:24px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--color-borde);">
+                <div class="ficha-cabecera-cliente">
                     <div id="ficha-avatar-wrap" style="width:128px;height:128px;flex-shrink:0;"></div>
                     <div>
                         <h2 id="ficha-nombre" style="margin:0;font-size:1.3em;"></h2>
