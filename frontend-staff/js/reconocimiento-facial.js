@@ -49,6 +49,10 @@
     let ultimaCaptura = 0;
     let ultimoCandidato = null;
     let repeticionesCandidato = 0;
+    let streamRemoto = null;
+    let conexionRemota = null;
+    let socketRemoto = null;
+    let ofertaRemotaEnCurso = false;
 
     const elemento = (id) => document.getElementById(id);
 
@@ -111,6 +115,7 @@
     }
 
     async function encenderCamara() {
+        if (modoDispositivo === "movil") return encenderCamaraRemota();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Este navegador no permite usar la cámara");
         if (!window.isSecureContext) throw new Error("En el móvil abre el sistema con HTTPS para permitir la cámara");
         const videoConfig = modoDispositivo === "webcam_1080p"
@@ -127,11 +132,78 @@
         marcarBoton(true);
     }
 
+    function panelQrRemoto() {
+        let panel = elemento("rf-qr-remoto");
+        if (panel) return panel;
+        panel = document.createElement("div");
+        panel.id = "rf-qr-remoto";
+        panel.style.cssText = "position:absolute;z-index:7;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#080b0a;color:#fff;text-align:center;padding:24px";
+        panel.innerHTML = '<h3 style="margin:0">Conecta la cámara frontal</h3><img id="rf-qr-imagen" alt="QR para cámara remota" style="width:min(72vw,300px);background:#fff;padding:10px;border-radius:14px"><p style="margin:0;max-width:420px">Escanea el QR con el móvil. No necesitas iniciar sesión.</p>';
+        elemento("modal-reconocimiento-facial").querySelector(".modal-content").appendChild(panel);
+        return panel;
+    }
+
+    async function crearOfertaRemota() {
+        if (!conexionRemota || !socketRemoto || socketRemoto.readyState !== WebSocket.OPEN || ofertaRemotaEnCurso) return;
+        ofertaRemotaEnCurso = true;
+        try {
+            const oferta = await conexionRemota.createOffer();
+            await conexionRemota.setLocalDescription(oferta);
+            socketRemoto.send(JSON.stringify({ tipo: "offer", sdp: conexionRemota.localDescription }));
+        } finally { ofertaRemotaEnCurso = false; }
+    }
+
+    async function encenderCamaraRemota() {
+        const video = elemento("rf-video");
+        if (streamRemoto && conexionRemota?.connectionState === "connected") {
+            stream = streamRemoto;
+            video.srcObject = stream;
+            await video.play();
+            elemento("rf-camera").style.display = "block";
+            marcarBoton(true);
+            return;
+        }
+        const sesion = await window.apiFetch("/camara-remota/sesion", { method: "POST" });
+        const panel = panelQrRemoto();
+        panel.style.display = "flex";
+        elemento("rf-qr-imagen").src = sesion.qr_svg;
+        estado("Esperando que el móvil escanee el QR...");
+        conexionRemota = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+        conexionRemota.onicecandidate = (evento) => evento.candidate && socketRemoto?.send(JSON.stringify({ tipo: "candidate", candidate: evento.candidate }));
+        const llegada = new Promise((resolve, reject) => {
+            const limite = window.setTimeout(() => reject(new Error("El QR venció o el móvil no se conectó")), 180000);
+            conexionRemota.ontrack = async (evento) => {
+                window.clearTimeout(limite);
+                streamRemoto = evento.streams[0];
+                stream = streamRemoto;
+                video.srcObject = stream;
+                await video.play();
+                panel.style.display = "none";
+                elemento("rf-camera").style.display = "block";
+                marcarBoton(true);
+                resolve();
+            };
+        });
+        const protocolo = location.protocol === "https:" ? "wss" : "ws";
+        socketRemoto = new WebSocket(`${protocolo}://${location.host}/api/ws/camara-remota/${encodeURIComponent(sesion.token)}/pc`);
+        socketRemoto.onmessage = async (evento) => {
+            const mensaje = JSON.parse(evento.data);
+            if (mensaje.tipo === "movil-conectado" || mensaje.tipo === "movil-listo") await crearOfertaRemota();
+            else if (mensaje.tipo === "answer") await conexionRemota.setRemoteDescription(mensaje.sdp);
+            else if (mensaje.tipo === "candidate" && mensaje.candidate) await conexionRemota.addIceCandidate(mensaje.candidate);
+        };
+        await llegada;
+    }
+
+    function avisarMovil(mensaje) {
+        if (socketRemoto?.readyState === WebSocket.OPEN) socketRemoto.send(JSON.stringify({ tipo: "resultado", mensaje }));
+    }
+
     function apagarCamara() {
         if (temporizador) window.clearTimeout(temporizador);
         temporizador = null;
         ejecutando = false;
-        if (stream) stream.getTracks().forEach((track) => track.stop());
+        if (stream && stream !== streamRemoto) stream.getTracks().forEach((track) => track.stop());
         stream = null;
         const video = elemento("rf-video");
         if (video) video.srcObject = null;
@@ -227,6 +299,7 @@
 
         const clienteId = mejor.cliente_id;
         const nombre = mejor.nombre_completo;
+        avisarMovil(`Ingreso registrado correctamente. Bienvenido, ${nombre}.`);
         window.cerrarReconocimientoFacial();
         if (typeof window.showSuccess === "function") window.showSuccess(`Rostro reconocido: ${nombre}`);
         if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
@@ -282,7 +355,7 @@
     async function prepararCamara() {
         try {
             exigirModoActivo();
-            estado(modoDispositivo === "movil" ? "Iniciando cámara frontal..." : "Iniciando webcam 1080p...");
+            estado(modoDispositivo === "movil" ? "Preparando enlace QR para el móvil..." : "Iniciando webcam 1080p...");
             await Promise.all([cargarMotor(), encenderCamara()]);
             estado(requiereParpadeo ? "Mira al frente y parpadea una vez" : "Mira al frente y muévete ligeramente");
             ciclo();
@@ -294,6 +367,7 @@
     }
 
     window.alternarReconocimientoFacial = async function () {
+        prepararGuiaSegmentada();
         if (stream || elemento("modal-reconocimiento-facial").classList.contains("active")) {
             window.cerrarReconocimientoFacial();
             return;
@@ -358,7 +432,13 @@
         capturas = [];
     };
 
-    window.addEventListener("pagehide", apagarCamara);
+    window.addEventListener("pagehide", () => {
+        if (streamRemoto) streamRemoto.getTracks().forEach((track) => track.stop());
+        conexionRemota?.close();
+        socketRemoto?.close();
+        streamRemoto = null;
+        apagarCamara();
+    });
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden" && stream) window.cerrarReconocimientoFacial();
     });

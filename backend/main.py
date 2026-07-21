@@ -33,7 +33,7 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
 from cryptography.fernet import Fernet, InvalidToken
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, File, Request, Header
+from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, File, Request, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse
@@ -47,6 +47,82 @@ from .time_utils import ahora_lima, hoy_lima
 logger = logging.getLogger("soft-mrgym")
 
 app = FastAPI(title="Soft-Gym API")
+
+# Sesiones efimeras de senalizacion WebRTC. No almacenan video: solo
+# intercambian offer/answer/candidates entre el counter y el movil.
+_CAMARAS_REMOTAS = {}
+_CAMARA_REMOTA_TTL = 15 * 60
+
+
+def _limpiar_camaras_remotas():
+    ahora = time.time()
+    for token in [t for t, sesion in _CAMARAS_REMOTAS.items() if sesion["vence"] < ahora]:
+        _CAMARAS_REMOTAS.pop(token, None)
+
+
+@app.post("/camara-remota/sesion")
+def crear_sesion_camara_remota(request: Request, usuario=Depends(auth.requiere_staff)):
+    _limpiar_camaras_remotas()
+    token = secrets.token_urlsafe(24)
+    _CAMARAS_REMOTAS[token] = {"vence": time.time() + _CAMARA_REMOTA_TTL, "gimnasio_id": get_gid(usuario), "pares": {}}
+    base = str(request.base_url).rstrip("/")
+    url = f"{base}/camara-remota.html?token={token}"
+    import qrcode
+    import qrcode.image.svg
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    salida = io.BytesIO()
+    qr.make_image(image_factory=qrcode.image.svg.SvgPathImage).save(salida)
+    return {
+        "token": token,
+        "url": url,
+        "qr_svg": "data:image/svg+xml;base64," + base64.b64encode(salida.getvalue()).decode("ascii"),
+        "expira_en_segundos": _CAMARA_REMOTA_TTL,
+    }
+
+
+@app.websocket("/ws/camara-remota/{token}/{rol}")
+async def websocket_camara_remota(websocket: WebSocket, token: str, rol: str):
+    _limpiar_camaras_remotas()
+    sesion = _CAMARAS_REMOTAS.get(token)
+    if not sesion or rol not in {"pc", "movil"}:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    sesion["vence"] = time.time() + _CAMARA_REMOTA_TTL
+    anterior = sesion["pares"].get(rol)
+    if anterior:
+        try:
+            await anterior.close(code=1000)
+        except Exception:
+            pass
+    sesion["pares"][rol] = websocket
+    otro_rol = "movil" if rol == "pc" else "pc"
+    otro = sesion["pares"].get(otro_rol)
+    if otro:
+        try:
+            await otro.send_json({"tipo": f"{rol}-conectado"})
+        except Exception:
+            pass
+    try:
+        while True:
+            mensaje = await websocket.receive_text()
+            sesion["vence"] = time.time() + _CAMARA_REMOTA_TTL
+            otro = sesion["pares"].get(otro_rol)
+            if otro:
+                await otro.send_text(mensaje)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if sesion["pares"].get(rol) is websocket:
+            sesion["pares"].pop(rol, None)
+        otro = sesion["pares"].get(otro_rol)
+        if otro:
+            try:
+                await otro.send_json({"tipo": f"{rol}-desconectado"})
+            except Exception:
+                pass
 
 PASSWORD_LEGACY_ALUMNO = "1234"
 

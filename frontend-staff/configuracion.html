@@ -101,13 +101,13 @@
 
             <div class="config-section">
                 <h3>Reconocimiento facial</h3>
-                <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Elige el equipo que quedará en el counter. Al desactivarlo, se ocultan la captura y el registro de rostros.</p>
+                <p style="font-size:.85em;color:var(--color-texto-secundario);margin-bottom:12px;">Activa o desactiva la función y elige de dónde llegará la imagen.</p>
+                <label style="display:flex;align-items:center;gap:9px;margin:0 0 14px;font-weight:650;"><input id="c-reconocimiento-activo" type="checkbox" style="width:auto;" onchange="actualizarAyudaReconocimientoFacial()"> Activar reconocimiento facial</label>
                 <div class="form-group">
-                    <label>Modo de captura</label>
+                    <label>Fuente de cámara</label>
                     <select id="c-reconocimiento-facial" onchange="actualizarAyudaReconocimientoFacial()">
-                        <option value="desactivado">Desactivado</option>
-                        <option value="movil">Usar un móvil (cámara frontal)</option>
-                        <option value="webcam_1080p">Usar webcam 1080p</option>
+                        <option value="movil">Móvil por QR (cámara frontal)</option>
+                        <option value="webcam_1080p">Webcam conectada al PC</option>
                     </select>
                 </div>
                 <p id="ayuda-reconocimiento-facial" style="font-size:.78em;color:var(--color-texto-secundario);margin:0 0 14px;"></p>
@@ -239,7 +239,9 @@
         document.getElementById("c-longitud").value = config.longitud ?? "";
         document.getElementById("c-buscar-direccion").value = config.direccion || "";
         document.getElementById("c-radio-asistencia").value = config.radio_asistencia_metros || 150;
-        document.getElementById("c-reconocimiento-facial").value = config.reconocimiento_facial_modo || "desactivado";
+        const modoFacial = config.reconocimiento_facial_modo || "desactivado";
+        document.getElementById("c-reconocimiento-activo").checked = modoFacial !== "desactivado";
+        document.getElementById("c-reconocimiento-facial").value = modoFacial === "movil" ? "movil" : "webcam_1080p";
         actualizarAyudaReconocimientoFacial();
         inicializarMapaUbicacion(config.latitud, config.longitud);
         document.getElementById("estado-ubicacion").textContent = config.latitud != null && config.longitud != null
@@ -268,17 +270,19 @@
     }
 
     function actualizarAyudaReconocimientoFacial() {
+        const activo = document.getElementById("c-reconocimiento-activo").checked;
         const modo = document.getElementById("c-reconocimiento-facial").value;
+        document.getElementById("c-reconocimiento-facial").disabled = !activo;
         const textos = {
-            desactivado: "No se solicitará acceso a ninguna cámara.",
-            movil: "Optimizado para cámara frontal y menor consumo. En el celular debes abrir el sistema mediante HTTPS.",
-            webcam_1080p: "Usa captura Full HD y validaciones más exigentes para una cámara fija.",
+            movil: "Al iniciar el reconocimiento, el counter mostrará un QR. El móvil abre solo la cámara, sin iniciar sesión.",
+            webcam_1080p: "Usa directamente una webcam conectada a esta computadora.",
         };
-        document.getElementById("ayuda-reconocimiento-facial").textContent = textos[modo];
+        document.getElementById("ayuda-reconocimiento-facial").textContent = activo ? textos[modo] : "El reconocimiento facial está desactivado.";
     }
 
     async function guardarReconocimientoFacial() {
-        const modo = document.getElementById("c-reconocimiento-facial").value;
+        const activo = document.getElementById("c-reconocimiento-activo").checked;
+        const modo = activo ? document.getElementById("c-reconocimiento-facial").value : "desactivado";
         try {
             await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ reconocimiento_facial_modo: modo }) });
             configuracionCache = null;

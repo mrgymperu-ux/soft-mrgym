@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/reconocimiento-facial.css">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260721-3">
     <script src="js/tema.js"></script>
     <style>
         .stat-card.clickeable { cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s, transform 0.1s; }
@@ -93,19 +93,6 @@
         .rf-eye-button .rf-dot { position:absolute; right:3px; bottom:3px; width:7px; height:7px; border-radius:50%; background:#98A0A6; border:2px solid var(--color-blanco); }
         .rf-eye-button.activo { color:#19A463; border-color:#19A463; background:#EAF9F1; box-shadow:0 0 0 3px rgba(25,164,99,.12); }
         .rf-eye-button.activo .rf-dot { background:#19A463; }
-        .rf-camera { position:relative; overflow:hidden; border-radius:14px; background:#111; aspect-ratio:4/3; max-height:54vh; }
-        .rf-camera video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
-        .rf-guide { position:absolute; inset:12% 24%; border:3px solid rgba(255,255,255,.75); border-radius:48%; box-shadow:0 0 0 999px rgba(0,0,0,.23); pointer-events:none; }
-        .rf-guide-progress { position:absolute; inset:-5px; width:calc(100% + 10px); height:calc(100% + 10px); overflow:visible; }
-        .rf-guide-progress ellipse { fill:none; stroke:#23C875; stroke-width:4; stroke-linecap:round; stroke-dasharray:100; stroke-dashoffset:calc(100 - var(--rf-progreso, 0)); transform:rotate(-90deg); transform-origin:50% 50%; transition:stroke-dashoffset .35s ease; filter:drop-shadow(0 0 4px rgba(35,200,117,.7)); }
-        .rf-guide.completo { border-color:#23C875; box-shadow:0 0 0 999px rgba(0,0,0,.23),0 0 16px rgba(35,200,117,.8); }
-        .rf-status { margin-top:12px; padding:10px 12px; border-radius:9px; background:var(--color-fondo); color:var(--color-texto-secundario); text-align:center; font-size:.86em; min-height:20px; }
-        .rf-status.ok { color:#147A4B; background:#EAF9F1; }
-        .rf-status.error { color:var(--color-error); background:#FFF0F0; }
-        .rf-consent { margin:0 0 12px; padding:12px; border:1px solid var(--color-borde); border-radius:10px; background:var(--color-fondo); font-size:.82em; line-height:1.45; }
-        .rf-consent label { display:flex; align-items:flex-start; gap:8px; cursor:pointer; }
-        .rf-consent input { width:auto; margin-top:3px; }
-        @media (max-width:520px) { .rf-guide { inset:11% 19%; } }
     </style>
 </head>
 <body>
@@ -354,7 +341,7 @@
         </div>
         <div id="rf-camera" class="rf-camera" style="display:none;">
             <video id="rf-video" playsinline muted></video>
-            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="50" cy="50" rx="48" ry="48" pathLength="100"></ellipse></svg></div>
+            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 320" aria-hidden="true"></svg></div>
         </div>
         <div id="rf-status" class="rf-status">Preparando...</div>
         <div id="rf-ayuda" style="font-size:.75em;color:var(--color-texto-secundario);text-align:center;margin-top:8px;">Mira al frente y parpadea. Usa buena iluminación.</div>
@@ -365,7 +352,7 @@
 <script src="js/sidebar.js"></script>
 <script src="js/flujo-cliente.js"></script>
 <script src="vendor/human/human.js"></script>
-<script src="js/reconocimiento-facial.js"></script>
+<script src="js/reconocimiento-facial.js?v=20260721-3"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
 
