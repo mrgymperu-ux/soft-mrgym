@@ -22,6 +22,12 @@ const token=new URLSearchParams(location.search).get('token');
 const video=document.getElementById('video'),estado=document.getElementById('estado'),boton=document.getElementById('iniciar'),resultado=document.getElementById('resultado');
 let ws,pc,stream;
 const enviar=(dato)=>ws&&ws.readyState===1&&ws.send(JSON.stringify(dato));
+function conectarSocket(){
+ ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/api/ws/camara-remota/${encodeURIComponent(token)}/movil`);
+ ws.onopen=()=>{estado.textContent='Esperando al counter…';enviar({tipo:'movil-listo'})};
+ ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){await pc.addIceCandidate(m.candidate)}else if(m.tipo==='resultado'){resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>resultado.style.display='none',3000)}};
+ ws.onclose=()=>{estado.textContent='Reconectando con el counter…';if(stream)setTimeout(conectarSocket,2000)};
+}
 async function conectar(){
  if(!token){estado.textContent='Enlace inválido o vencido';return}
  boton.style.display='none';
@@ -30,10 +36,7 @@ async function conectar(){
   pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});stream.getTracks().forEach(t=>pc.addTrack(t,stream));
   pc.onicecandidate=e=>e.candidate&&enviar({tipo:'candidate',candidate:e.candidate});
   pc.onconnectionstatechange=()=>{estado.textContent=pc.connectionState==='connected'?'Cámara conectada · mira al frente':'Conectando con el counter…'};
-  ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/api/ws/camara-remota/${encodeURIComponent(token)}/movil`);
-  ws.onopen=()=>{estado.textContent='Esperando al counter…';enviar({tipo:'movil-listo'})};
-  ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){await pc.addIceCandidate(m.candidate)}else if(m.tipo==='resultado'){resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>resultado.style.display='none',3000)}};
-  ws.onclose=()=>estado.textContent='Conexión pausada. Recarga esta página para reconectar.';
+  conectarSocket();
  }catch(e){boton.style.display='block';estado.textContent=e.name==='NotAllowedError'?'Debes permitir el uso de la cámara frontal':'No se pudo iniciar la cámara';}
 }
 boton.addEventListener('click',conectar);
