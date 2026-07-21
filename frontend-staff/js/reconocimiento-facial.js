@@ -54,6 +54,7 @@
     let socketRemoto = null;
     let ofertaRemotaEnCurso = false;
     let candidatosRemotosPendientes = [];
+    const ultimoIntentoPorCliente = new Map();
 
     const elemento = (id) => document.getElementById(id);
 
@@ -219,7 +220,6 @@
         elemento("rf-titulo").textContent = titulo;
         elemento("modal-reconocimiento-facial").classList.add("active");
         elemento("rf-camera").style.display = "none";
-        elemento("rf-consentimiento").style.display = "none";
         elemento("rf-ayuda").style.display = "block";
         estado("Preparando...");
     }
@@ -304,10 +304,28 @@
 
         const clienteId = mejor.cliente_id;
         const nombre = mejor.nombre_completo;
-        avisarMovil(`Ingreso registrado correctamente. Bienvenido, ${nombre}.`);
-        window.cerrarReconocimientoFacial();
-        if (typeof window.showSuccess === "function") window.showSuccess(`Rostro reconocido: ${nombre}`);
-        if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
+        if (Date.now() - (ultimoIntentoPorCliente.get(clienteId) || 0) < 15000) return;
+        ultimoIntentoPorCliente.set(clienteId, Date.now());
+        ultimoCandidato = null;
+        repeticionesCandidato = 0;
+        try {
+            const acceso = await window.apiFetch("/asistencias/reconocimiento-facial", {
+                method: "POST",
+                body: JSON.stringify({ cliente_id: clienteId }),
+            });
+            const mensaje = acceso.ya_registrada
+                ? `${nombre}, tu ingreso ya estaba registrado.`
+                : `Ingreso registrado correctamente. Bienvenido, ${nombre}.`;
+            avisarMovil(mensaje);
+            estado("Reconocimiento activo en segundo plano", "ok");
+            if (!acceso.ya_registrada && typeof window.showSuccess === "function") window.showSuccess(`Ingreso registrado: ${nombre}`);
+            if (typeof window.cargarUltimosIngresos === "function") await window.cargarUltimosIngresos();
+            if (typeof window.cargarDashboard === "function") await window.cargarDashboard();
+        } catch (error) {
+            const mensaje = error.message || "No se pudo autorizar el ingreso";
+            avisarMovil(`${nombre}: ${mensaje}`);
+            if (typeof window.showError === "function") window.showError(`${nombre}: ${mensaje}`);
+        }
     }
 
     function promedio(vectores) {
@@ -391,6 +409,8 @@
                 return;
             }
             await prepararCamara();
+            elemento("modal-reconocimiento-facial").classList.remove("active");
+            estado("Reconocimiento activo en segundo plano", "ok");
         } catch (error) {
             estado(error.message, "error");
         }
@@ -412,19 +432,11 @@
         ultimaCaptura = 0;
         reiniciarPruebaDeVida();
         abrirModal("Registrar rostro del cliente");
-        elemento("rf-consentimiento-check").checked = false;
-        elemento("rf-consentimiento").style.display = "block";
-        elemento("rf-ayuda").style.display = "none";
-        estado("Confirma el consentimiento para comenzar");
+        elemento("rf-ayuda").style.display = "block";
+        await prepararCamara();
     };
 
     window.iniciarRegistroFacial = async function () {
-        if (!elemento("rf-consentimiento-check").checked) {
-            estado("Debes confirmar la autorización del cliente", "error");
-            return;
-        }
-        elemento("rf-consentimiento").style.display = "none";
-        elemento("rf-ayuda").style.display = "block";
         await prepararCamara();
     };
 
@@ -443,9 +455,6 @@
         socketRemoto?.close();
         streamRemoto = null;
         apagarCamara();
-    });
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden" && stream) window.cerrarReconocimientoFacial();
     });
 
     // Aprovecha el tiempo ocioso después de cargar el panel. No abre la cámara

@@ -6357,6 +6357,44 @@ def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get
     return db_asistencia
 
 
+@app.post("/asistencias/reconocimiento-facial", tags=["Asistencias"])
+def registrar_entrada_facial(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Registra el acceso automático solo si la membresía permite el ingreso."""
+    _exigir_reconocimiento_facial_activo(db, usuario)
+    _cerrar_asistencias_vencidas(db, get_gid(usuario))
+    cliente = db.query(models.Cliente).filter(
+        models.Cliente.id == datos.cliente_id,
+        models.Cliente.gimnasio_id == get_gid(usuario),
+        models.Cliente.activo == True,
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
+    hoy = hoy_lima()
+    membresia = db.query(models.ClienteMembresia).filter(
+        models.ClienteMembresia.cliente_id == cliente.id,
+        models.ClienteMembresia.activo == True,
+        models.ClienteMembresia.fecha_inicio <= hoy,
+        models.ClienteMembresia.fecha_fin >= hoy,
+    ).order_by(models.ClienteMembresia.fecha_fin.desc()).first()
+    if not membresia:
+        raise HTTPException(status_code=403, detail="No tienes una membresía vigente")
+    precio = float(membresia.membresia.precio or 0) if membresia.membresia else 0
+    saldo = max(precio - _total_pagado_membresia(db, membresia.id), 0)
+    if saldo > 0.009 and membresia.fecha_pago_saldo and membresia.fecha_pago_saldo < hoy:
+        raise HTTPException(status_code=403, detail="Tienes un pago vencido. Acércate al counter")
+    abierta = db.query(models.Asistencia).filter(
+        models.Asistencia.cliente_id == cliente.id,
+        models.Asistencia.gimnasio_id == get_gid(usuario),
+        models.Asistencia.fecha_hora_salida.is_(None),
+    ).first()
+    if abierta:
+        return {"registrada": False, "ya_registrada": True, "mensaje": "Tu ingreso ya estaba registrado"}
+    asistencia = models.Asistencia(cliente_id=cliente.id, gimnasio_id=get_gid(usuario), fecha_hora_entrada=ahora_lima())
+    db.add(asistencia)
+    db.commit()
+    return {"registrada": True, "ya_registrada": False, "mensaje": "Ingreso registrado correctamente"}
+
+
 @app.put("/asistencias/registrar-salida", response_model=schemas.Asistencia, tags=["Asistencias"])
 def registrar_salida(datos: schemas.RegistrarSalidaRequest, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff_o_profesor)):
     asistencia = _del_gym(db, models.Asistencia, datos.asistencia_id, usuario)

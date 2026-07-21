@@ -332,13 +332,6 @@
             <h3 class="modal-title" id="rf-titulo">Reconocimiento facial</h3>
             <button class="modal-close" onclick="cerrarReconocimientoFacial()">✕</button>
         </div>
-        <div id="rf-consentimiento" class="rf-consent" style="display:none;">
-            <label>
-                <input id="rf-consentimiento-check" type="checkbox">
-                <span>El cliente autoriza registrar su representación facial para identificarlo al ingresar. La foto no se guarda y puede eliminarse cuando lo solicite.</span>
-            </label>
-            <button id="rf-iniciar-registro" class="btn btn-primary" style="width:100%;margin-top:10px;" onclick="iniciarRegistroFacial()">Iniciar registro</button>
-        </div>
         <div id="rf-camera" class="rf-camera" style="display:none;">
             <video id="rf-video" playsinline muted></video>
             <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 320" aria-hidden="true"></svg></div>
@@ -352,7 +345,7 @@
 <script src="js/sidebar.js"></script>
 <script src="js/flujo-cliente.js"></script>
 <script src="vendor/human/human.js"></script>
-<script src="js/reconocimiento-facial.js?v=20260721-4"></script>
+<script src="js/reconocimiento-facial.js?v=20260721-5"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
 
