@@ -268,7 +268,7 @@
         <div class="form-group"><label>Descripción</label><textarea id="ci-descripcion" rows="2" placeholder="Condiciones o detalle del servicio"></textarea></div>
         <div class="oi-concepto-grid">
             <div class="form-group"><label>Monto sugerido</label><input id="ci-monto" type="number" min="0" step="0.01"></div>
-            <div class="form-group"><label>Sala sugerida</label><input id="ci-sala" placeholder="Sala de baile"></div>
+            <div class="form-group"><label>Sala sugerida</label><select id="ci-sala"><option value="">Sin sala sugerida</option></select></div>
         </div>
         <label style="display:flex;align-items:center;gap:8px;font-size:.85em;margin-bottom:12px;"><input id="ci-agenda" type="checkbox" style="width:auto;"> Mostrar este concepto al agendar una sala alquilada</label>
         <div class="form-actions"><button class="btn btn-secondary" onclick="limpiarConceptoIngreso()">Nuevo</button><button class="btn btn-primary" onclick="guardarConceptoIngreso()">Guardar concepto</button></div>
@@ -1088,7 +1088,7 @@
     // ============================================================
     // Otros ingresos, accesible desde Venta rapida
     // ============================================================
-    let conceptosIngresoCache = [], conceptoIngresoEditando = null;
+    let conceptosIngresoCache = [], salasIngresoCache = [], conceptoIngresoEditando = null;
     let volverARegistroIngreso = false;
 
     async function cargarConceptosIngreso() {
@@ -1096,10 +1096,26 @@
         return conceptosIngresoCache;
     }
 
+    async function cargarSalasIngreso() {
+        salasIngresoCache = await apiFetch("/salas/");
+        renderSalasIngreso();
+        return salasIngresoCache;
+    }
+
+    function renderSalasIngreso(seleccionada = "") {
+        const select = document.getElementById("ci-sala");
+        if (!select) return;
+        const existe = salasIngresoCache.some(s => s.nombre === seleccionada);
+        select.innerHTML = '<option value="">Sin sala sugerida</option>' +
+            (!existe && seleccionada ? `<option value="${escapeHTML(seleccionada)}">${escapeHTML(seleccionada)} (anterior)</option>` : "") +
+            salasIngresoCache.map(s => `<option value="${escapeHTML(s.nombre)}">${escapeHTML(s.nombre)}</option>`).join("");
+        select.value = seleccionada || "";
+    }
+
     async function abrirConceptosIngreso(desdeRegistro = false) {
         volverARegistroIngreso = desdeRegistro;
         if (desdeRegistro) cerrarModal("modal-otro-ingreso");
-        await cargarConceptosIngreso();
+        await Promise.all([cargarConceptosIngreso(), cargarSalasIngreso()]);
         limpiarConceptoIngreso();
         renderConceptosIngreso();
         document.getElementById("modal-conceptos-ingreso").classList.add("active");
@@ -1131,7 +1147,7 @@
         document.getElementById("ci-nombre").value = c.nombre;
         document.getElementById("ci-descripcion").value = c.descripcion || "";
         document.getElementById("ci-monto").value = c.monto_sugerido || "";
-        document.getElementById("ci-sala").value = c.sala_sugerida || "";
+        renderSalasIngreso(c.sala_sugerida || "");
         document.getElementById("ci-agenda").checked = !!c.mostrar_agenda;
     }
 
