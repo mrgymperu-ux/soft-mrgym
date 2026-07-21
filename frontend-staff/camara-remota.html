@@ -32,8 +32,8 @@ async function conectar(){
   pc.onconnectionstatechange=()=>{estado.textContent=pc.connectionState==='connected'?'Cámara conectada · mira al frente':'Conectando con el counter…'};
   ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/api/ws/camara-remota/${encodeURIComponent(token)}/movil`);
   ws.onopen=()=>{estado.textContent='Esperando al counter…';enviar({tipo:'movil-listo'})};
-  ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){await pc.addIceCandidate(m.candidate)}else if(m.tipo==='resultado'){resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>resultado.style.display='none',3000)}};
-  ws.onclose=()=>estado.textContent='Conexión cerrada. Escanea un QR nuevo.';
+  ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){await pc.addIceCandidate(m.candidate)}else if(m.tipo==='resultado'){resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>resultado.style.display='none',3000)}};
+  ws.onclose=()=>estado.textContent='Conexión pausada. Recarga esta página para reconectar.';
  }catch(e){boton.style.display='block';estado.textContent=e.name==='NotAllowedError'?'Debes permitir el uso de la cámara frontal':'No se pudo iniciar la cámara';}
 }
 boton.addEventListener('click',conectar);

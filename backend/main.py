@@ -48,23 +48,11 @@ logger = logging.getLogger("soft-mrgym")
 
 app = FastAPI(title="Soft-Gym API")
 
-# Sesiones efimeras de senalizacion WebRTC. No almacenan video: solo
-# intercambian offer/answer/candidates entre el counter y el movil.
+# Salas de senalizacion WebRTC. No almacenan ni retransmiten video:
+# solo intercambian offer/answer/candidates entre counter y movil.
 _CAMARAS_REMOTAS = {}
-_CAMARA_REMOTA_TTL = 15 * 60
 
-
-def _limpiar_camaras_remotas():
-    ahora = time.time()
-    for token in [t for t, sesion in _CAMARAS_REMOTAS.items() if sesion["vence"] < ahora]:
-        _CAMARAS_REMOTAS.pop(token, None)
-
-
-@app.post("/camara-remota/sesion")
-def crear_sesion_camara_remota(request: Request, usuario=Depends(auth.requiere_staff)):
-    _limpiar_camaras_remotas()
-    token = secrets.token_urlsafe(24)
-    _CAMARAS_REMOTAS[token] = {"vence": time.time() + _CAMARA_REMOTA_TTL, "gimnasio_id": get_gid(usuario), "pares": {}}
+def _respuesta_enlace_camara(request: Request, token: str):
     base = str(request.base_url).rstrip("/")
     url = f"{base}/camara-remota.html?token={token}"
     import qrcode
@@ -74,23 +62,50 @@ def crear_sesion_camara_remota(request: Request, usuario=Depends(auth.requiere_s
     qr.make(fit=True)
     salida = io.BytesIO()
     qr.make_image(image_factory=qrcode.image.svg.SvgPathImage).save(salida)
-    return {
-        "token": token,
-        "url": url,
-        "qr_svg": "data:image/svg+xml;base64," + base64.b64encode(salida.getvalue()).decode("ascii"),
-        "expira_en_segundos": _CAMARA_REMOTA_TTL,
-    }
+    return {"token": token, "url": url, "qr_svg": "data:image/svg+xml;base64," + base64.b64encode(salida.getvalue()).decode("ascii")}
+
+
+@app.post("/camara-remota/enlace")
+def crear_enlace_camara_remota(request: Request, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    token = secrets.token_urlsafe(32)
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    gimnasio.camara_remota_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    db.commit()
+    _CAMARAS_REMOTAS[token] = {"gimnasio_id": gimnasio.id, "pares": {}}
+    return _respuesta_enlace_camara(request, token)
+
+
+@app.post("/camara-remota/qr")
+def recuperar_qr_camara_remota(request: Request, x_camera_token: Optional[str] = Header(None, alias="X-Camera-Token"), db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    esperado = gimnasio.camara_remota_token_hash or ""
+    recibido = hashlib.sha256((x_camera_token or "").encode()).hexdigest()
+    if not esperado or not secrets.compare_digest(esperado, recibido):
+        raise HTTPException(status_code=404, detail="No hay un movil de confianza enlazado en este counter")
+    return _respuesta_enlace_camara(request, x_camera_token)
+
+
+@app.delete("/camara-remota/enlace")
+def desvincular_camara_remota(db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    gimnasio.camara_remota_token_hash = None
+    db.commit()
+    return {"message": "Movil desvinculado"}
 
 
 @app.websocket("/ws/camara-remota/{token}/{rol}")
 async def websocket_camara_remota(websocket: WebSocket, token: str, rol: str):
-    _limpiar_camaras_remotas()
-    sesion = _CAMARAS_REMOTAS.get(token)
-    if not sesion or rol not in {"pc", "movil"}:
+    db = SessionLocal()
+    try:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.camara_remota_token_hash == token_hash).first()
+    finally:
+        db.close()
+    if not gimnasio or rol not in {"pc", "movil"}:
         await websocket.close(code=1008)
         return
+    sesion = _CAMARAS_REMOTAS.setdefault(token, {"gimnasio_id": gimnasio.id, "pares": {}})
     await websocket.accept()
-    sesion["vence"] = time.time() + _CAMARA_REMOTA_TTL
     anterior = sesion["pares"].get(rol)
     if anterior:
         try:
@@ -108,7 +123,6 @@ async def websocket_camara_remota(websocket: WebSocket, token: str, rol: str):
     try:
         while True:
             mensaje = await websocket.receive_text()
-            sesion["vence"] = time.time() + _CAMARA_REMOTA_TTL
             otro = sesion["pares"].get(otro_rol)
             if otro:
                 await otro.send_text(mensaje)
@@ -699,6 +713,7 @@ def _migrar_columnas_nuevas():
             ("longitud", "FLOAT"),
             ("radio_asistencia_metros", "FLOAT DEFAULT 150.0"),
             ("reconocimiento_facial_modo", "VARCHAR DEFAULT 'desactivado'"),
+            ("camara_remota_token_hash", "VARCHAR"),
             ("equipamiento_disponible", "TEXT"),
             ("equipamiento_personalizado", "TEXT"),
             ("logo_datos", "BLOB"),

@@ -163,11 +163,9 @@
             marcarBoton(true);
             return;
         }
-        const sesion = await window.apiFetch("/camara-remota/sesion", { method: "POST" });
-        const panel = panelQrRemoto();
-        panel.style.display = "flex";
-        elemento("rf-qr-imagen").src = sesion.qr_svg;
-        estado("Esperando que el móvil escanee el QR...");
+        const tokenRemoto = localStorage.getItem("mrgym_camara_remota_token");
+        if (!tokenRemoto) throw new Error("Enlaza primero el móvil de confianza desde Configuración");
+        estado("Conectando con el móvil de confianza...");
         conexionRemota = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
         conexionRemota.onicecandidate = (evento) => evento.candidate && socketRemoto?.send(JSON.stringify({ tipo: "candidate", candidate: evento.candidate }));
         const llegada = new Promise((resolve, reject) => {
@@ -178,14 +176,13 @@
                 stream = streamRemoto;
                 video.srcObject = stream;
                 await video.play();
-                panel.style.display = "none";
                 elemento("rf-camera").style.display = "block";
                 marcarBoton(true);
                 resolve();
             };
         });
         const protocolo = location.protocol === "https:" ? "wss" : "ws";
-        socketRemoto = new WebSocket(`${protocolo}://${location.host}/api/ws/camara-remota/${encodeURIComponent(sesion.token)}/pc`);
+        socketRemoto = new WebSocket(`${protocolo}://${location.host}/api/ws/camara-remota/${encodeURIComponent(tokenRemoto)}/pc`);
         socketRemoto.onmessage = async (evento) => {
             const mensaje = JSON.parse(evento.data);
             if (mensaje.tipo === "movil-conectado" || mensaje.tipo === "movil-listo") await crearOfertaRemota();

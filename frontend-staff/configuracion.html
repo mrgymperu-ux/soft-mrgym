@@ -111,7 +111,8 @@
                     </select>
                 </div>
                 <p id="ayuda-reconocimiento-facial" style="font-size:.78em;color:var(--color-texto-secundario);margin:0 0 14px;"></p>
-                <button class="btn btn-primary" type="button" onclick="guardarReconocimientoFacial()">Guardar modo</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary" type="button" onclick="guardarReconocimientoFacial()">Guardar modo</button><button class="btn btn-secondary" type="button" onclick="enlazarCamaraRemota()">Enlazar móvil de confianza</button><button class="btn btn-danger" type="button" onclick="desvincularCamaraRemota()">Desvincular</button></div>
+                <div id="camara-remota-vinculo" style="margin-top:14px;padding:14px;border:1px solid var(--color-borde);border-radius:12px;text-align:center;"><span style="font-size:.82em;color:var(--color-texto-secundario);">Aún no se ha enlazado un móvil en este counter.</span></div>
             </div>
 
             <div class="config-section" id="seccion-whatsapp">
@@ -274,7 +275,7 @@
         const modo = document.getElementById("c-reconocimiento-facial").value;
         document.getElementById("c-reconocimiento-facial").disabled = !activo;
         const textos = {
-            movil: "Al iniciar el reconocimiento, el counter mostrará un QR. El móvil abre solo la cámara, sin iniciar sesión.",
+            movil: "Enlaza una vez el móvil mediante el QR inferior. Después funcionará como cámara de confianza, sin iniciar sesión.",
             webcam_1080p: "Usa directamente una webcam conectada a esta computadora.",
         };
         document.getElementById("ayuda-reconocimiento-facial").textContent = activo ? textos[modo] : "El reconocimiento facial está desactivado.";
@@ -287,6 +288,37 @@
             await apiFetch("/configuracion/", { method: "PUT", body: JSON.stringify({ reconocimiento_facial_modo: modo }) });
             configuracionCache = null;
             showSuccess(modo === "desactivado" ? "Reconocimiento facial desactivado" : "Modo de reconocimiento facial guardado");
+        } catch (e) { showError(e.message); }
+    }
+
+    function mostrarQrCamaraRemota(datos) {
+        localStorage.setItem("mrgym_camara_remota_token", datos.token);
+        document.getElementById("camara-remota-vinculo").innerHTML = `<strong>Móvil de confianza</strong><br><img src="${datos.qr_svg}" alt="QR para enlazar móvil" style="width:min(100%,280px);margin:12px auto;background:#fff;padding:8px;border-radius:12px;display:block"><small>Escanea una sola vez y deja abierta la pantalla de cámara en el móvil.</small>`;
+    }
+
+    async function enlazarCamaraRemota() {
+        try {
+            const datos = await apiFetch("/camara-remota/enlace", { method:"POST" });
+            mostrarQrCamaraRemota(datos);
+            showSuccess("QR de cámara confiable generado");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function cargarVinculoCamaraRemota() {
+        const token = localStorage.getItem("mrgym_camara_remota_token");
+        if (!token) return;
+        try {
+            const datos = await apiFetch("/camara-remota/qr", { method:"POST", headers:{"X-Camera-Token":token} });
+            mostrarQrCamaraRemota(datos);
+        } catch (_) { localStorage.removeItem("mrgym_camara_remota_token"); }
+    }
+
+    async function desvincularCamaraRemota() {
+        try {
+            await apiFetch("/camara-remota/enlace", { method:"DELETE" });
+            localStorage.removeItem("mrgym_camara_remota_token");
+            document.getElementById("camara-remota-vinculo").innerHTML = '<span style="font-size:.82em;color:var(--color-texto-secundario);">Móvil desvinculado.</span>';
+            showSuccess("Móvil de confianza desvinculado");
         } catch (e) { showError(e.message); }
     }
 
@@ -692,6 +724,7 @@
     actualizarEstadoCounter();
     cargarLogoActual();
     cargarSuscripcionGym();
+    cargarVinculoCamaraRemota();
 </script>
 </body>
 </html>

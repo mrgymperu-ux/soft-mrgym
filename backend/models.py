@@ -103,6 +103,7 @@ class Gimnasio(Base):
     longitud = Column(Float, nullable=True)
     radio_asistencia_metros = Column(Float, default=150.0)
     reconocimiento_facial_modo = Column(String(20), default="desactivado")
+    camara_remota_token_hash = Column(String(64), nullable=True)
 
     # --- Configuracion (antes en tabla Configuracion) ---
     moneda = Column(String, default="S/")
