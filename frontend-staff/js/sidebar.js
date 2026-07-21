@@ -72,7 +72,12 @@ function renderSidebar() {
     const rol = getRol();
     const nombre = getNombreUsuario();
     const esAdmin = esAdministrador();
-    const colapsado = localStorage.getItem("mrgym_sidebar_colapsado") === "1";
+    localStorage.removeItem("mrgym_sidebar_colapsado");
+    let logoCache = null;
+    try { logoCache = JSON.parse(localStorage.getItem("mrgym_sidebar_logo") || "null"); } catch (_) {}
+    const logoInicial = logoCache?.ruta && String(logoCache.ruta).startsWith("/gym/")
+        ? '<img src="' + API_BASE_URL + logoCache.ruta + (logoCache.version ? '?v=' + encodeURIComponent(logoCache.version) : '') + '" alt="Logo">'
+        : '';
 
     // "Principal" queda siempre visible (no es acordeon); el resto
     // de secciones son acordeon: solo una puede estar abierta a la
@@ -114,10 +119,9 @@ function renderSidebar() {
     }).join("");
 
     contenedor.innerHTML =
-        '<aside class="sidebar' + (colapsado ? ' colapsado' : '') + '">' +
+        '<aside class="sidebar">' +
         '<div class="sidebar-header">' +
-        '<div class="logo"><span class="logo-brand-icon">🏋️</span><span class="logo-text">Soft-Gym</span></div>' +
-        '<button class="btn-toggle-sidebar" onclick="toggleSidebarColapsado()" title="' + (colapsado ? "Expandir menu" : "Minimizar menu") + '">◀</button>' +
+        '<div class="logo"><span class="logo-brand-icon">' + logoInicial + '</span><span class="logo-text"></span></div>' +
         '<button class="btn-logout-movil" onclick="cerrarSesion()" title="Cerrar sesion">Salir</button>' +
         '</div>' +
         '<nav class="sidebar-nav">' + seccionesHtml + '</nav>' +
@@ -154,19 +158,14 @@ async function cargarMarcaSidebar() {
             const version = usaLogoOscuro ? gimnasio.logo_oscuro_version : gimnasio.logo_version;
             const versionLogo = version ? "?v=" + encodeURIComponent(version) : "";
             icono.innerHTML = '<img src="' + API_BASE_URL + rutaLogo + versionLogo + '" alt="Logo">';
+            localStorage.setItem("mrgym_sidebar_logo", JSON.stringify({ ruta: rutaLogo, version: version || "" }));
+        } else if (icono) {
+            icono.textContent = "";
+            localStorage.removeItem("mrgym_sidebar_logo");
         }
     } catch (_) {
         // El menu sigue siendo operativo con la marca por defecto.
     }
-}
-
-function toggleSidebarColapsado() {
-    const aside = document.querySelector("#sidebar-container .sidebar");
-    if (!aside) return;
-    const yaColapsado = aside.classList.toggle("colapsado");
-    localStorage.setItem("mrgym_sidebar_colapsado", yaColapsado ? "1" : "0");
-    const btn = aside.querySelector(".btn-toggle-sidebar");
-    if (btn) btn.title = yaColapsado ? "Expandir menu" : "Minimizar menu";
 }
 
 function toggleSeccionSidebar(indice) {

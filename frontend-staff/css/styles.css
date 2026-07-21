@@ -47,13 +47,12 @@ body {
 
 .app-layout { display: flex; min-height: 100vh; }
 .sidebar { width: 240px; background: var(--color-sidebar); color: #fff; flex-shrink: 0; display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; align-self: flex-start; transition: width 0.2s ease; }
-.sidebar-header { min-height:164px; padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
-.logo { min-width:0; flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; overflow:hidden; text-align:center; letter-spacing:0; }
-.logo-brand-icon { width:112px; height:112px; display:grid; place-items:center; flex-shrink:0; font-size:5rem; line-height:1; transition:width .2s,height .2s,font-size .2s; }
-.logo-brand-icon img { width:112px; height:112px; object-fit:contain; border-radius:12px; transition:width .2s,height .2s; }
+.sidebar-header { min-height:180px; padding:10px; border-bottom:1px solid rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; gap:8px; }
+.logo { min-width:0; width:100%; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; overflow:hidden; text-align:center; letter-spacing:0; }
+.logo-brand-icon { width:100%; height:145px; display:grid; place-items:center; flex-shrink:0; line-height:1; }
+.logo-brand-icon img { width:100%; height:145px; object-fit:contain; border-radius:12px; }
 .logo-text { width:100%; overflow:hidden; color:rgba(255,255,255,.78); font-size:var(--fuente-xs); font-weight:500; line-height:1.2; text-overflow:ellipsis; white-space:nowrap; }
-.logo.sin-nombre .logo-brand-icon, .logo.sin-nombre .logo-brand-icon img { width:135px; height:135px; }
-.logo.sin-nombre .logo-brand-icon { font-size:6rem; }
+.logo.sin-nombre .logo-brand-icon, .logo.sin-nombre .logo-brand-icon img { width:100%; height:158px; }
 .btn-logout-movil { display: none; }
 .btn-toggle-sidebar { background: rgba(255,255,255,0.08); border: none; color: rgba(255,255,255,0.75); width: 28px; height: 28px; min-width: 28px; border-radius: 6px; cursor: pointer; font-size: 0.85em; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s, transform 0.2s; }
 .btn-toggle-sidebar:hover { background: rgba(255,255,255,0.18); color: #fff; }
