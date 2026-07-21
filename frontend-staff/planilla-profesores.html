@@ -404,9 +404,29 @@
         } catch (e) { showError(e.message); }
     }
 
-    setFechasPorDefecto();
-    cargarEmpleados();
-    cargarHistorialPagos();
+    async function abrirPagoSolicitado() {
+        const parametro = new URLSearchParams(window.location.search).get("pagar");
+        if (!parametro) return;
+        window.history.replaceState({}, "", window.location.pathname);
+        const profesorId = Number(parametro);
+        if (!Number.isInteger(profesorId) || !profesoresCache.some(e => e.id === profesorId)) {
+            showError("No se encontró el profesor seleccionado");
+            return;
+        }
+        document.getElementById("f-profesor").value = String(profesorId);
+        ultimoResumen = null;
+        await calcularPlanilla();
+        if (ultimoResumen) abrirModalPago();
+    }
+
+    async function inicializarPlanillaProfesores() {
+        setFechasPorDefecto();
+        await cargarEmpleados();
+        cargarHistorialPagos();
+        await abrirPagoSolicitado();
+    }
+
+    inicializarPlanillaProfesores();
 </script>
 </body>
 </html>

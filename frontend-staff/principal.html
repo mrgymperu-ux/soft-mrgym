@@ -188,7 +188,7 @@
                     </span>
                 </div>
                 <div class="panel-card-body">
-                    <input type="text" class="bi-input" id="bi-input" placeholder="Nombre, DNI o email..." oninput="onBusquedaInput()">
+                    <input type="text" class="bi-input" id="bi-input" placeholder="Nombre, DNI o email... (+ para personal)" oninput="onBusquedaInput()">
                     <div class="intent-chips" id="intent-chips">
                         <label class="intent-chip" data-intent="marcar_asistencia">
                             <input type="checkbox" onclick="onIntentClick(event,'marcar_asistencia')"> Asistencia
@@ -464,6 +464,11 @@
             return;
         }
 
+        if (termino.startsWith("+")) {
+            await buscarPersonalParaPago(termino.slice(1).trim());
+            return;
+        }
+
         if (intentActivo === "reingreso") {
             await buscarClientesHistoricos(termino);
             return;
@@ -528,6 +533,45 @@
         } catch (error) {
             showError(error.message);
         }
+    }
+
+    async function buscarPersonalParaPago(termino) {
+        const contenedor = document.getElementById("bi-resultados");
+        try {
+            const empleados = await apiFetch("/empleados/");
+            const texto = termino.toLocaleLowerCase("es");
+            const resultados = empleados.filter((empleado) => {
+                const datos = [empleado.nombre_completo, empleado.dni, empleado.puesto]
+                    .filter(Boolean).join(" ").toLocaleLowerCase("es");
+                return !texto || datos.includes(texto);
+            }).slice(0, 8);
+
+            if (!resultados.length) {
+                contenedor.innerHTML = '<p style="text-align:center;color:var(--color-texto-secundario);padding:16px;font-size:0.82em;">Sin resultados entre staff y profesores</p>';
+                return;
+            }
+
+            contenedor.innerHTML = resultados.map((empleado) => {
+                const esProfesor = empleado.tipo === "profesor_de_sala";
+                const tipoTexto = esProfesor ? "Profesor" : "Staff";
+                const detalle = empleado.puesto ? ` · ${escapeHTML(empleado.puesto)}` : "";
+                return `<div class="bi-item" onclick="abrirPagoPersonal(${Number(empleado.id)}, '${esProfesor ? "profesor_de_sala" : "staff_fijo"}')">
+                    ${avatarHtml(empleado.nombre_completo, null)}
+                    <div class="bi-item-info">
+                        <div class="bi-item-nombre">${escapeHTML(empleado.nombre_completo)}</div>
+                        <div class="bi-item-sub">💵 ${tipoTexto}${detalle}</div>
+                    </div>
+                    <span class="badge badge-success">Pagar</span>
+                </div>`;
+            }).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    function abrirPagoPersonal(empleadoId, tipo) {
+        const pagina = tipo === "profesor_de_sala" ? "planilla-profesores.html" : "planilla-staff.html";
+        window.location.href = `${pagina}?pagar=${encodeURIComponent(empleadoId)}`;
     }
 
     // Pago rápido de saldo desde la búsqueda inteligente
