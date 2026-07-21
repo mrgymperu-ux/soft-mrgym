@@ -146,9 +146,14 @@ async function cargarMarcaSidebar() {
         const nombreMarca = String(configuracion.nombre_gimnasio ?? gimnasio.nombre ?? "").trim();
         if (texto) texto.textContent = nombreMarca;
         if (marca) marca.classList.toggle("sin-nombre", !nombreMarca);
-        if (icono && gimnasio.logo_url) {
-            const versionLogo = gimnasio.logo_version ? "?v=" + encodeURIComponent(gimnasio.logo_version) : "";
-            icono.innerHTML = '<img src="' + API_BASE_URL + gimnasio.logo_url + versionLogo + '" alt="Logo">';
+        if (icono && (gimnasio.logo_oscuro_url || gimnasio.logo_url)) {
+            // El menu lateral siempre usa una superficie oscura, incluso
+            // cuando el contenido general esta en modo claro.
+            const usaLogoOscuro = Boolean(gimnasio.logo_oscuro_url);
+            const rutaLogo = usaLogoOscuro ? gimnasio.logo_oscuro_url : gimnasio.logo_url;
+            const version = usaLogoOscuro ? gimnasio.logo_oscuro_version : gimnasio.logo_version;
+            const versionLogo = version ? "?v=" + encodeURIComponent(version) : "";
+            icono.innerHTML = '<img src="' + API_BASE_URL + rutaLogo + versionLogo + '" alt="Logo">';
         }
     } catch (_) {
         // El menu sigue siendo operativo con la marca por defecto.

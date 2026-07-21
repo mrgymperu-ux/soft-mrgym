@@ -44,13 +44,13 @@
                 <div class="form-group"><label>Razon social</label><input type="text" id="c-razon-social" maxlength="200"></div>
                 <div class="form-group"><label>Regimen tributario</label><select id="c-regimen"><option value="">Sin configurar</option><option>Nuevo RUS</option><option>Regimen Especial de Renta</option><option>Regimen MYPE Tributario</option><option>Regimen General</option></select></div>
                 <div class="form-group">
-                    <label>Logo para tema claro</label>
+                    <label>Logo para superficies claras</label>
                     <div id="logo-preview" class="logo-preview-transparencia" style="margin-bottom:8px;"><p style="font-size:0.8em;color:#636E72;">Cargando...</p></div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <input type="file" id="input-logo" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
                         <button class="btn btn-sm btn-primary" onclick="subirLogo('claro')">Subir</button>
                     </div>
-                    <label style="margin-top:14px;">Logo para tema oscuro</label>
+                    <label style="margin-top:14px;">Logo para superficies oscuras <span style="font-weight:400;color:var(--color-texto-secundario);">(menú lateral)</span></label>
                     <div id="logo-oscuro-preview" style="margin-bottom:8px;"></div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <input type="file" id="input-logo-oscuro" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
@@ -627,7 +627,7 @@
             const prevOscuro = document.getElementById("logo-oscuro-preview");
             prevOscuro.innerHTML = info && info.logo_oscuro_url
                 ? `<div style="max-width:100%;background:#171922;padding:10px;border-radius:8px;display:inline-block;"><img src="${API_BASE_URL}${info.logo_oscuro_url}${cacheBusterOscuro}" style="max-width:100%;max-height:100px;object-fit:contain;" alt="Logo oscuro"></div>`
-                : '<p style="font-size:0.8em;color:#636E72;">Sin logo específico; se usará el logo claro.</p>';
+                : '<p style="font-size:0.8em;color:#636E72;">Sin logo para fondo oscuro; el menú usará el logo de superficies claras.</p>';
         } catch(e) {}
     }
     async function subirLogo(modo) {
