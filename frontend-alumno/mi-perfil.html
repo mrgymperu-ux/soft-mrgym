@@ -69,7 +69,10 @@ function actualizarSwitchTema() {
 function actualizarLogoTema() {
   if (!resumenActual?.gimnasio) return;
   const g = resumenActual.gimnasio;
-  const ruta = document.documentElement.dataset.tema === "oscuro" ? (g.logo_oscuro_url || g.logo_url) : g.logo_url;
+  const usaOscuro = document.documentElement.dataset.tema === "oscuro" && g.logo_oscuro_url;
+  const rutaBase = usaOscuro ? g.logo_oscuro_url : g.logo_url;
+  const version = usaOscuro ? g.logo_oscuro_version : g.logo_version;
+  const ruta = rutaBase ? `${rutaBase}${version ? `?v=${encodeURIComponent(version)}` : ""}` : null;
   document.getElementById("logo-gimnasio").innerHTML = ruta ? `<img src="${urlFoto(ruta)}" alt="${escapeHTML(g.nombre)}">` : `<strong>${escapeHTML(g.nombre)}</strong>`;
 }
 

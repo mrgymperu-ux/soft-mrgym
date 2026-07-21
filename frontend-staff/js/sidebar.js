@@ -147,7 +147,8 @@ async function cargarMarcaSidebar() {
         if (texto) texto.textContent = nombreMarca;
         if (marca) marca.classList.toggle("sin-nombre", !nombreMarca);
         if (icono && gimnasio.logo_url) {
-            icono.innerHTML = '<img src="' + API_BASE_URL + gimnasio.logo_url + '" alt="Logo">';
+            const versionLogo = gimnasio.logo_version ? "?v=" + encodeURIComponent(gimnasio.logo_version) : "";
+            icono.innerHTML = '<img src="' + API_BASE_URL + gimnasio.logo_url + versionLogo + '" alt="Logo">';
         }
     } catch (_) {
         // El menu sigue siendo operativo con la marca por defecto.

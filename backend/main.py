@@ -539,6 +539,11 @@ def _validar_y_guardar_foto(contenido: bytes, content_type: str, directorio: str
     return f"/uploads/{carpeta}/{nombre_archivo}"
 
 
+def _version_contenido_imagen(contenido: Optional[bytes]) -> Optional[str]:
+    """Token corto para invalidar la cache cuando se reemplaza una imagen."""
+    return hashlib.sha256(contenido).hexdigest()[:12] if contenido else None
+
+
 def _eliminar_foto_anterior(foto_url: Optional[str]):
     if not foto_url:
         return
@@ -1848,6 +1853,8 @@ def info_publica_gimnasio(slug: str, db: Session = Depends(get_db)):
         "slug": gimnasio.slug,
         "logo_url": gimnasio.logo_url,
         "logo_oscuro_url": gimnasio.logo_oscuro_url,
+        "logo_version": _version_contenido_imagen(gimnasio.logo_datos),
+        "logo_oscuro_version": _version_contenido_imagen(gimnasio.logo_oscuro_datos),
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -1875,7 +1882,7 @@ async def subir_logo_gimnasio(
         gimnasio.logo_url = f"/gym/{gimnasio.slug}/logo/claro"
         campo_logo = "logo_url"
     db.commit()
-    return {"logo_url": getattr(gimnasio, campo_logo), "modo": modo}
+    return {"logo_url": getattr(gimnasio, campo_logo), "modo": modo, "version": _version_contenido_imagen(contenido)}
 
 
 @app.get("/gym/{slug}/logo/{modo}", tags=["PWA"])
@@ -1907,6 +1914,8 @@ def info_gimnasio_actual(db: Session = Depends(get_db), usuario: models.Usuario 
         "slug": gimnasio.slug,
         "logo_url": gimnasio.logo_url,
         "logo_oscuro_url": gimnasio.logo_oscuro_url,
+        "logo_version": _version_contenido_imagen(gimnasio.logo_datos),
+        "logo_oscuro_version": _version_contenido_imagen(gimnasio.logo_oscuro_datos),
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -10019,7 +10028,9 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
             "pago_vencido": pago_vencido, "sin_pagos_pendientes": sin_pagos_pendientes,
             "asistencia_ubicacion_configurada": bool(gimnasio and gimnasio.latitud is not None and gimnasio.longitud is not None),
             "gimnasio": {"nombre": gimnasio.nombre, "logo_url": gimnasio.logo_url,
-                          "logo_oscuro_url": gimnasio.logo_oscuro_url} if gimnasio else None}
+                          "logo_oscuro_url": gimnasio.logo_oscuro_url,
+                          "logo_version": _version_contenido_imagen(gimnasio.logo_datos),
+                          "logo_oscuro_version": _version_contenido_imagen(gimnasio.logo_oscuro_datos)} if gimnasio else None}
 
 
 def _distancia_metros(latitud_1: float, longitud_1: float, latitud_2: float, longitud_2: float) -> float:
