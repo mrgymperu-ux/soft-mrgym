@@ -1,10 +1,12 @@
 """Pruebas de regresion para las fronteras multi-tenant criticas."""
 
+import io
 import unittest
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -22,6 +24,7 @@ from backend.main import (
     _estado_suscripcion,
     _limitar_gramos_proteina,
     _porcion_cliente_facil,
+    _validar_y_optimizar_foto,
     _sembrar_datos_gimnasio_nuevo,
     asignar_paquete_rutina,
     abrir_caja,
@@ -124,6 +127,19 @@ class MultiTenantTest(unittest.TestCase):
 
     def test_exportacion_no_incluye_credenciales_de_alumnos(self):
         self.assertNotIn("codigo_acceso", _CAMPOS_CLIENTE_EXPORTABLES)
+
+    def test_optimizacion_de_logo_conserva_transparencia(self):
+        origen = Image.new("RGBA", (4, 4), (20, 120, 220, 0))
+        origen.putpixel((1, 1), (20, 120, 220, 255))
+        archivo = io.BytesIO()
+        origen.save(archivo, format="PNG")
+
+        contenido, tipo = _validar_y_optimizar_foto(archivo.getvalue(), "image/png", optimizar=True)
+        resultado = Image.open(io.BytesIO(contenido)).convert("RGBA")
+
+        self.assertEqual(tipo, "image/webp")
+        self.assertEqual(resultado.getpixel((0, 0))[3], 0)
+        self.assertEqual(resultado.getpixel((1, 1))[3], 255)
 
     def test_biometria_facial_se_cifra_y_respeta_el_gimnasio(self):
         descriptor = [((i % 17) - 8) / 100 for i in range(1024)]

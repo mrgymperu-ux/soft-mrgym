@@ -610,18 +610,19 @@
     }
 
     /* ====== Logo del gimnasio ====== */
-    async function cargarLogoActual() {
+    async function cargarLogoActual(version = "") {
         try {
             const info = await apiFetch("/gym-actual/");
+            const cacheBuster = version ? `?v=${encodeURIComponent(version)}` : "";
             const prev = document.getElementById("logo-preview");
             if (info && info.logo_url) {
-                prev.innerHTML = `<img src="${API_BASE_URL}${info.logo_url}" style="max-height:80px;border-radius:8px;" alt="Logo">`;
+                prev.innerHTML = `<img src="${API_BASE_URL}${info.logo_url}${cacheBuster}" style="max-height:80px;border-radius:8px;" alt="Logo">`;
             } else {
                 prev.innerHTML = '<p style="font-size:0.8em;color:#636E72;">Sin logo. Sube uno (JPEG, PNG o WEBP, max 5MB).</p>';
             }
             const prevOscuro = document.getElementById("logo-oscuro-preview");
             prevOscuro.innerHTML = info && info.logo_oscuro_url
-                ? `<div style="background:#171922;padding:10px;border-radius:8px;display:inline-block;"><img src="${API_BASE_URL}${info.logo_oscuro_url}" style="max-height:80px;" alt="Logo oscuro"></div>`
+                ? `<div style="background:#171922;padding:10px;border-radius:8px;display:inline-block;"><img src="${API_BASE_URL}${info.logo_oscuro_url}${cacheBuster}" style="max-height:80px;" alt="Logo oscuro"></div>`
                 : '<p style="font-size:0.8em;color:#636E72;">Sin logo específico; se usará el logo claro.</p>';
         } catch(e) {}
     }
@@ -638,7 +639,7 @@
             const data = await r.json();
             if (!r.ok) throw new Error(data.detail || "Error al subir logo");
             showSuccess("Logo actualizado");
-            cargarLogoActual();
+            cargarLogoActual(Date.now());
         } catch(e) { showError(e.message); }
     }
 

@@ -512,12 +512,11 @@ def _validar_y_optimizar_foto(contenido: bytes, content_type: str, optimizar: bo
         if optimizar:
             imagen = ImageOps.exif_transpose(imagen)
             imagen.thumbnail((960, 960), Image.Resampling.LANCZOS)
-            if imagen.mode not in ("RGB", "RGBA"):
-                imagen = imagen.convert("RGB")
-            elif imagen.mode == "RGBA":
-                fondo = Image.new("RGB", imagen.size, "white")
-                fondo.paste(imagen, mask=imagen.getchannel("A"))
-                imagen = fondo
+            # PNG y WEBP pueden traer transparencia en RGBA, LA o mediante
+            # una paleta. WEBP admite canal alfa, por lo que no debemos
+            # aplanarlo sobre blanco (especialmente importante para logos).
+            tiene_transparencia = "A" in imagen.getbands() or "transparency" in imagen.info
+            imagen = imagen.convert("RGBA" if tiene_transparencia else "RGB")
             salida = io.BytesIO()
             imagen.save(salida, format="WEBP", quality=76, method=6, optimize=True)
             contenido = salida.getvalue()
@@ -1890,7 +1889,7 @@ def obtener_logo_gimnasio(slug: str, modo: str, db: Session = Depends(get_db)):
     tipo = gimnasio.logo_oscuro_tipo if modo == "oscuro" else gimnasio.logo_tipo
     if not contenido:
         raise HTTPException(status_code=404, detail="Logo no encontrado")
-    return Response(content=contenido, media_type=tipo or "image/webp", headers={"Cache-Control": "public, max-age=3600"})
+    return Response(content=contenido, media_type=tipo or "image/webp", headers={"Cache-Control": "public, no-cache"})
 
 
 @app.get("/gym-actual/", tags=["Auth"])
