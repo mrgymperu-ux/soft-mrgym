@@ -11,6 +11,7 @@
 let _fcClienteCreado = null;
 let _fcOnTerminar = null;
 let _fcPlanesCache = [];
+let _fcVendedoresCache = [];
 let _fcClienteActivo = null; // {id, nombre}
 let _fcUltimoCm = null; // ClienteMembresia recien creada
 let _fcClienteEditandoId = null; // si no es null, el modal 'Nuevo Cliente' edita este cliente en vez de crear uno
@@ -70,6 +71,7 @@ function _fcInyectarModales() {
             <div class="form-row"><label>Condicion de pago</label><input type="text" id="fc-am-condicion" disabled></div>
             <div class="form-row"><label>Fecha de inicio</label><input type="date" id="fc-am-inicio" onchange="_fcRecalcularFin()"></div>
             <div class="form-row"><label>Fecha de fin</label><input type="date" id="fc-am-fin"></div>
+            <div class="form-row"><label>Vendedor *</label><select id="fc-am-vendedor"></select></div>
             <div class="form-row"><label>Monto a pagar ahora *</label><input type="number" id="fc-am-monto-ahora" step="0.01" min="0" oninput="_fcRecalcularSaldo()"></div>
             <div class="form-row"><label>Forma de pago *</label>
                 <select id="fc-am-metodo">
@@ -219,11 +221,17 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
 
     const config = await getConfiguracion();
     _fcMoneda = config.moneda;
-    _fcPlanesCache = await apiFetch("/membresias/");
+    [_fcPlanesCache, _fcVendedoresCache] = await Promise.all([
+        apiFetch("/membresias/"),
+        apiFetch("/vendedores-membresia/"),
+    ]);
 
     document.getElementById("fc-am-cliente-nombre").textContent = nombreCliente;
     document.getElementById("fc-am-plan").innerHTML = '<option value="">Seleccionar...</option>' +
         _fcPlanesCache.map((p) => `<option value="${p.id}">${p.nombre} — ${formatCurrency(p.precio, config.moneda)}</option>`).join("");
+    const vendedorActual = getNombreUsuario();
+    document.getElementById("fc-am-vendedor").innerHTML = _fcVendedoresCache
+        .map((v) => `<option value="${v.id}"${v.nombre === vendedorActual ? " selected" : ""}>${escapeHTML(v.nombre)}</option>`).join("");
     document.getElementById("fc-am-monto-total").value = "";
     document.getElementById("fc-am-congelamiento").value = "";
     document.getElementById("fc-am-condicion").value = "";
@@ -307,6 +315,7 @@ async function _fcAsignarMembresia() {
                 monto_pagado: montoAhora,
                 metodo_pago: document.getElementById("fc-am-metodo").value,
                 fecha_pago_saldo: fechaSaldo,
+                vendido_por_id: parseInt(document.getElementById("fc-am-vendedor").value),
             }),
         });
         _fcUltimoCm = cm;

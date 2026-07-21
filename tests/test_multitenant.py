@@ -27,6 +27,7 @@ from backend.main import (
     _validar_y_optimizar_foto,
     _sembrar_datos_gimnasio_nuevo,
     asignar_paquete_rutina,
+    asignar_membresia_a_cliente,
     abrir_caja,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
@@ -50,6 +51,7 @@ from backend.main import (
     eliminar_venta,
     emitir_documento_financiero,
     eliminar_biometria_facial,
+    anular_deuda_cliente_membresia,
     estado_biometria_facial,
     generar_rutinas_por_equipamiento,
     guardar_biometria_facial,
@@ -57,6 +59,7 @@ from backend.main import (
     registrar_compra,
     registrar_entrada,
     registrar_salida,
+    reprogramar_cliente_membresia,
     registrar_otro_ingreso,
     resumen_documentos_financieros,
     recomendar_paquetes_rutina_cliente,
@@ -423,6 +426,67 @@ class MultiTenantTest(unittest.TestCase):
         with self.assertRaises(HTTPException) as error_empleados:
             auth.requiere_staff(_request("/empleados/"), self.staff1)
         self.assertEqual(error_empleados.exception.status_code, 403)
+
+        self.staff1.zonas_permitidas = "planilla"
+        self.assertIs(auth.requiere_staff(_request("/empleados/"), self.staff1), self.staff1)
+
+    def test_matricula_permite_elegir_vendedor_del_staff(self):
+        plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)
+        self.db.add(plan); self.db.commit()
+        cm = asignar_membresia_a_cliente(
+            self.cliente1.id,
+            schemas.ClienteMembresiaCreate(
+                cliente_id=self.cliente1.id, membresia_id=plan.id,
+                monto_pagado=40, fecha_pago_saldo=date.today() + timedelta(days=7),
+                vendido_por_id=self.staff1.id,
+            ),
+            idempotency_key=None, db=self.db, usuario_actual=self.admin1,
+        )
+        self.assertEqual(cm.vendido_por_id, self.staff1.id)
+
+    def test_reprogramar_matricula_solo_sin_asistencias(self):
+        plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)
+        self.db.add(plan); self.db.flush()
+        inicio = date.today()
+        cm = models.ClienteMembresia(
+            cliente_id=self.cliente1.id, membresia_id=plan.id,
+            fecha_inicio=inicio, fecha_fin=inicio + timedelta(days=30), activo=True,
+        )
+        self.db.add(cm); self.db.commit()
+        movida = reprogramar_cliente_membresia(
+            cm.id, schemas.ReprogramarMembresiaRequest(fecha_inicio=inicio + timedelta(days=5)),
+            db=self.db, usuario=self.staff1,
+        )
+        self.assertEqual(movida.fecha_fin, inicio + timedelta(days=35))
+        self.db.add(models.Asistencia(
+            cliente_id=self.cliente1.id, gimnasio_id=self.gym1.id,
+            fecha_hora_entrada=datetime.combine(movida.fecha_inicio, datetime.min.time()) + timedelta(hours=10),
+        ))
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            reprogramar_cliente_membresia(
+                cm.id, schemas.ReprogramarMembresiaRequest(fecha_inicio=inicio + timedelta(days=6)),
+                db=self.db, usuario=self.staff1,
+            )
+        self.assertEqual(error.exception.status_code, 409)
+
+    def test_anular_deuda_conserva_el_pago_realizado(self):
+        plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)
+        self.db.add(plan); self.db.flush()
+        cm = models.ClienteMembresia(
+            cliente_id=self.cliente1.id, membresia_id=plan.id,
+            fecha_inicio=date.today(), fecha_fin=date.today() + timedelta(days=30), monto_pagado=30, activo=True,
+        )
+        self.db.add(cm); self.db.flush()
+        pago = models.PagoMembresia(cliente_membresia_id=cm.id, monto=30, metodo_pago="efectivo", registrado_por_id=self.admin1.id)
+        self.db.add(pago); self.db.commit()
+        resultado = anular_deuda_cliente_membresia(
+            cm.id, schemas.AnulacionOperacionRequest(motivo="Nueva matrícula"), db=self.db, usuario=self.admin1,
+        )
+        self.db.refresh(cm); self.db.refresh(pago)
+        self.assertEqual(resultado["saldo_anulado"], 70)
+        self.assertTrue(cm.anulada)
+        self.assertFalse(pago.anulada)
 
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)

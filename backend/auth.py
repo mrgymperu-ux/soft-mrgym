@@ -388,7 +388,7 @@ _ZONA_POR_PREFIJO = {
     "dashboard": "sistema", "reportes": "sistema", "caja": "sistema", "documentos-financieros": "sistema",
     "ingresos": "sistema", "egresos": "sistema", "gastos": "sistema",
     "conceptos-ingreso": "sistema", "otros-ingresos": "sistema",
-    "usuarios": "usuarios", "empleados": "usuarios", "puestos": "usuarios",
+    "usuarios": "usuarios", "empleados": "planilla", "puestos": "usuarios",
     "configuracion": "configuracion", "gym-actual": "configuracion",
     "metas": "metas", "comisiones": "metas",
 }

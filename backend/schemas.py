@@ -510,6 +510,11 @@ class ClienteMembresiaCreate(BaseModel):
     monto_pagado: Optional[float] = None
     fecha_pago_saldo: Optional[date] = None
     metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
+    vendido_por_id: Optional[int] = None
+
+
+class ReprogramarMembresiaRequest(BaseModel):
+    fecha_inicio: date
 
 
 class ClienteMembresiaUpdate(BaseModel):

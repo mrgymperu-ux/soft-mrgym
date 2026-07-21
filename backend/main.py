@@ -5288,6 +5288,16 @@ async def importar_membresias(
     return {"total_importadas": total_importadas, "errores": errores[:20]}
 
 
+@app.get("/vendedores-membresia/", tags=["Membresias"])
+def listar_vendedores_membresia(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    vendedores = db.query(models.Usuario).filter(
+        models.Usuario.gimnasio_id == get_gid(usuario),
+        models.Usuario.rol == models.RolUsuario.STAFF,
+        models.Usuario.activo == True,
+    ).order_by(models.Usuario.nombre_completo).all()
+    return [{"id": vendedor.id, "nombre": vendedor.nombre_completo} for vendedor in vendedores]
+
+
 @app.post("/clientes/{cliente_id}/membresias", response_model=schemas.ClienteMembresia, tags=["Membresias"])
 def asignar_membresia_a_cliente(
     cliente_id: int,
@@ -5312,6 +5322,16 @@ def asignar_membresia_a_cliente(
     if datos.cliente_id != cliente_id:
         raise HTTPException(status_code=400, detail="El cliente del cuerpo no coincide con la URL")
 
+    vendedor_id = datos.vendido_por_id or usuario_actual.id
+    vendedor = db.query(models.Usuario).filter(
+        models.Usuario.id == vendedor_id,
+        models.Usuario.gimnasio_id == gid,
+        models.Usuario.rol == models.RolUsuario.STAFF,
+        models.Usuario.activo == True,
+    ).first()
+    if not vendedor:
+        raise HTTPException(status_code=400, detail="El vendedor seleccionado no pertenece al staff activo")
+
     fecha_inicio = datos.fecha_inicio or hoy_lima()
     fecha_fin = datos.fecha_fin or (fecha_inicio + timedelta(days=membresia.duracion_dias))
     if fecha_fin < fecha_inicio:
@@ -5328,7 +5348,7 @@ def asignar_membresia_a_cliente(
         monto_pagado=round(monto_inicial, 2),
         fecha_pago_saldo=datos.fecha_pago_saldo,
         metodo_pago=datos.metodo_pago or "efectivo",
-        vendido_por_id=usuario_actual.id,
+        vendido_por_id=vendedor.id,
     )
     db.add(db_cm)
     db.flush()
@@ -5396,7 +5416,7 @@ def _sincronizar_fechas_cliente(db: Session, cliente_id: int):
         return
     ultima = (
         db.query(models.ClienteMembresia)
-        .filter(models.ClienteMembresia.cliente_id == cliente_id)
+        .filter(models.ClienteMembresia.cliente_id == cliente_id, models.ClienteMembresia.anulada == False)
         .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
         .first()
     )
@@ -5570,6 +5590,64 @@ def eliminar_pago_membresia(
     )
     db.commit()
     return {"message": "Pago de membresia anulado", "monto_pagado": cm.monto_pagado}
+
+
+@app.put("/cliente-membresias/{cm_id}/reprogramar", response_model=schemas.ClienteMembresia, tags=["Membresias"])
+def reprogramar_cliente_membresia(
+    cm_id: int,
+    datos: schemas.ReprogramarMembresiaRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if not cm or cm.anulada:
+        raise HTTPException(status_code=404, detail="Membresía asignada no encontrada")
+    inicio_original = datetime.combine(cm.fecha_inicio, datetime.min.time())
+    fin_original = datetime.combine(cm.fecha_fin + timedelta(days=1), datetime.min.time()) if cm.fecha_fin else ahora_lima() + timedelta(days=1)
+    asistencias = db.query(models.Asistencia.id).filter(
+        models.Asistencia.cliente_id == cm.cliente_id,
+        models.Asistencia.gimnasio_id == get_gid(usuario),
+        models.Asistencia.fecha_hora_entrada >= inicio_original,
+        models.Asistencia.fecha_hora_entrada < fin_original,
+    ).first()
+    if asistencias:
+        raise HTTPException(status_code=409, detail="No se puede mover el inicio porque el cliente ya registró asistencias con esta matrícula")
+    desplazamiento = datos.fecha_inicio - cm.fecha_inicio
+    cm.fecha_inicio = datos.fecha_inicio
+    if cm.fecha_fin:
+        cm.fecha_fin = cm.fecha_fin + desplazamiento
+    if cm.fecha_pago_saldo:
+        cm.fecha_pago_saldo = cm.fecha_pago_saldo + desplazamiento
+    _sincronizar_fechas_cliente(db, cm.cliente_id)
+    db.commit()
+    db.refresh(cm)
+    return cm
+
+
+@app.put("/cliente-membresias/{cm_id}/anular-deuda", tags=["Membresias"])
+def anular_deuda_cliente_membresia(
+    cm_id: int,
+    datos: schemas.AnulacionOperacionRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if not cm or cm.anulada:
+        raise HTTPException(status_code=404, detail="Membresía asignada no encontrada")
+    precio = float(cm.membresia.precio or 0) if cm.membresia else 0
+    pagado = _total_pagado_membresia(db, cm.id)
+    saldo = round(max(precio - pagado, 0), 2)
+    if saldo <= 0.009:
+        raise HTTPException(status_code=409, detail="Esta matrícula no tiene deuda pendiente")
+    cm.activo = False
+    cm.anulada = True
+    cm.anulada_en = ahora_lima()
+    cm.anulada_por_id = usuario.id
+    cm.motivo_anulacion = f"Saldo anterior anulado ({saldo:.2f}): {datos.motivo.strip()}"
+    cm.fecha_pago_saldo = None
+    _sincronizar_fechas_cliente(db, cm.cliente_id)
+    db.commit()
+    return {"message": "Deuda anterior anulada; los pagos realizados se conservaron", "saldo_anulado": saldo}
 
 
 @app.delete("/cliente-membresias/{cm_id}", tags=["Membresias"])

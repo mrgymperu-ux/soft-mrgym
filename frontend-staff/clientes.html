@@ -402,7 +402,7 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js"></script>
+<script src="js/flujo-cliente.js?v=20260721-2"></script>
 <script src="js/medidas-catalogo.js"></script>
 <script src="vendor/human/human.js"></script>
 <script src="js/reconocimiento-facial.js?v=20260721-5"></script>
@@ -1041,10 +1041,12 @@
                 html += `<span>Inicio: <strong>${formatFecha(cm.fecha_inicio)}</strong></span>`;
                 html += `<span>Fin: <strong>${cm.fecha_fin ? formatFecha(cm.fecha_fin) : '\u2014'}</strong></span>`;
                 html += `<span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>`;
-                html += `<span class="badge ${cm.activo ? 'badge-success' : 'badge-error'}" style="font-size:0.72em;">${cm.activo ? 'Activa' : 'Inactiva'}</span>`;
+                html += `<span class="badge ${cm.activo && !cm.anulada ? 'badge-success' : 'badge-error'}" style="font-size:0.72em;">${cm.anulada ? 'Anulada' : (cm.activo ? 'Activa' : 'Inactiva')}</span>`;
                 html += `</div>`;
                 html += `<div style="display:flex;gap:4px;">`;
                 html += `<button class="btn btn-sm btn-secondary" onclick="apiAbrirPdfEnNuevaPestana('/clientes/${clienteActual.id}/membresias/${cm.id}/recibo.pdf').catch(e=>showError(e.message))">\ud83e\uddfe</button>`;
+                if (cm.activo && !cm.anulada) html += `<button class="btn btn-sm btn-secondary" onclick="reprogramarCM(${cm.id},'${cm.fecha_inicio}')" title="Mover fecha de inicio">📅 Mover inicio</button>`;
+                if (esAdmin && saldoActual > 0.009 && cm.activo && !cm.anulada) html += `<button class="btn btn-sm btn-warning" onclick="anularDeudaCM(${cm.id})" title="Cerrar esta matrícula conservando lo ya pagado">Anular deuda anterior</button>`;
                 if (esAdmin) html += `<button class="btn btn-sm btn-secondary" onclick="abrirModalCM(${cm.id})">\u270f\ufe0f</button><button class="btn btn-sm btn-danger" onclick="eliminarCM(${cm.id})">\ud83d\uddd1\ufe0f</button>`;
                 html += `</div></div>`;
 
@@ -1096,7 +1098,7 @@
                 }
 
                 html += `</tbody></table>`;
-                if (saldoActual > 0) {
+                if (saldoActual > 0 && cm.activo && !cm.anulada) {
                     html += `<div style="margin-top:10px;text-align:right;"><button class="btn btn-sm btn-warning" onclick="abrirModalPagarSaldo(${cm.id}, '${(plan ? plan.nombre : 'Plan').replace(/'/g, "\\'") }', ${precio}, ${totalPagado})">\ud83d\udcb3 Pagar saldo (${cfg.moneda} ${fmtNum(saldoActual)})</button></div>`;
                 }
                 html += `</div></div>`;
@@ -1159,6 +1161,29 @@
             await apiFetch(`/cliente-membresias/${cmId}`, { method: "DELETE", body: JSON.stringify({ motivo }) });
             showSuccess("Membresía anulada");
             cargarMembresiasCliente();
+        } catch (e) { showError(e.message); }
+    }
+
+    async function reprogramarCM(cmId, fechaActual) {
+        const nuevaFecha = (prompt("Nueva fecha de inicio (AAAA-MM-DD):", fechaActual) || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nuevaFecha) || nuevaFecha === fechaActual) return;
+        try {
+            const cm = await apiFetch(`/cliente-membresias/${cmId}/reprogramar`, {
+                method: "PUT", body: JSON.stringify({ fecha_inicio: nuevaFecha }),
+            });
+            showSuccess(`Inicio movido al ${formatFecha(cm.fecha_inicio)}; el vencimiento también fue actualizado`);
+            await verCliente(clienteActual.id, "membresias");
+        } catch (e) { showError(e.message); }
+    }
+
+    async function anularDeudaCM(cmId) {
+        if (!(await confirmDialog("¿Anular la deuda anterior y cerrar esta matrícula? Los pagos realizados se conservarán."))) return;
+        const motivo = (prompt("Motivo de la anulación de deuda (obligatorio):") || "").trim();
+        if (motivo.length < 5) { showError("Escribe un motivo de al menos 5 caracteres"); return; }
+        try {
+            await apiFetch(`/cliente-membresias/${cmId}/anular-deuda`, { method: "PUT", body: JSON.stringify({ motivo }) });
+            showSuccess("Deuda anterior anulada. Ya puedes registrar una nueva matrícula");
+            await verCliente(clienteActual.id, "membresias");
         } catch (e) { showError(e.message); }
     }
 

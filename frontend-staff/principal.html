@@ -343,7 +343,7 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js"></script>
+<script src="js/flujo-cliente.js?v=20260721-2"></script>
 <script src="vendor/human/human.js"></script>
 <script src="js/reconocimiento-facial.js?v=20260721-5"></script>
 <script>
@@ -799,6 +799,14 @@
                             ${paquetes.map((m) => `<option value="${m.id}" data-precio="${m.precio}" ${m.id === preferido.id ? "selected" : ""}>${m.nombre} · ${formatCurrency(m.precio)}</option>`).join("")}
                         </select>
                     </div>
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label for="cd-metodo" style="font-size:.75em;">Forma de pago</label>
+                        <select id="cd-metodo" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.82em;">
+                            <option value="efectivo">Efectivo</option>
+                            <option value="tarjeta">Tarjeta</option>
+                            <option value="qr">Yape / Plin / QR</option>
+                        </select>
+                    </div>
                     <button class="btn btn-success" style="width:100%;" onclick="confirmarClaseDia(${clienteId})">✅ Cobrar día y registrar ingreso</button>
                 </div>
             `;
@@ -811,10 +819,11 @@
         const select = document.getElementById("cd-paquete");
         const membresiaId = parseInt(select.value);
         const precio = parseFloat(select.selectedOptions[0].dataset.precio);
+        const metodoPago = document.getElementById("cd-metodo").value;
         try {
             // 1. Cobro del paquete: membresia de 1 dia pagada completa
             await apiFetch(`/clientes/${clienteId}/membresias`, { method: "POST", body: JSON.stringify({
-                cliente_id: clienteId, membresia_id: membresiaId, monto_pagado: precio,
+                cliente_id: clienteId, membresia_id: membresiaId, monto_pagado: precio, metodo_pago: metodoPago,
             })});
             // 2. Pasa a asistencia: ingreso registrado
             await apiFetch("/asistencias/", { method: "POST", body: JSON.stringify({ cliente_id: clienteId }) });
