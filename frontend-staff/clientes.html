@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clientes - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/reconocimiento-facial.css">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260721-2">
     <script src="js/tema.js"></script>
     <style>
         .form-row.foto-row label { align-self:flex-start; margin-top:6px; }
@@ -30,6 +30,9 @@
         .fila-porvencer { color:#B7860B; font-weight:600; }
         .fila-saldo { color:var(--color-error); font-weight:600; }
         .pago-borrar-check { width:17px;height:17px;accent-color:var(--color-error);cursor:pointer; }
+        .ficha-acciones-cliente { margin-left:auto; display:grid; grid-template-columns:repeat(3,minmax(126px,1fr)); gap:8px; }
+        .ficha-acciones-cliente .btn { width:100%; justify-content:center; }
+        @media (max-width:760px) { .ficha-acciones-cliente { width:100%; grid-template-columns:1fr; } }
 
         /* Fila verde para clientes con membresia vigente del catalogo.
            Se usa color-mix para que funcione bien en tema claro Y oscuro:
@@ -159,9 +162,8 @@
                         <p id="ficha-celular" style="margin:4px 0 0;font-size:0.88em;"></p>
                         <p id="ficha-cumple" style="margin:2px 0 0;color:#636E72;font-size:0.82em;"></p>
                     </div>
-                    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+                    <div class="ficha-acciones-cliente">
                         <button class="btn btn-secondary btn-sm" id="btn-registro-facial-cliente" onclick="abrirRegistroFacial(clienteActual.id)">📷 Registrar rostro</button>
-                        <button class="btn btn-sm" id="btn-whatsapp-portal" onclick="enviarPortalAlumnoWhatsApp()" style="background:#25D366;color:#fff;">WhatsApp: enviar portal</button>
                         <button class="btn btn-secondary btn-sm" onclick="abrirModalEditar()">✏️ Editar</button>
                         <button class="btn btn-danger btn-sm" id="btn-eliminar-ficha" onclick="eliminarClienteActual()" style="display:none;">🗑️ Eliminar</button>
                     </div>
@@ -393,7 +395,7 @@
         </div>
         <div id="rf-camera" class="rf-camera" style="display:none;">
             <video id="rf-video" playsinline muted></video>
-            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="50" cy="50" rx="48" ry="48" pathLength="100"></ellipse></svg></div>
+            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 320" aria-hidden="true"></svg></div>
         </div>
         <div id="rf-status" class="rf-status">Preparando...</div>
         <div id="rf-ayuda" style="font-size:.75em;color:var(--color-texto-secundario);text-align:center;margin-top:8px;">Mira al frente y parpadea. Usa buena iluminación.</div>
@@ -405,7 +407,7 @@
 <script src="js/flujo-cliente.js"></script>
 <script src="js/medidas-catalogo.js"></script>
 <script src="vendor/human/human.js"></script>
-<script src="js/reconocimiento-facial.js"></script>
+<script src="js/reconocimiento-facial.js?v=20260721-2"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
     let clientesListadoCache = [], configuracionListadoCache = null, ordenClientesCampo = "nombre", ordenClientesAsc = true;

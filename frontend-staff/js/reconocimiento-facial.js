@@ -159,9 +159,26 @@
         if (!guia) return;
         const porcentaje = Math.min(100, Math.round((cantidad / CAPTURAS_REGISTRO) * 100));
         guia.style.setProperty("--rf-progreso", porcentaje);
-        const trazo = guia.querySelector(".rf-guide-progress ellipse");
-        if (trazo) trazo.style.strokeDashoffset = String(100 - porcentaje);
+        const segmentos = guia.querySelectorAll(".rf-guide-progress line");
+        const activos = Math.round(segmentos.length * porcentaje / 100);
+        segmentos.forEach((segmento, indice) => segmento.classList.toggle("activo", indice < activos));
         guia.classList.toggle("completo", porcentaje === 100);
+    }
+
+    function prepararGuiaSegmentada() {
+        document.querySelectorAll(".rf-guide-progress").forEach((svg) => {
+            if (svg.childElementCount) return;
+            const total = 188;
+            for (let indice = 0; indice < total; indice += 1) {
+                const linea = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                linea.setAttribute("x1", "160");
+                linea.setAttribute("y1", "7");
+                linea.setAttribute("x2", "160");
+                linea.setAttribute("y2", "13");
+                linea.setAttribute("transform", `rotate(${indice * 360 / total} 160 160)`);
+                svg.appendChild(linea);
+            }
+        });
     }
 
     function huboParpadeo(resultado) {
@@ -301,6 +318,7 @@
     };
 
     window.abrirRegistroFacial = async function (clienteId) {
+        prepararGuiaSegmentada();
         try {
             await cargarModoDispositivo();
             exigirModoActivo();

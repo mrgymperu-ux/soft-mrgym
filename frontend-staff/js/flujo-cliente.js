@@ -310,10 +310,31 @@ async function _fcAsignarMembresia() {
             }),
         });
         _fcUltimoCm = cm;
+        const planAsignado = _fcPlanesCache.find((plan) => plan.id === planId);
+        if (planAsignado && Number(planAsignado.duracion_dias || 0) >= 30) {
+            _fcAbrirPortalWhatsAppAutomatico();
+        }
         showSuccess("Membresia asignada");
         cerrarModalFc("modal-fc-membresia");
         _fcAbrirCobro();
     } catch (e) { showError(e.message); }
+}
+
+async function _fcAbrirPortalWhatsAppAutomatico() {
+    if (!_fcClienteActivo || !_fcClienteActivo.telefono) return;
+    let slug = sessionStorage.getItem("gimnasio_slug") || "";
+    if (!slug) {
+        try {
+            const gimnasio = await apiFetch("/gym-actual/");
+            slug = gimnasio && gimnasio.slug ? gimnasio.slug : "";
+            if (slug) sessionStorage.setItem("gimnasio_slug", slug);
+        } catch (_) { return; }
+    }
+    if (!slug) return;
+    const portal = `${window.location.origin}/alumno/login.html?gym=${encodeURIComponent(slug)}`;
+    const mensaje = `Hola ${_fcClienteActivo.nombre || ""}, este es tu acceso al portal de alumnos:\n\n${portal}\n\nIngresa con tu DNI. En tu primer acceso crearás tu contraseña.`;
+    const enlace = linkWhatsApp(_fcClienteActivo.telefono, mensaje);
+    if (enlace) window.open(enlace, "_blank", "noopener,noreferrer");
 }
 
 function _fcAbrirCobro() {
