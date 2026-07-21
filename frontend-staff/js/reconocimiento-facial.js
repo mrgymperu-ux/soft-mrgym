@@ -53,6 +53,7 @@
     let conexionRemota = null;
     let socketRemoto = null;
     let ofertaRemotaEnCurso = false;
+    let candidatosRemotosPendientes = [];
 
     const elemento = (id) => document.getElementById(id);
 
@@ -167,6 +168,7 @@
         if (!tokenRemoto) throw new Error("Enlaza primero el móvil de confianza desde Configuración");
         estado("Conectando con el móvil de confianza...");
         conexionRemota = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+        conexionRemota.addTransceiver("video", { direction: "recvonly" });
         conexionRemota.onicecandidate = (evento) => evento.candidate && socketRemoto?.send(JSON.stringify({ tipo: "candidate", candidate: evento.candidate }));
         const llegada = new Promise((resolve, reject) => {
             const limite = window.setTimeout(() => reject(new Error("El QR venció o el móvil no se conectó")), 180000);
@@ -186,8 +188,14 @@
         socketRemoto.onmessage = async (evento) => {
             const mensaje = JSON.parse(evento.data);
             if (mensaje.tipo === "movil-conectado" || mensaje.tipo === "movil-listo") await crearOfertaRemota();
-            else if (mensaje.tipo === "answer") await conexionRemota.setRemoteDescription(mensaje.sdp);
-            else if (mensaje.tipo === "candidate" && mensaje.candidate) await conexionRemota.addIceCandidate(mensaje.candidate);
+            else if (mensaje.tipo === "answer") {
+                await conexionRemota.setRemoteDescription(mensaje.sdp);
+                for (const candidato of candidatosRemotosPendientes) await conexionRemota.addIceCandidate(candidato);
+                candidatosRemotosPendientes = [];
+            } else if (mensaje.tipo === "candidate" && mensaje.candidate) {
+                if (conexionRemota.remoteDescription) await conexionRemota.addIceCandidate(mensaje.candidate);
+                else candidatosRemotosPendientes.push(mensaje.candidate);
+            }
         };
         await llegada;
     }
