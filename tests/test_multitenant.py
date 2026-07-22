@@ -68,6 +68,7 @@ from backend.main import (
     guardar_recomendacion_rutina,
     listar_whatsapp_mensajes,
     listar_descriptores_faciales,
+    listado_completo_clientes,
     listar_usuarios_counter,
     login_counter,
     obtener_whatsapp_configuracion,
@@ -533,6 +534,19 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(fila["comision_total"], 10)
         self.assertEqual(fila["pagado"], 5)
         self.assertEqual(fila["saldo"], 5)
+
+    def test_clientes_todos_incluye_inscritos_y_no_inscritos_historicos(self):
+        historico = models.ClienteHistorico(
+            gimnasio_id=self.gym1.id, nombre_completo="Persona No Inscrita",
+            nombres="Persona", apellidos="No Inscrita", migrado=False,
+        )
+        self.db.add(historico); self.db.commit()
+        filas = listado_completo_clientes(
+            filtro="todos", dias_vencimiento=30, desde=None, hasta=None,
+            orden=None, buscar=None, db=self.db, _=self.admin1,
+        )
+        self.assertTrue(any(f.id == self.cliente1.id and not f.es_historico for f in filas))
+        self.assertTrue(any(f.historico_id == historico.id and f.es_historico for f in filas))
 
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)

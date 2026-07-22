@@ -1769,6 +1769,8 @@ class ClienteListadoRow(BaseModel):
     tiene_membresia_catalogo: bool = False
     fecha_pago_saldo: Optional[date] = None
     ultimo_cm_id: Optional[int] = None
+    es_historico: bool = False
+    historico_id: Optional[int] = None
 
 
 # ==================================================================

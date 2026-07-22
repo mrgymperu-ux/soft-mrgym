@@ -3982,6 +3982,37 @@ def listado_completo_clientes(
             ultimo_cm_id=ultimo_plan_cm.id if ultimo_plan_cm else None,
         ))
 
+    if filtro == "todos":
+        historicos = db.query(models.ClienteHistorico).filter(
+            models.ClienteHistorico.gimnasio_id == get_gid(_),
+            models.ClienteHistorico.migrado == False,
+        )
+        if desde:
+            historicos = historicos.filter(models.ClienteHistorico.fecha_registro >= desde)
+        if hasta:
+            historicos = historicos.filter(models.ClienteHistorico.fecha_registro <= hasta)
+        if buscar:
+            for palabra in buscar.split():
+                like = f"%{palabra}%"
+                historicos = historicos.filter(
+                    (models.ClienteHistorico.nombre_completo.ilike(like))
+                    | (models.ClienteHistorico.telefono1.ilike(like))
+                    | (models.ClienteHistorico.telefono2.ilike(like))
+                )
+        for historico in historicos.order_by(models.ClienteHistorico.nombre_completo).all():
+            filas.append(schemas.ClienteListadoRow(
+                id=-historico.id,
+                nombre_completo=historico.nombre_completo,
+                activo=False,
+                fecha_vencimiento=historico.fecha_vencimiento,
+                dias_para_vencer=(historico.fecha_vencimiento - hoy).days if historico.fecha_vencimiento else None,
+                ultimo_plan=historico.plan_texto,
+                porcentaje_asistencia=None,
+                tiene_membresia_catalogo=False,
+                es_historico=True,
+                historico_id=historico.id,
+            ))
+
     if orden == "vencer":
         filas.sort(key=lambda f: (f.dias_para_vencer is None, f.dias_para_vencer))
     elif orden == "deuda":

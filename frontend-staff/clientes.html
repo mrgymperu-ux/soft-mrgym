@@ -525,9 +525,9 @@
 
         tbody.innerHTML = !clientes.length
             ? '<tr class="empty-row"><td colspan="9">No se encontraron clientes</td></tr>'
-            : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" onclick="verCliente(${c.id})">
-                <td class="col-secundaria" style="color:var(--color-texto-secundario);">${c.id}</td>
-                <td><strong>${c.nombre_completo}</strong>${!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : ""}</td>
+            : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" ${c.es_historico ? '' : `onclick="verCliente(${c.id})"`}>
+                <td class="col-secundaria" style="color:var(--color-texto-secundario);">${c.es_historico ? "—" : c.id}</td>
+                <td><strong>${c.nombre_completo}</strong>${c.es_historico ? ' <span class="badge badge-warning" style="font-size:0.6em;">no inscrito</span>' : (!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : "")}</td>
                 <td>${c.fecha_vencimiento ? `<span class="venc-fecha">${formatFecha(c.fecha_vencimiento)} · </span>${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
                 <td class="col-secundaria">${c.ultimo_plan || "—"}</td>
                 <td class="col-secundaria" style="text-align:right;">${fmtNum(c.costo)}</td>
@@ -535,10 +535,19 @@
                 <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${fmtNum(c.saldo)}</td>
                 <td style="text-align:right;">${c.porcentaje_asistencia !== null ? c.porcentaje_asistencia + "%" : "—"}</td>
                 <td class="col-secundaria" onclick="event.stopPropagation();">
-                    ${puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : ""}
+                    ${c.es_historico ? `<button class="btn btn-sm btn-primary" onclick="inscribirHistorico(${c.historico_id})">Inscribir</button>` : (puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : "")}
                 </td>
             </tr>`).join("");
         document.getElementById("info-total").textContent = `${clientes.length} cliente${clientes.length !== 1 ? "s" : ""}`;
+    }
+
+    async function inscribirHistorico(historicoId) {
+        if (!(await confirmDialog("¿Inscribir a este cliente antiguo y asignarle una membresía?"))) return;
+        try {
+            const cliente = await apiFetch(`/clientes-historicos/${historicoId}/reingresar`, { method:"POST" });
+            showSuccess(`Cliente inscrito: ${cliente.nombre} ${cliente.apellidos || ""}`);
+            await abrirAsignarMembresiaPara(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`.trim(), () => cargarClientes());
+        } catch (e) { showError(e.message); }
     }
 
     async function verCliente(id, tabInicial = "datos") {
