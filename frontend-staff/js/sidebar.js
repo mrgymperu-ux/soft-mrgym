@@ -10,6 +10,7 @@ const NAV_ITEMS = [
             { href: "principal.html", icono: "📊", texto: "Panel de Control", zona: null },
             { href: "clientes.html", icono: "👥", texto: "Clientes", zona: "clientes" },
             { href: "asistencias.html", icono: "✅", texto: "Asistencias", zona: "asistencias" },
+            { href: "comercial.html", icono: "", texto: "Comercial", zona: "planilla" },
             { href: "movimientos.html", icono: "🔁", texto: "Movimientos", zona: "sistema" },
         ],
     },
@@ -60,6 +61,7 @@ const NAV_ITEMS = [
 const PAGINAS_SOLO_STAFF = [
     "clientes.html", "membresias.html", "productos.html", "ventas.html",
     "venta-rapida.html", "planilla-staff.html", "planilla-profesores.html",
+    "comercial.html",
     "usuarios-staff.html", "usuarios-profesores.html", "pagos.html",
     "configuracion.html", "metas.html", "reportes.html", "dashboard.html", "caja.html", "documentos.html", "auditoria.html",
 ];

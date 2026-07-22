@@ -62,6 +62,7 @@ from backend.main import (
     reprogramar_cliente_membresia,
     registrar_otro_ingreso,
     resumen_documentos_financieros,
+    resumen_comercial_staff,
     recomendar_paquetes_rutina_cliente,
     renovar_suscripcion_saas,
     guardar_recomendacion_rutina,
@@ -487,6 +488,51 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(resultado["saldo_anulado"], 70)
         self.assertTrue(cm.anulada)
         self.assertFalse(pago.anulada)
+
+    def test_resumen_comercial_separa_ventas_comisiones_pagos_y_saldo(self):
+        empleado = models.Empleado(
+            gimnasio_id=self.gym1.id, nombre_completo="Staff Uno",
+            tipo=models.TipoEmpleado.STAFF_FIJO, sueldo_fijo_mensual=0,
+        )
+        self.db.add(empleado); self.db.flush()
+        self.staff1.empleado_id = empleado.id
+        self.gym1.comision_producto_porcentaje = 10
+        plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)
+        meta = models.MetaMensual(gimnasio_id=self.gym1.id, anio=2026, mes=1, meta_membresias=100)
+        tramo = models.TramoComision(
+            gimnasio_id=self.gym1.id, tipo="membresia", porcentaje_meta_minimo=100,
+            porcentaje_comision=5, activo=True,
+        )
+        self.db.add_all([plan, meta, tramo]); self.db.flush()
+        cm = models.ClienteMembresia(
+            cliente_id=self.cliente1.id, membresia_id=plan.id, vendido_por_id=self.staff1.id,
+            fecha_inicio=date(2026, 1, 1), fecha_fin=date(2026, 1, 31), monto_pagado=100,
+        )
+        self.db.add(cm); self.db.flush()
+        self.db.add_all([
+            models.PagoMembresia(
+                cliente_membresia_id=cm.id, monto=100, metodo_pago="efectivo",
+                fecha_pago=datetime(2026, 1, 10), registrado_por_id=self.admin1.id,
+            ),
+            models.Venta(
+                gimnasio_id=self.gym1.id, usuario_id=self.staff1.id, total=50,
+                metodo_pago=models.MetodoPago.EFECTIVO, es_venta_rapida=True,
+                fecha_venta=datetime(2026, 1, 12),
+            ),
+            models.PagoPlanilla(
+                gimnasio_id=self.gym1.id, empleado_id=empleado.id, tipo="staff",
+                anio=2026, mes=2, monto_sueldo_fijo=0, monto_comision_membresias=5,
+                monto_comision_productos=5, monto_total=5, metodo_pago="efectivo",
+            ),
+        ])
+        self.db.commit()
+        resumen = resumen_comercial_staff(2026, 1, db=self.db, usuario=self.admin1)
+        fila = next(f for f in resumen["filas"] if f["usuario_id"] == self.staff1.id)
+        self.assertEqual(fila["ventas_membresias"], 100)
+        self.assertEqual(fila["venta_rapida"], 50)
+        self.assertEqual(fila["comision_total"], 10)
+        self.assertEqual(fila["pagado"], 5)
+        self.assertEqual(fila["saldo"], 5)
 
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)

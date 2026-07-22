@@ -8299,6 +8299,112 @@ def _calcular_comisiones_periodo(db: Session, usuario_id: int, gimnasio_id: int,
     return comision_membresias, comision_productos
 
 
+def _resumen_ventas_comerciales(db: Session, usuario_id: int, gimnasio_id: int, anio: int, mes: int) -> dict:
+    desde = date(anio, mes, 1)
+    hasta = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+    desde_dt = datetime.combine(desde, datetime.min.time())
+    hasta_dt = datetime.combine(hasta, datetime.min.time())
+    ventas_membresias = float(db.query(func.coalesce(func.sum(models.PagoMembresia.monto), 0.0))
+        .join(models.ClienteMembresia, models.ClienteMembresia.id == models.PagoMembresia.cliente_membresia_id)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.Cliente.gimnasio_id == gimnasio_id,
+            models.ClienteMembresia.vendido_por_id == usuario_id,
+            models.PagoMembresia.anulada == False,
+            models.PagoMembresia.fecha_pago >= desde_dt,
+            models.PagoMembresia.fecha_pago < hasta_dt,
+        ).scalar() or 0)
+    venta_rapida = float(db.query(func.coalesce(func.sum(models.Venta.total), 0.0)).filter(
+        models.Venta.gimnasio_id == gimnasio_id,
+        models.Venta.usuario_id == usuario_id,
+        models.Venta.es_venta_rapida == True,
+        models.Venta.anulada == False,
+        models.Venta.fecha_venta >= desde_dt,
+        models.Venta.fecha_venta < hasta_dt,
+    ).scalar() or 0)
+    meta = db.query(models.MetaMensual).filter(
+        models.MetaMensual.gimnasio_id == gimnasio_id,
+        models.MetaMensual.anio == anio,
+        models.MetaMensual.mes == mes,
+    ).first()
+    meta_membresias = float(meta.meta_membresias or 0) if meta else 0
+    tramos = db.query(models.TramoComision).filter(
+        models.TramoComision.gimnasio_id == gimnasio_id,
+        models.TramoComision.activo == True,
+        models.TramoComision.tipo == "membresia",
+    ).all()
+    cumplimiento = ventas_membresias / meta_membresias * 100 if meta_membresias else 0
+    porcentaje_membresias = _comision_aplicable(cumplimiento, tramos)
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    porcentaje_rapida = float(gimnasio.comision_producto_porcentaje or 0) if gimnasio else 0
+    comision_membresias = round(ventas_membresias * porcentaje_membresias / 100, 2)
+    comision_rapida = round(venta_rapida * porcentaje_rapida / 100, 2)
+    return {
+        "ventas_membresias": round(ventas_membresias, 2),
+        "venta_rapida": round(venta_rapida, 2),
+        "comision_membresias": comision_membresias,
+        "comision_venta_rapida": comision_rapida,
+        "comision_total": round(comision_membresias + comision_rapida, 2),
+    }
+
+
+def _comision_pagada_para_mes_venta(db: Session, usuario: models.Usuario, gimnasio_id: int, anio: int, mes: int) -> float:
+    if not usuario.empleado_id:
+        return 0.0
+    anio_pago, mes_pago = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
+    pagos = db.query(models.PagoPlanilla).filter(
+        models.PagoPlanilla.gimnasio_id == gimnasio_id,
+        models.PagoPlanilla.empleado_id == usuario.empleado_id,
+        models.PagoPlanilla.tipo == "staff",
+        models.PagoPlanilla.anio == anio_pago,
+        models.PagoPlanilla.mes == mes_pago,
+        models.PagoPlanilla.anulada == False,
+    ).all()
+    if not pagos:
+        return 0.0
+    sueldo = max(float(p.monto_sueldo_fijo or 0) for p in pagos)
+    comision = max(float(p.monto_comision_membresias or 0) + float(p.monto_comision_productos or 0) for p in pagos)
+    total_concepto = sueldo + comision
+    if total_concepto <= 0 or comision <= 0:
+        return 0.0
+    proporcion_pagada = min(sum(float(p.monto_total or 0) for p in pagos) / total_concepto, 1.0)
+    return round(comision * proporcion_pagada, 2)
+
+
+@app.get("/comercial/resumen", tags=["Personal"])
+def resumen_comercial_staff(
+    anio: int,
+    mes: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    if mes < 1 or mes > 12:
+        raise HTTPException(status_code=400, detail="Mes inválido")
+    gid = get_gid(usuario)
+    anio_anterior, mes_anterior = (anio - 1, 12) if mes == 1 else (anio, mes - 1)
+    usuarios = db.query(models.Usuario).filter(
+        models.Usuario.gimnasio_id == gid,
+        models.Usuario.rol == models.RolUsuario.STAFF,
+        models.Usuario.activo == True,
+    ).order_by(models.Usuario.nombre_completo).all()
+    filas = []
+    for vendedor in usuarios:
+        actual = _resumen_ventas_comerciales(db, vendedor.id, gid, anio, mes)
+        anterior = _resumen_ventas_comerciales(db, vendedor.id, gid, anio_anterior, mes_anterior)
+        pagado = _comision_pagada_para_mes_venta(db, vendedor, gid, anio, mes)
+        pagado_anterior = _comision_pagada_para_mes_venta(db, vendedor, gid, anio_anterior, mes_anterior)
+        filas.append({
+            "usuario_id": vendedor.id,
+            "nombre": vendedor.nombre_completo,
+            **actual,
+            "pagado": pagado,
+            "saldo": round(max(actual["comision_total"] - pagado, 0), 2),
+            "saldo_anterior": round(max(anterior["comision_total"] - pagado_anterior, 0), 2),
+        })
+    gimnasio = db.get(models.Gimnasio, gid)
+    return {"anio": anio, "mes": mes, "moneda": (gimnasio.moneda or "S/") if gimnasio else "S/", "filas": filas}
+
+
 @app.get("/planilla/staff/{empleado_id}", response_model=schemas.ResumenPlanillaStaff, tags=["Personal"])
 def calcular_planilla_staff(
     empleado_id: int,

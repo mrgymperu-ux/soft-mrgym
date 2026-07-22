@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Comercial - Soft-Gym</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        .comercial-filtros{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+        .comercial-filtros .form-group{margin:0;min-width:120px}
+        .comercial-tabla th,.comercial-tabla td{font-size:.78em;padding:10px 8px}
+        .comercial-tabla th:not(:first-child),.comercial-tabla td:not(:first-child){text-align:right}
+        .comercial-tabla tfoot td{font-weight:700;border-top:2px solid var(--color-borde)}
+        @media(max-width:900px){.comercial-wrap{overflow-x:auto}.comercial-tabla{min-width:1000px}}
+    </style>
+</head>
+<body>
+<div class="app-layout">
+    <div id="sidebar-container"></div>
+    <main class="main-content">
+        <div class="header">
+            <div><h1 class="header-title">Comercial</h1><p class="header-subtitle">Ventas y comisiones del staff</p></div>
+        </div>
+        <div class="card" style="padding:18px;">
+            <div class="comercial-filtros">
+                <div class="form-group"><label>Año</label><input id="co-anio" type="number" min="2020" max="2100"></div>
+                <div class="form-group"><label>Mes</label><select id="co-mes">
+                    <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+                    <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+                    <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+                    <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+                </select></div>
+                <button class="btn btn-primary" onclick="cargarComercial()">Consultar</button>
+            </div>
+            <div class="comercial-wrap">
+                <table class="table comercial-tabla">
+                    <thead><tr>
+                        <th>Staff</th><th>Venta membresías</th><th>Comisión membresías</th>
+                        <th>Venta rápida</th><th>Comisión venta rápida</th><th>Comisión total</th>
+                        <th>Pagado</th><th>Saldo anterior</th><th>Saldo actual</th>
+                    </tr></thead>
+                    <tbody id="co-body"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
+                    <tfoot id="co-foot"></tfoot>
+                </table>
+            </div>
+        </div>
+    </main>
+</div>
+<script src="js/api.js"></script>
+<script src="js/sidebar.js"></script>
+<script>
+    let monedaComercial = "S/";
+    const dineroCo = (valor) => formatCurrency(Number(valor || 0), monedaComercial);
+    async function cargarComercial(){
+        const anio=parseInt(document.getElementById("co-anio").value), mes=parseInt(document.getElementById("co-mes").value);
+        const body=document.getElementById("co-body"); body.innerHTML='<tr class="empty-row"><td colspan="9">Cargando...</td></tr>';
+        try{
+            const datos=await apiFetch(`/comercial/resumen?anio=${anio}&mes=${mes}`); monedaComercial=datos.moneda||"S/";
+            const filas=datos.filas||[];
+            body.innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.ventas_membresias)}</td><td>${dineroCo(f.comision_membresias)}</td><td>${dineroCo(f.venta_rapida)}</td><td>${dineroCo(f.comision_venta_rapida)}</td><td>${dineroCo(f.comision_total)}</td><td>${dineroCo(f.pagado)}</td><td>${dineroCo(f.saldo_anterior)}</td><td>${dineroCo(f.saldo)}</td></tr>`).join(""):'<tr class="empty-row"><td colspan="9">No hay personal activo</td></tr>';
+            const campos=["ventas_membresias","comision_membresias","venta_rapida","comision_venta_rapida","comision_total","pagado","saldo_anterior","saldo"];
+            const totales=campos.map(c=>filas.reduce((s,f)=>s+Number(f[c]||0),0));
+            document.getElementById("co-foot").innerHTML=filas.length?`<tr><td>Total</td>${totales.map(dineroCo).map(v=>`<td>${v}</td>`).join("")}</tr>`:"";
+        }catch(e){body.innerHTML=`<tr class="empty-row"><td colspan="9">${escapeHTML(e.message)}</td></tr>`;document.getElementById("co-foot").innerHTML=""}
+    }
+    document.addEventListener("DOMContentLoaded",()=>{const hoy=new Date();document.getElementById("co-anio").value=hoy.getFullYear();document.getElementById("co-mes").value=hoy.getMonth()+1;cargarComercial()});
+</script>
+</body>
+</html>

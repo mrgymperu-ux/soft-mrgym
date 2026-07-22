@@ -65,7 +65,7 @@ function _fcInyectarModales() {
                 <button class="modal-close" onclick="cerrarModalFc('modal-fc-membresia')">✕</button>
             </div>
             <p style="font-size:0.85em;color:var(--color-texto-secundario);margin-top:-6px;">Cliente: <strong id="fc-am-cliente-nombre"></strong></p>
-            <div class="form-row"><label>Plan *</label><select id="fc-am-plan" onchange="_fcOnPlanChange()"><option value="">Seleccionar...</option></select></div>
+            <div class="form-row"><label>Plan *</label><select id="fc-am-plan" onchange="_fcOnPlanChange()" style="min-width:0;width:100%;max-width:100%;font-size:.82em;padding:8px 10px;"><option value="">Seleccionar...</option></select></div>
             <div class="form-row"><label>Monto total</label><input type="text" id="fc-am-monto-total" disabled></div>
             <div class="form-row"><label>Congelamiento</label><input type="text" id="fc-am-congelamiento" disabled></div>
             <div class="form-row"><label>Condicion de pago</label><input type="text" id="fc-am-condicion" disabled></div>
