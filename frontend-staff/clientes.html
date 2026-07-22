@@ -405,7 +405,7 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260722-2"></script>
+<script src="js/flujo-cliente.js?v=20260722-3"></script>
 <script src="js/medidas-catalogo.js"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
@@ -713,11 +713,23 @@
             }
             const plan = catalogo.find(m => m.id === activa.membresia_id);
             const precio = plan ? plan.precio : 0;
-            wrap.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;">
-                <span>📋 <strong>${plan ? plan.nombre : 'Plan #' + activa.membresia_id}</strong></span>
-                <span>Inicio: <strong>${formatFecha(activa.fecha_inicio)}</strong></span>
-                <span>Fin: <strong>${activa.fecha_fin ? formatFecha(activa.fecha_fin) : '—'}</strong></span>
-                <span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>
+            const esInvitado = !!activa.invitado_por_cm_id;
+            let accionInvitado = "";
+            if (esInvitado) {
+                accionInvitado = '<span class="badge badge-info">Acceso por invitación</span>';
+            } else if (plan && plan.permite_invitado && plan.dias_invitado > 0) {
+                accionInvitado = activa.invitacion_usada
+                    ? '<span class="badge badge-success">Invitado asignado</span>'
+                    : `<button type="button" class="btn btn-primary btn-sm" onclick="abrirInvitadoDesdeFicha(${activa.id}, ${plan.dias_invitado})">Invitado</button>`;
+            }
+            wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+                <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;align-items:center;">
+                    <span>📋 <strong>${plan ? plan.nombre : 'Plan #' + activa.membresia_id}</strong></span>
+                    <span>Inicio: <strong>${formatFecha(activa.fecha_inicio)}</strong></span>
+                    <span>Fin: <strong>${activa.fecha_fin ? formatFecha(activa.fecha_fin) : '—'}</strong></span>
+                    <span>${cfg.moneda} <strong>${fmtNum(esInvitado ? 0 : precio)}</strong></span>
+                </div>
+                ${accionInvitado}
             </div>`;
         } catch (e) { wrap.innerHTML = ''; }
     }
@@ -725,6 +737,19 @@
     function actualizarDatosYAsignarDesdeFicha() {
         if (!clienteActual) return;
         abrirModalClienteCompletar(clienteActual, _clientesFcTerminado);
+    }
+
+    function abrirInvitadoDesdeFicha(clienteMembresiaId, dias) {
+        if (!clienteActual) return;
+        const titularId = clienteActual.id;
+        const titularNombre = `${clienteActual.nombre} ${clienteActual.apellidos || ""}`.trim();
+        abrirModalClienteInvitado(
+            { cmId: clienteMembresiaId, dias, titularNombre },
+            () => {
+                cargarClientes();
+                if (clienteActual && clienteActual.id === titularId) verCliente(titularId);
+            },
+        );
     }
 
     function cerrarFicha() {

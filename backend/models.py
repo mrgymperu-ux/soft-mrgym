@@ -594,6 +594,9 @@ class ClienteMembresia(Base):
     # automatiza nada por si solo).
     fecha_pago_saldo = Column(Date, nullable=True)
     vendido_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # para comisiones
+    # Si tiene valor, esta matrícula fue concedida como invitación de
+    # otra matrícula. UNIQUE garantiza una sola invitación por titular.
+    invitado_por_cm_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=True, unique=True, index=True)
     activo = Column(Boolean, default=True)
     # Metodo con el que se cobro monto_pagado (para el balance de caja
     # Efectivo vs Cuenta del Panel). Si el pago se hizo en partes con
@@ -606,12 +609,28 @@ class ClienteMembresia(Base):
 
     cliente = relationship("Cliente", back_populates="membresias_cliente")
     membresia = relationship("Membresia", back_populates="clientes_con_este_plan")
+    membresia_titular = relationship(
+        "ClienteMembresia",
+        remote_side=[id],
+        foreign_keys=[invitado_por_cm_id],
+        back_populates="membresia_invitado",
+    )
+    membresia_invitado = relationship(
+        "ClienteMembresia",
+        foreign_keys="ClienteMembresia.invitado_por_cm_id",
+        back_populates="membresia_titular",
+        uselist=False,
+    )
     pagos = relationship(
         "PagoMembresia",
         back_populates="cliente_membresia",
         order_by="PagoMembresia.fecha_pago.desc()",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def invitacion_usada(self):
+        return self.membresia_invitado is not None
 
 
 class PagoMembresia(Base):

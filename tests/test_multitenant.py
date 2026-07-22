@@ -37,6 +37,7 @@ from backend.main import (
     crear_ajuste_caja,
     crear_documento_financiero,
     crear_empleado,
+    crear_invitado_membresia,
     crear_membresia,
     crear_paquete_rutina,
     crear_reserva_sala,
@@ -52,11 +53,13 @@ from backend.main import (
     contenido_foto_cliente,
     eliminar_compra,
     eliminar_pago_membresia,
+    eliminar_cliente_membresia,
     eliminar_venta,
     emitir_documento_financiero,
     eliminar_biometria_facial,
     anular_deuda_cliente_membresia,
     estado_biometria_facial,
+    ficha_rapida_cliente,
     generar_rutinas_por_equipamiento,
     get_dashboard_stats,
     guardar_biometria_facial,
@@ -486,6 +489,96 @@ class MultiTenantTest(unittest.TestCase):
         )
         self.assertFalse(actualizada.permite_invitado)
         self.assertEqual(actualizada.dias_invitado, 0)
+
+    def test_invitacion_crea_cliente_con_acceso_sin_deuda_y_solo_una_vez(self):
+        plan = models.Membresia(
+            gimnasio_id=self.gym1.id,
+            nombre="Mensual con invitado",
+            precio=100,
+            duracion_dias=30,
+            permite_invitado=True,
+            dias_invitado=3,
+        )
+        self.db.add(plan)
+        self.db.commit()
+        titular = asignar_membresia_a_cliente(
+            self.cliente1.id,
+            schemas.ClienteMembresiaCreate(
+                cliente_id=self.cliente1.id,
+                membresia_id=plan.id,
+                monto_pagado=100,
+                vendido_por_id=self.admin1.id,
+            ),
+            idempotency_key="matricula-titular-invitado-0001",
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+        datos_invitado = schemas.ClienteCreate(
+            nombre="Invitado Uno",
+            apellidos="Prueba",
+            dni="77889911",
+            telefono="999888777",
+        )
+
+        respuesta = crear_invitado_membresia(
+            titular.id,
+            datos_invitado,
+            idempotency_key="crear-invitado-prueba-0001",
+            db=self.db,
+            usuario=self.admin1,
+        )
+        repetida = crear_invitado_membresia(
+            titular.id,
+            datos_invitado,
+            idempotency_key="crear-invitado-prueba-0001",
+            db=self.db,
+            usuario=self.admin1,
+        )
+        invitado = respuesta["cliente"]
+        acceso = respuesta["membresia"]
+        self.assertEqual(repetida["cliente"].id, invitado.id)
+        self.assertEqual(respuesta["dias_asignados"], 3)
+        self.assertEqual(acceso.invitado_por_cm_id, titular.id)
+        self.assertEqual((acceso.fecha_fin - acceso.fecha_inicio).days, 3)
+        self.assertEqual(acceso.monto_pagado, 0)
+        self.assertEqual(self.db.query(models.PagoMembresia).filter_by(cliente_membresia_id=acceso.id).count(), 0)
+        self.assertEqual(self.db.query(models.ClienteMembresia).filter_by(invitado_por_cm_id=titular.id).count(), 1)
+
+        self.db.refresh(titular)
+        self.assertTrue(schemas.ClienteMembresia.model_validate(titular).invitacion_usada)
+        ficha = ficha_rapida_cliente(invitado.id, db=self.db, usuario=self.admin1)
+        self.assertEqual(ficha.membresia_actual.precio, 0)
+        self.assertEqual(ficha.membresia_actual.deuda_pendiente, 0)
+
+        with self.assertRaises(HTTPException) as ya_usada:
+            crear_invitado_membresia(
+                titular.id,
+                schemas.ClienteCreate(nombre="Invitado Dos"),
+                idempotency_key="crear-invitado-prueba-0002",
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(ya_usada.exception.status_code, 409)
+
+        with self.assertRaises(HTTPException) as cadena:
+            crear_invitado_membresia(
+                acceso.id,
+                schemas.ClienteCreate(nombre="Invitado en cadena"),
+                idempotency_key="crear-invitado-prueba-0003",
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(cadena.exception.status_code, 409)
+
+        eliminar_cliente_membresia(
+            titular.id,
+            schemas.AnulacionOperacionRequest(motivo="Matrícula titular cancelada"),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.db.refresh(acceso)
+        self.assertTrue(acceso.anulada)
+        self.assertFalse(acceso.activo)
 
     def test_reprogramar_matricula_solo_sin_asistencias(self):
         plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)

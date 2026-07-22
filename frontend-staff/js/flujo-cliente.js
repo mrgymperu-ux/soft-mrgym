@@ -15,6 +15,7 @@ let _fcVendedoresCache = [];
 let _fcClienteActivo = null; // {id, nombre}
 let _fcUltimoCm = null; // ClienteMembresia recien creada
 let _fcClienteEditandoId = null; // si no es null, el modal 'Nuevo Cliente' edita este cliente en vez de crear uno
+let _fcInvitacionContexto = null; // {cmId, dias, titularNombre}; crea cliente y asigna cortesía sin pasar por cobro
 
 function _fcInyectarModales() {
     if (document.getElementById("modal-fc-cliente")) return;
@@ -27,6 +28,7 @@ function _fcInyectarModales() {
                 <h3 class="modal-title">Nuevo Cliente</h3>
                 <button class="modal-close" onclick="cerrarModalFc('modal-fc-cliente')">✕</button>
             </div>
+            <p id="fc-invitado-contexto" style="display:none;margin:-4px 0 14px;padding:9px 11px;border-radius:8px;background:var(--color-fondo);font-size:.78em;color:var(--color-texto-secundario);"></p>
             <div class="form-row"><label>Nombre *</label><input type="text" id="fc-nombre" placeholder="Juan"></div>
             <div class="form-row"><label>Apellidos</label><input type="text" id="fc-apellidos" placeholder="Perez Garcia"></div>
             <div class="form-row"><label>DNI</label><input type="text" id="fc-dni" placeholder="12345678"></div>
@@ -139,6 +141,8 @@ function abrirModalClienteNuevo(onTerminar) {
     _fcOnTerminar = onTerminar || null;
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = null;
+    _fcInvitacionContexto = null;
+    document.getElementById("fc-invitado-contexto").style.display = "none";
     document.querySelector("#modal-fc-cliente .modal-title").textContent = "Nuevo Cliente";
     document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y Membresia";
     ["nombre", "apellidos", "dni", "telefono", "email", "nacimiento", "direccion", "genero"].forEach((f) => {
@@ -163,6 +167,8 @@ function abrirModalClienteCompletar(cliente, onTerminar) {
     _fcOnTerminar = onTerminar || null;
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = cliente.id;
+    _fcInvitacionContexto = null;
+    document.getElementById("fc-invitado-contexto").style.display = "none";
     document.querySelector("#modal-fc-cliente .modal-title").textContent = "Actualizar Datos";
     document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y asignar membresía";
     document.getElementById("fc-nombre").value = cliente.nombre || "";
@@ -181,6 +187,27 @@ function abrirModalClienteCompletar(cliente, onTerminar) {
     document.getElementById("modal-fc-cliente").classList.add("active");
 }
 
+function abrirModalClienteInvitado(contexto, onTerminar) {
+    _fcInyectarModales();
+    _fcOnTerminar = onTerminar || null;
+    _fcFotoSeleccionada = null;
+    _fcClienteEditandoId = null;
+    _fcInvitacionContexto = contexto;
+    document.querySelector("#modal-fc-cliente .modal-title").textContent = "Nuevo Invitado";
+    document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar";
+    ["nombre", "apellidos", "dni", "telefono", "email", "nacimiento", "direccion", "genero"].forEach((f) => {
+        const el = document.getElementById(`fc-${f}`);
+        if (el) el.value = "";
+    });
+    document.getElementById("fc-foto").value = "";
+    document.getElementById("fc-foto-preview").innerHTML = "";
+    document.getElementById("fc-foto-nombre").textContent = "";
+    const aviso = document.getElementById("fc-invitado-contexto");
+    aviso.textContent = `${contexto.titularNombre} invita a esta persona por ${contexto.dias} día${contexto.dias === 1 ? "" : "s"}. No se generará cobro.`;
+    aviso.style.display = "block";
+    document.getElementById("modal-fc-cliente").classList.add("active");
+}
+
 async function _fcGuardarClienteYMembresia() {
     const datos = {
         nombre: document.getElementById("fc-nombre").value.trim(),
@@ -194,17 +221,37 @@ async function _fcGuardarClienteYMembresia() {
     };
     if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
     const editandoId = _fcClienteEditandoId;
+    const invitacion = _fcInvitacionContexto;
     try {
-        let cliente = editandoId
-            ? await apiFetch(`/clientes/${editandoId}`, { method: "PUT", body: JSON.stringify(datos) })
-            : await apiFetch("/clientes/", { method: "POST", body: JSON.stringify(datos) });
+        let respuestaInvitado = null;
+        let cliente;
+        if (invitacion) {
+            respuestaInvitado = await apiFetch(`/cliente-membresias/${invitacion.cmId}/invitado`, { method: "POST", body: JSON.stringify(datos) });
+            cliente = respuestaInvitado.cliente;
+        } else {
+            cliente = editandoId
+                ? await apiFetch(`/clientes/${editandoId}`, { method: "PUT", body: JSON.stringify(datos) })
+                : await apiFetch("/clientes/", { method: "POST", body: JSON.stringify(datos) });
+        }
         if (_fcFotoSeleccionada) {
-            cliente = await apiUploadFile(`/clientes/${cliente.id}/foto`, _fcFotoSeleccionada);
+            try {
+                cliente = await apiUploadFile(`/clientes/${cliente.id}/foto`, _fcFotoSeleccionada);
+            } catch (errorFoto) {
+                if (!invitacion) throw errorFoto;
+                showInfo("El invitado y su acceso se guardaron, pero la foto no pudo cargarse. Puedes agregarla desde su ficha.");
+            }
         }
         _fcClienteCreado = cliente;
         _fcClienteEditandoId = null;
-        showSuccess(editandoId ? "Datos del cliente actualizados" : "Cliente creado");
+        _fcInvitacionContexto = null;
+        showSuccess(invitacion ? `Invitado creado con ${respuestaInvitado.dias_asignados} días de acceso` : (editandoId ? "Datos del cliente actualizados" : "Cliente creado"));
         cerrarModalFc("modal-fc-cliente");
+        if (invitacion) {
+            const terminado = _fcOnTerminar;
+            _fcClienteCreado = null;
+            if (typeof terminado === "function") terminado(cliente);
+            return;
+        }
         await abrirAsignarMembresiaPara(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`.trim(), _fcOnTerminar);
     } catch (e) { showError(e.message); }
 }

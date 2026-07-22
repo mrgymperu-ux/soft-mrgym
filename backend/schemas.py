@@ -568,12 +568,20 @@ class ClienteMembresia(BaseModel):
     fecha_pago_saldo: Optional[date] = None
     metodo_pago: Optional[MetodoPago] = MetodoPago.EFECTIVO
     vendido_por_id: Optional[int] = None
+    invitado_por_cm_id: Optional[int] = None
+    invitacion_usada: bool = False
     activo: bool
     anulada: bool = False
     anulada_en: Optional[datetime] = None
     motivo_anulacion: Optional[str] = None
     membresia: Optional[Membresia] = None
     pagos: List[PagoMembresiaOut] = []
+
+
+class InvitadoMembresiaResponse(BaseModel):
+    cliente: Cliente
+    membresia: ClienteMembresia
+    dias_asignados: int
 
 
 class MembresiaPorVencer(BaseModel):
