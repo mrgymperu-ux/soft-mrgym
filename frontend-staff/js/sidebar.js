@@ -10,7 +10,7 @@ const NAV_ITEMS = [
             { href: "principal.html", icono: "📊", texto: "Panel de Control", zona: null },
             { href: "clientes.html", icono: "👥", texto: "Clientes", zona: "clientes" },
             { href: "asistencias.html", icono: "✅", texto: "Asistencias", zona: "asistencias" },
-            { href: "comercial.html", icono: "📈", texto: "Comercial", zona: "planilla" },
+            { href: "comercial.html", icono: "📈", texto: "Ventas Staff", zona: "planilla" },
             { href: "movimientos.html", icono: "🔁", texto: "Movimientos", zona: "sistema" },
         ],
     },
