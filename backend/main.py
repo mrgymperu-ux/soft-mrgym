@@ -8372,6 +8372,9 @@ def _resumen_ventas_comerciales(db: Session, usuario_id: int, gimnasio_id: int, 
     comision_rapida = round(venta_rapida * porcentaje_rapida / 100, 2)
     return {
         "ventas_membresias": round(ventas_membresias, 2),
+        "meta_membresias": round(meta_membresias, 2),
+        "cumplimiento_membresias": round(cumplimiento, 1),
+        "porcentaje_comision_membresias": round(porcentaje_membresias, 2),
         "venta_rapida": round(venta_rapida, 2),
         "comision_membresias": comision_membresias,
         "comision_venta_rapida": comision_rapida,
@@ -8402,6 +8405,28 @@ def _comision_pagada_para_mes_venta(db: Session, usuario: models.Usuario, gimnas
     return round(comision * proporcion_pagada, 2)
 
 
+def _resumen_planilla_comercial(db: Session, usuario: models.Usuario, gimnasio_id: int, anio: int, mes: int) -> dict:
+    if not usuario.empleado_id:
+        return {"planilla_total": 0.0, "planilla_pagado": 0.0, "planilla_saldo": 0.0}
+    empleado = db.get(models.Empleado, usuario.empleado_id)
+    if not empleado or empleado.gimnasio_id != gimnasio_id:
+        return {"planilla_total": 0.0, "planilla_pagado": 0.0, "planilla_saldo": 0.0}
+    anio_comision, mes_comision = (anio - 1, 12) if mes == 1 else (anio, mes - 1)
+    comision_membresias, comision_productos = _calcular_comisiones_periodo(
+        db, usuario.id, gimnasio_id, anio_comision, mes_comision
+    )
+    total = round(float(empleado.sueldo_fijo_mensual or 0) + comision_membresias + comision_productos, 2)
+    pagado = round(sum(float(p.monto_total or 0) for p in db.query(models.PagoPlanilla).filter(
+        models.PagoPlanilla.gimnasio_id == gimnasio_id,
+        models.PagoPlanilla.empleado_id == empleado.id,
+        models.PagoPlanilla.tipo == "staff",
+        models.PagoPlanilla.anio == anio,
+        models.PagoPlanilla.mes == mes,
+        models.PagoPlanilla.anulada == False,
+    ).all()), 2)
+    return {"planilla_total": total, "planilla_pagado": pagado, "planilla_saldo": round(max(total - pagado, 0), 2)}
+
+
 @app.get("/comercial/resumen", tags=["Personal"])
 def resumen_comercial_staff(
     anio: int,
@@ -8424,6 +8449,7 @@ def resumen_comercial_staff(
         anterior = _resumen_ventas_comerciales(db, vendedor.id, gid, anio_anterior, mes_anterior)
         pagado = _comision_pagada_para_mes_venta(db, vendedor, gid, anio, mes)
         pagado_anterior = _comision_pagada_para_mes_venta(db, vendedor, gid, anio_anterior, mes_anterior)
+        planilla = _resumen_planilla_comercial(db, vendedor, gid, anio, mes)
         filas.append({
             "usuario_id": vendedor.id,
             "nombre": vendedor.nombre_completo,
@@ -8431,6 +8457,7 @@ def resumen_comercial_staff(
             "pagado": pagado,
             "saldo": round(max(actual["comision_total"] - pagado, 0), 2),
             "saldo_anterior": round(max(anterior["comision_total"] - pagado_anterior, 0), 2),
+            **planilla,
         })
     gimnasio = db.get(models.Gimnasio, gid)
     return {"anio": anio, "mes": mes, "moneda": (gimnasio.moneda or "S/") if gimnasio else "S/", "filas": filas}

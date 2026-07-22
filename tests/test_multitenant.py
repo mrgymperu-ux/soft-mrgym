@@ -534,6 +534,11 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(fila["comision_total"], 10)
         self.assertEqual(fila["pagado"], 5)
         self.assertEqual(fila["saldo"], 5)
+        febrero = resumen_comercial_staff(2026, 2, db=self.db, usuario=self.admin1)
+        fila_febrero = next(f for f in febrero["filas"] if f["usuario_id"] == self.staff1.id)
+        self.assertEqual(fila_febrero["planilla_total"], 10)
+        self.assertEqual(fila_febrero["planilla_pagado"], 5)
+        self.assertEqual(fila_febrero["planilla_saldo"], 5)
 
     def test_clientes_todos_incluye_inscritos_y_no_inscritos_historicos(self):
         historico = models.ClienteHistorico(

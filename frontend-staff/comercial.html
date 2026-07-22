@@ -6,12 +6,23 @@
     <title>Comercial - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css">
     <style>
-        .comercial-filtros{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+        .comercial-filtros{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:16px}
         .comercial-filtros .form-group{margin:0;min-width:120px}
-        .comercial-tabla th,.comercial-tabla td{font-size:.78em;padding:10px 8px}
-        .comercial-tabla th:not(:first-child),.comercial-tabla td:not(:first-child){text-align:right}
+        .comercial-kpis{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+        .comercial-kpi{padding:14px 16px;border:1px solid var(--color-borde);border-top:3px solid var(--color-primario);border-radius:10px;background:var(--color-blanco)}
+        .comercial-kpi span{display:block;color:var(--color-texto-secundario);font-size:.72em;margin-bottom:5px}
+        .comercial-kpi strong{display:block;color:var(--color-primario);font-size:1.15em}
+        .comercial-kpi small{display:block;color:var(--color-texto-secundario);font-size:.68em;margin-top:4px}
+        .comercial-tabla{border-collapse:separate;border-spacing:0}
+        .comercial-tabla th,.comercial-tabla td{font-size:.76em;padding:10px 8px;text-align:right;white-space:nowrap}
+        .comercial-tabla th{vertical-align:middle;text-align:center}
+        .comercial-tabla td:first-child{text-align:left;font-weight:600}
+        .comercial-tabla thead tr:first-child th{color:var(--color-primario);background:color-mix(in srgb,var(--color-primario) 11%,var(--color-blanco));border-bottom:1px solid color-mix(in srgb,var(--color-primario) 28%,var(--color-borde))}
+        .comercial-tabla thead tr:nth-child(2) th{background:color-mix(in srgb,var(--color-primario) 5%,var(--color-blanco));font-weight:600}
+        .comercial-tabla .inicio-bloque{border-left:2px solid color-mix(in srgb,var(--color-primario) 35%,var(--color-borde))}
         .comercial-tabla tfoot td{font-weight:700;border-top:2px solid var(--color-borde)}
-        @media(max-width:900px){.comercial-wrap{overflow-x:auto}.comercial-tabla{min-width:1000px}}
+        @media(max-width:1100px){.comercial-kpis{grid-template-columns:repeat(2,1fr)}.comercial-wrap{overflow-x:auto}.comercial-tabla{min-width:1450px}}
+        @media(max-width:600px){.comercial-kpis{grid-template-columns:1fr}}
     </style>
 </head>
 <body>
@@ -32,14 +43,14 @@
                 </select></div>
                 <button class="btn btn-primary" onclick="cargarComercial()">Consultar</button>
             </div>
+            <div class="comercial-kpis" id="co-kpis"></div>
             <div class="comercial-wrap">
                 <table class="table comercial-tabla">
-                    <thead><tr>
-                        <th>Staff</th><th>Venta membresías</th><th>Comisión membresías</th>
-                        <th>Venta rápida</th><th>Comisión venta rápida</th><th>Comisión total</th>
-                        <th>Pagado</th><th>Saldo anterior</th><th>Saldo actual</th>
-                    </tr></thead>
-                    <tbody id="co-body"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
+                    <thead>
+                        <tr><th rowspan="2">Staff</th><th colspan="4" class="inicio-bloque">Membresías</th><th colspan="2" class="inicio-bloque">Venta rápida</th><th colspan="4" class="inicio-bloque">Comisiones</th><th colspan="3" class="inicio-bloque">Planilla</th></tr>
+                        <tr><th class="inicio-bloque">Ventas</th><th>Meta</th><th>Cumplimiento</th><th>Comisión</th><th class="inicio-bloque">Ventas</th><th>Comisión</th><th class="inicio-bloque">Total</th><th>Pagado</th><th>Saldo anterior</th><th>Saldo actual</th><th class="inicio-bloque">Total</th><th>Pagado</th><th>Saldo</th></tr>
+                    </thead>
+                    <tbody id="co-body"><tr class="empty-row"><td colspan="14">Cargando...</td></tr></tbody>
                     <tfoot id="co-foot"></tfoot>
                 </table>
             </div>
@@ -53,15 +64,17 @@
     const dineroCo = (valor) => formatCurrency(Number(valor || 0), monedaComercial);
     async function cargarComercial(){
         const anio=parseInt(document.getElementById("co-anio").value), mes=parseInt(document.getElementById("co-mes").value);
-        const body=document.getElementById("co-body"); body.innerHTML='<tr class="empty-row"><td colspan="9">Cargando...</td></tr>';
+        const body=document.getElementById("co-body"); body.innerHTML='<tr class="empty-row"><td colspan="14">Cargando...</td></tr>';
         try{
             const datos=await apiFetch(`/comercial/resumen?anio=${anio}&mes=${mes}`); monedaComercial=datos.moneda||"S/";
             const filas=datos.filas||[];
-            body.innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.ventas_membresias)}</td><td>${dineroCo(f.comision_membresias)}</td><td>${dineroCo(f.venta_rapida)}</td><td>${dineroCo(f.comision_venta_rapida)}</td><td>${dineroCo(f.comision_total)}</td><td>${dineroCo(f.pagado)}</td><td>${dineroCo(f.saldo_anterior)}</td><td>${dineroCo(f.saldo)}</td></tr>`).join(""):'<tr class="empty-row"><td colspan="9">No hay personal activo</td></tr>';
-            const campos=["ventas_membresias","comision_membresias","venta_rapida","comision_venta_rapida","comision_total","pagado","saldo_anterior","saldo"];
-            const totales=campos.map(c=>filas.reduce((s,f)=>s+Number(f[c]||0),0));
-            document.getElementById("co-foot").innerHTML=filas.length?`<tr><td>Total</td>${totales.map(dineroCo).map(v=>`<td>${v}</td>`).join("")}</tr>`:"";
-        }catch(e){body.innerHTML=`<tr class="empty-row"><td colspan="9">${escapeHTML(e.message)}</td></tr>`;document.getElementById("co-foot").innerHTML=""}
+            body.innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td class="inicio-bloque">${dineroCo(f.ventas_membresias)}</td><td>${dineroCo(f.meta_membresias)}</td><td>${Number(f.cumplimiento_membresias||0).toFixed(1)}%</td><td>${dineroCo(f.comision_membresias)}</td><td class="inicio-bloque">${dineroCo(f.venta_rapida)}</td><td>${dineroCo(f.comision_venta_rapida)}</td><td class="inicio-bloque">${dineroCo(f.comision_total)}</td><td>${dineroCo(f.pagado)}</td><td>${dineroCo(f.saldo_anterior)}</td><td>${dineroCo(f.saldo)}</td><td class="inicio-bloque">${dineroCo(f.planilla_total)}</td><td>${dineroCo(f.planilla_pagado)}</td><td>${dineroCo(f.planilla_saldo)}</td></tr>`).join(""):'<tr class="empty-row"><td colspan="14">No hay personal activo</td></tr>';
+            const suma=c=>filas.reduce((s,f)=>s+Number(f[c]||0),0), meta=filas[0]?.meta_membresias||0;
+            const campos=["ventas_membresias",null,null,"comision_membresias","venta_rapida","comision_venta_rapida","comision_total","pagado","saldo_anterior","saldo","planilla_total","planilla_pagado","planilla_saldo"];
+            document.getElementById("co-foot").innerHTML=filas.length?`<tr><td>Total</td>${campos.map((c,i)=>`<td class="${[0,4,6,10].includes(i)?'inicio-bloque':''}">${c?dineroCo(suma(c)):'—'}</td>`).join("")}</tr>`:"";
+            const ventas=suma("ventas_membresias"), cumplimiento=meta?ventas/meta*100:0;
+            document.getElementById("co-kpis").innerHTML=`<div class="comercial-kpi"><span>Ventas de membresías</span><strong>${dineroCo(ventas)}</strong><small>Meta del mes: ${dineroCo(meta)} · ${cumplimiento.toFixed(1)}%</small></div><div class="comercial-kpi"><span>Venta rápida</span><strong>${dineroCo(suma("venta_rapida"))}</strong><small>Total vendido por el staff</small></div><div class="comercial-kpi"><span>Comisiones pendientes</span><strong>${dineroCo(suma("saldo")+suma("saldo_anterior"))}</strong><small>Saldo actual más saldo anterior</small></div><div class="comercial-kpi"><span>Planilla pendiente</span><strong>${dineroCo(suma("planilla_saldo"))}</strong><small>Pagado: ${dineroCo(suma("planilla_pagado"))}</small></div>`;
+        }catch(e){body.innerHTML=`<tr class="empty-row"><td colspan="14">${escapeHTML(e.message)}</td></tr>`;document.getElementById("co-foot").innerHTML="";document.getElementById("co-kpis").innerHTML=""}
     }
     document.addEventListener("DOMContentLoaded",()=>{const hoy=new Date();document.getElementById("co-anio").value=hoy.getFullYear();document.getElementById("co-mes").value=hoy.getMonth()+1;cargarComercial()});
 </script>
