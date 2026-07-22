@@ -439,7 +439,7 @@
         profesorSeleccionado = empleadoId;
         document.getElementById("resultados-profesor").innerHTML = "";
         document.getElementById("buscar-profesor-input").value = "";
-        await cargarFichaProfesor();
+        return await cargarFichaProfesor();
     }
     async function recargarFichaProfesorSiHay() { if (profesorSeleccionado) await cargarFichaProfesor(); }
 
@@ -448,7 +448,11 @@
         try {
             const empleados = await apiFetch("/empleados/");
             const profesor = empleados.find(e => e.id === profesorSeleccionado);
-            if (!profesor) return;
+            if (!profesor || profesor.tipo !== "profesor_de_sala") {
+                profesorSeleccionado = null;
+                showError("No se encontró el profesor seleccionado");
+                return false;
+            }
             const clases = await apiFetch(`/clases/?desde=${desde}&hasta=${hasta}&profesor_id=${profesorSeleccionado}`);
 
             document.getElementById("ficha-profesor-contenido").innerHTML = `
@@ -475,14 +479,32 @@
                         </div>
                     </div>`).join("");
             }
-        } catch (e) { showError(e.message); }
+            return true;
+        } catch (e) { showError(e.message); return false; }
+    }
+
+    async function abrirProfesorSolicitado() {
+        const parametro = new URLSearchParams(window.location.search).get("profesor");
+        if (!parametro) return false;
+        window.history.replaceState({}, "", window.location.pathname);
+        const profesorId = Number(parametro);
+        if (!Number.isInteger(profesorId) || profesorId <= 0) {
+            showError("No se encontró el profesor seleccionado");
+            return false;
+        }
+        onChipPersona(document.querySelector('.chip-persona[data-tipo="profesores"]'));
+        return await seleccionarProfesor(profesorId);
     }
 
     // ================================================================
     // Init
     // ================================================================
-    initFechas();
-    cargarVistaGeneral();
+    async function inicializarAsistencias() {
+        initFechas();
+        if (!await abrirProfesorSolicitado()) await cargarVistaGeneral();
+    }
+
+    inicializarAsistencias();
 </script>
 </body>
 </html>

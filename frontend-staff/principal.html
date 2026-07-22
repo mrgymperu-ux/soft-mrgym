@@ -561,13 +561,19 @@
                 const esProfesor = empleado.tipo === "profesor_de_sala";
                 const tipoTexto = esProfesor ? "Profesor" : "Staff";
                 const detalle = empleado.puesto ? ` · ${escapeHTML(empleado.puesto)}` : "";
-                return `<div class="bi-item" onclick="abrirPagoPersonal(${Number(empleado.id)}, '${esProfesor ? "profesor_de_sala" : "staff_fijo"}')">
+                const acciones = esProfesor
+                    ? `<div class="bi-item-acciones">
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirAsistenciaProfesor(${Number(empleado.id)})" title="Ver asistencia del profesor">✅ Asistencia</button>
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'profesor_de_sala')" title="Registrar pago al profesor">💵 Pagar</button>
+                       </div>`
+                    : `<button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'staff_fijo')" title="Registrar pago al trabajador">💵 Pagar</button>`;
+                return `<div class="bi-item">
                     ${avatarHtml(empleado.nombre_completo, null)}
                     <div class="bi-item-info">
                         <div class="bi-item-nombre">${escapeHTML(empleado.nombre_completo)}</div>
                         <div class="bi-item-sub">💵 ${tipoTexto}${detalle}</div>
                     </div>
-                    <span class="badge badge-success">Pagar</span>
+                    ${acciones}
                 </div>`;
             }).join("");
         } catch (error) {
@@ -578,6 +584,10 @@
     function abrirPagoPersonal(empleadoId, tipo) {
         const pagina = tipo === "profesor_de_sala" ? "planilla-profesores.html" : "planilla-staff.html";
         window.location.href = `${pagina}?pagar=${encodeURIComponent(empleadoId)}`;
+    }
+
+    function abrirAsistenciaProfesor(empleadoId) {
+        window.location.href = `asistencias.html?profesor=${encodeURIComponent(empleadoId)}`;
     }
 
     // Pago rápido de saldo desde la búsqueda inteligente
