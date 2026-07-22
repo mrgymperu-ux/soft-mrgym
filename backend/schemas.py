@@ -654,6 +654,7 @@ class DetalleVenta(BaseModel):
 
 class VentaCreate(BaseModel):
     cliente_id: Optional[int] = None
+    empleado_id: Optional[int] = None
     metodo_pago: MetodoPago
     es_venta_rapida: bool = False
     notas: Optional[str] = None
@@ -664,6 +665,8 @@ class Venta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     cliente_id: Optional[int] = None
+    empleado_id: Optional[int] = None
+    pago_planilla_id: Optional[int] = None
     fecha_venta: datetime
     total: float
     metodo_pago: MetodoPago

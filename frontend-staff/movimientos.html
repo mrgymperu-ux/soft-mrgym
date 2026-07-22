@@ -297,7 +297,7 @@
     function etiquetaMetodoMovimiento(f) {
         if (!f.metodo_pago) return "—";
         if (f.tipo === "egreso" && ["cuenta", "tarjeta", "qr"].includes(f.metodo_pago)) return "Cuenta";
-        return ({ efectivo:"Efectivo", cuenta:"Cuenta", tarjeta:"Tarjeta", qr:"QR" })[f.metodo_pago] || f.metodo_pago;
+        return ({ efectivo:"Efectivo", cuenta:"Cuenta", tarjeta:"Tarjeta", qr:"QR", cuenta_saldo:"A cuenta de saldo" })[f.metodo_pago] || f.metodo_pago;
     }
 
     function _botonAccionFila(f, esAdmin) {
@@ -381,10 +381,11 @@
         let efectivo = 0, cuenta = 0;
         (ing.detalle || []).forEach(d => {
             const metodo = d.metodo_pago || "efectivo";
+            if (metodo === "cuenta_saldo") return;
             if (metodo === "efectivo") {
                 efectivo += d.monto;
             } else {
-                const comisionPct = metodo === "tarjeta" ? (config.comision_tarjeta || 0) : (config.comision_qr || 0);
+                const comisionPct = metodo === "tarjeta" ? (config.comision_tarjeta || 0) : (metodo === "qr" ? (config.comision_qr || 0) : 0);
                 const comisionMonto = d.comision_gym || (d.monto * comisionPct / 100);
                 cuenta += d.monto - comisionMonto;
             }

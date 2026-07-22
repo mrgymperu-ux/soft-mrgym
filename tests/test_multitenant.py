@@ -46,6 +46,8 @@ from backend.main import (
     cerrar_caja,
     actualizar_empleado,
     caja_actual,
+    calcular_planilla_profesor,
+    calcular_planilla_staff,
     consultar_auditoria,
     contenido_foto_cliente,
     eliminar_compra,
@@ -825,6 +827,112 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(venta.total, 24.0)
         self.assertEqual(venta.detalles[0].precio_unitario, 12.0)
         self.assertEqual(producto.stock, 3)
+
+    def test_venta_staff_a_cuenta_descuenta_planilla_y_se_revierte_con_anulacion(self):
+        empleado = models.Empleado(
+            gimnasio_id=self.gym1.id,
+            nombre_completo="Recepcion Consumo",
+            tipo=models.TipoEmpleado.STAFF_FIJO,
+            sueldo_fijo_mensual=100,
+            activo=True,
+        )
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Agua", precio_venta=10, stock=5)
+        self.db.add_all([empleado, producto])
+        self.db.commit()
+
+        venta = crear_venta(
+            schemas.VentaCreate(
+                empleado_id=empleado.id,
+                metodo_pago="cuenta_saldo",
+                es_venta_rapida=True,
+                detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=2, precio_unitario=0.01)],
+            ),
+            idempotency_key="venta-cuenta-staff-0001",
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+
+        pago = self.db.query(models.PagoPlanilla).filter_by(id=venta.pago_planilla_id).one()
+        resumen = calcular_planilla_staff(empleado.id, date.today().year, date.today().month, db=self.db, usuario=self.admin1)
+        self.assertEqual(venta.empleado_id, empleado.id)
+        self.assertEqual(venta.metodo_pago, models.MetodoPago.CUENTA_SALDO)
+        self.assertEqual(pago.monto_total, 20)
+        self.assertEqual(pago.metodo_pago, "cuenta")
+        self.assertIn("2x Agua", pago.notas)
+        self.assertEqual(resumen.total_pagado, 20)
+        self.assertEqual(resumen.pendiente, 80)
+        self.assertEqual(producto.stock, 3)
+
+        eliminar_venta(
+            venta.id,
+            schemas.AnulacionOperacionRequest(motivo="Consumo registrado por error"),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.db.refresh(producto)
+        self.db.refresh(pago)
+        resumen_revertido = calcular_planilla_staff(empleado.id, date.today().year, date.today().month, db=self.db, usuario=self.admin1)
+        self.assertTrue(pago.anulada)
+        self.assertEqual(producto.stock, 5)
+        self.assertEqual(resumen_revertido.total_pagado, 0)
+        self.assertEqual(resumen_revertido.pendiente, 100)
+
+    def test_venta_profesor_a_cuenta_respeta_saldo_de_clases(self):
+        hoy = date.today()
+        desde = hoy.replace(day=1)
+        hasta = (desde + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        profesor = models.Empleado(
+            gimnasio_id=self.gym1.id,
+            nombre_completo="Profesor Consumo",
+            tipo=models.TipoEmpleado.PROFESOR_DE_SALA,
+            activo=True,
+        )
+        producto = models.Producto(gimnasio_id=self.gym1.id, nombre="Barra", precio_venta=15, stock=3)
+        self.db.add_all([profesor, producto])
+        self.db.flush()
+        self.db.add(models.ClaseDictada(
+            gimnasio_id=self.gym1.id,
+            profesor_id=profesor.id,
+            nombre_clase="Funcional",
+            fecha=hoy,
+            hora_inicio=datetime.combine(hoy, datetime.min.time()) + timedelta(hours=10),
+            hora_fin=datetime.combine(hoy, datetime.min.time()) + timedelta(hours=11),
+            dictada=True,
+            cantidad_alumnos=8,
+            monto_pagado=40,
+        ))
+        self.db.commit()
+
+        venta = crear_venta(
+            schemas.VentaCreate(
+                empleado_id=profesor.id,
+                metodo_pago="cuenta_saldo",
+                detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=2, precio_unitario=15)],
+            ),
+            idempotency_key="venta-cuenta-profesor-0001",
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+        resumen = calcular_planilla_profesor(profesor.id, desde, hasta, db=self.db, usuario=self.admin1)
+        self.assertEqual(resumen.total_a_pagar, 40)
+        self.assertEqual(resumen.total_pagado, 30)
+        self.assertEqual(resumen.pendiente, 10)
+        self.assertIsNotNone(venta.pago_planilla_id)
+
+        with self.assertRaises(HTTPException) as saldo_insuficiente:
+            crear_venta(
+                schemas.VentaCreate(
+                    empleado_id=profesor.id,
+                    metodo_pago="cuenta_saldo",
+                    detalles=[schemas.DetalleVentaCreate(producto_id=producto.id, cantidad=1, precio_unitario=15)],
+                ),
+                idempotency_key="venta-cuenta-profesor-0002",
+                db=self.db,
+                usuario_actual=self.admin1,
+            )
+        self.assertEqual(saldo_insuficiente.exception.status_code, 400)
+        self.db.refresh(producto)
+        self.assertEqual(producto.stock, 1)
 
     def test_suscripcion_vencida_bloquea_acceso(self):
         suscripcion = models.SuscripcionSaas(

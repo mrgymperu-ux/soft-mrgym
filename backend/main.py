@@ -736,7 +736,13 @@ def _migrar_columnas_nuevas():
         "productos": [("foto_url", "VARCHAR"), ("foto_datos", "BLOB"), ("foto_tipo", "VARCHAR"), ("gimnasio_id", "INTEGER")],
         "pagos_membresia": [("fecha_proximo_pago", "DATE")],
         "planes_nutricion": [("origen", "VARCHAR DEFAULT 'membresia'"), ("gimnasio_id", "INTEGER")],
-        "ventas": [("usuario_id", "INTEGER"), ("costo_comision_gym", "FLOAT DEFAULT 0.0"), ("gimnasio_id", "INTEGER")],
+        "ventas": [
+            ("usuario_id", "INTEGER"),
+            ("costo_comision_gym", "FLOAT DEFAULT 0.0"),
+            ("gimnasio_id", "INTEGER"),
+            ("empleado_id", "INTEGER"),
+            ("pago_planilla_id", "INTEGER"),
+        ],
         "empleados": [
             ("dni", "VARCHAR"),
             ("fecha_nacimiento", "DATE"),
@@ -2952,6 +2958,7 @@ def listar_ingresos(
     if not tipo or tipo == "productos":
         for v in db.query(models.Venta).options(
             joinedload(models.Venta.cliente),
+            joinedload(models.Venta.empleado),
             selectinload(models.Venta.detalles).joinedload(models.DetalleVenta.producto),
         ).filter(
             models.Venta.gimnasio_id == get_gid(usuario),
@@ -2959,9 +2966,10 @@ def listar_ingresos(
             models.Venta.fecha_venta >= desde_dt, models.Venta.fecha_venta <= hasta_dt
         ).all():
             cli = v.cliente
+            empleado = v.empleado
             prod = ", ".join(f"{d.cantidad}x {d.producto.nombre}" for d in v.detalles if d.producto) or "Venta"
             detalle.append({"id": v.id, "fecha": v.fecha_venta.isoformat(), "categoria": "productos",
-                "descripcion": f"{prod}{' — ' + cli.nombre if cli else ''}", "monto": v.total,
+                "descripcion": f"{prod}{' — ' + cli.nombre if cli else (' — ' + empleado.nombre_completo if empleado else '')}", "monto": v.total,
                 "metodo_pago": v.metodo_pago.value if hasattr(v.metodo_pago, "value") else v.metodo_pago,
                 "comision_gym": v.costo_comision_gym or 0.0})
 
@@ -3064,7 +3072,7 @@ def listar_egresos(
         ).all():
             periodo = f"{p.desde} al {p.hasta}" if p.desde and p.hasta else f"{p.mes}/{p.anio}"
             detalle.append({"id": p.id, "fecha": p.fecha_pago.isoformat(), "categoria": "pago_profesor",
-                "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {periodo}",
+                "descripcion": f"{p.empleado.nombre_completo if p.empleado else '?'} — {periodo}{' (' + p.notas + ')' if p.notas else ''}",
                 "monto": p.monto_total, "metodo_pago": p.metodo_pago})
 
     if not tipo or tipo == "pago_servicio":
@@ -3845,7 +3853,7 @@ def get_dashboard_stats(db: Session = Depends(get_db), usuario: models.Usuario =
         ingresos_hoy_venta_rapida += float(venta_rapida_hoy or 0)
         if metodo_texto(metodo) == "efectivo":
             balance_efectivo_hoy += total_hoy
-        else:
+        elif metodo_texto(metodo) != "cuenta_saldo":
             balance_cuenta_hoy += total_hoy - float(comision_hoy or 0)
 
     for metodo, total_mes, total_hoy in otros_ingresos:
@@ -5069,7 +5077,7 @@ def plantilla_importacion_clientes(_=Depends(auth.requiere_permiso_exportar)):
 # ---- Ventas ----
 
 _CAMPOS_VENTA_EXPORTABLES = [
-    "id", "fecha_venta", "cliente_id", "usuario_id", "total",
+    "id", "fecha_venta", "cliente_id", "empleado_id", "pago_planilla_id", "usuario_id", "total",
     "metodo_pago", "es_venta_rapida", "costo_comision_gym", "notas",
 ]
 
@@ -6647,6 +6655,10 @@ def editar_venta(
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     if venta.anulada:
         raise HTTPException(status_code=409, detail="Una venta anulada no se puede editar")
+    if venta.pago_planilla_id and "metodo_pago" in datos.model_dump(exclude_unset=True):
+        raise HTTPException(status_code=409, detail="Una venta a cuenta de saldo se corrige anulando la venta completa")
+    if datos.metodo_pago == models.MetodoPago.CUENTA_SALDO and not venta.pago_planilla_id:
+        raise HTTPException(status_code=400, detail="A cuenta de saldo solo se registra desde una venta al personal")
     if {"metodo_pago"}.intersection(datos.model_dump(exclude_unset=True)):
         _exigir_periodo_financiero_abierto(db, get_gid(usuario), venta.fecha_venta)
     datos_dict = datos.model_dump(exclude_unset=True)
@@ -6672,6 +6684,16 @@ def eliminar_venta(venta_id: int, datos: schemas.AnulacionOperacionRequest, db: 
         producto = db.query(models.Producto).filter(models.Producto.id == detalle.producto_id).first()
         if producto:
             producto.stock += detalle.cantidad
+    if venta.pago_planilla_id:
+        pago_planilla = db.query(models.PagoPlanilla).filter(
+            models.PagoPlanilla.id == venta.pago_planilla_id,
+            models.PagoPlanilla.gimnasio_id == get_gid(usuario),
+        ).first()
+        if pago_planilla and not pago_planilla.anulada:
+            pago_planilla.anulada = True
+            pago_planilla.anulada_en = ahora_lima()
+            pago_planilla.anulada_por_id = usuario.id
+            pago_planilla.motivo_anulacion = f"Anulación automática de venta #{venta.id}: {datos.motivo.strip()}"
     venta.anulada = True
     venta.anulada_en = ahora_lima()
     venta.anulada_por_id = usuario.id
@@ -6711,9 +6733,30 @@ def crear_venta(venta: schemas.VentaCreate, idempotency_key: Optional[str] = Hea
 
     if venta.cliente_id is not None and not _del_gym(db, models.Cliente, venta.cliente_id, usuario_actual):
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if venta.cliente_id is not None and venta.empleado_id is not None:
+        raise HTTPException(status_code=400, detail="La venta debe pertenecer a un cliente o a un trabajador, no a ambos")
+
+    empleado = None
+    if venta.empleado_id is not None:
+        empleado = (
+            db.query(models.Empleado)
+            .filter(
+                models.Empleado.id == venta.empleado_id,
+                models.Empleado.gimnasio_id == gid,
+                models.Empleado.activo == True,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not empleado:
+            raise HTTPException(status_code=404, detail="Trabajador o profesor no encontrado")
+    if venta.metodo_pago == models.MetodoPago.CUENTA_SALDO and not empleado:
+        raise HTTPException(status_code=400, detail="Selecciona un trabajador o profesor para vender a cuenta de saldo")
 
     subtotal_total = 0.0
     detalles_db = []
+    productos_a_descontar = []
+    detalle_consumo = []
 
     for item in venta.detalles:
         if item.cantidad <= 0:
@@ -6730,8 +6773,6 @@ def crear_venta(venta: schemas.VentaCreate, idempotency_key: Optional[str] = Hea
         subtotal_item = round(item.cantidad * precio_unitario, 2)
         subtotal_total += subtotal_item
 
-        producto.stock -= item.cantidad
-
         detalles_db.append(
             models.DetalleVenta(
                 producto_id=item.producto_id,
@@ -6740,12 +6781,63 @@ def crear_venta(venta: schemas.VentaCreate, idempotency_key: Optional[str] = Hea
                 subtotal=subtotal_item,
             )
         )
+        productos_a_descontar.append((producto, item.cantidad))
+        detalle_consumo.append(f"{item.cantidad}x {producto.nombre}")
 
     total_final = subtotal_total  # el cliente paga el subtotal exacto; la comision la absorbe el gimnasio
     costo_comision_gym = _calcular_costo_comision_gym(subtotal_total, venta.metodo_pago, config)
 
+    pago_consumo = None
+    if venta.metodo_pago == models.MetodoPago.CUENTA_SALDO:
+        hoy = hoy_lima()
+        ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
+        if empleado.tipo == models.TipoEmpleado.STAFF_FIJO:
+            resumen = calcular_planilla_staff(
+                empleado_id=empleado.id,
+                anio=hoy.year,
+                mes=hoy.month,
+                db=db,
+                usuario=usuario_actual,
+            )
+            datos_pago = {
+                "tipo": "staff",
+                "anio": hoy.year,
+                "mes": hoy.month,
+                "monto_sueldo_fijo": resumen.sueldo_fijo_mensual,
+                "monto_comision_membresias": resumen.comision_membresias,
+                "monto_comision_productos": resumen.comision_productos,
+            }
+        else:
+            desde = hoy.replace(day=1)
+            hasta = hoy.replace(day=ultimo_dia)
+            resumen = calcular_planilla_profesor(
+                profesor_id=empleado.id,
+                desde=desde,
+                hasta=hasta,
+                db=db,
+                usuario=usuario_actual,
+            )
+            datos_pago = {
+                "tipo": "profesor",
+                "anio": hoy.year,
+                "mes": hoy.month,
+                "cantidad_clases": resumen.cantidad_clases_dictadas,
+                "monto_clases": resumen.total_a_pagar,
+                "desde": desde,
+                "hasta": hasta,
+            }
+        if total_final > resumen.pendiente + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La venta ({total_final:.2f}) supera el saldo disponible de {empleado.nombre_completo} ({resumen.pendiente:.2f})",
+            )
+
+    for producto, cantidad in productos_a_descontar:
+        producto.stock -= cantidad
+
     db_venta = models.Venta(
         cliente_id=venta.cliente_id,
+        empleado_id=venta.empleado_id,
         total=total_final,
         metodo_pago=venta.metodo_pago,
         es_venta_rapida=venta.es_venta_rapida,
@@ -6757,6 +6849,20 @@ def crear_venta(venta: schemas.VentaCreate, idempotency_key: Optional[str] = Hea
     )
     db.add(db_venta)
     db.flush()
+    if venta.metodo_pago == models.MetodoPago.CUENTA_SALDO:
+        nota_consumo = f"Consumo venta #{db_venta.id}: {', '.join(detalle_consumo)}"
+        pago_consumo = models.PagoPlanilla(
+            empleado_id=empleado.id,
+            monto_total=total_final,
+            notas=nota_consumo,
+            metodo_pago="cuenta",
+            usuario_registro_id=usuario_actual.id,
+            gimnasio_id=gid,
+            **datos_pago,
+        )
+        db.add(pago_consumo)
+        db.flush()
+        db_venta.pago_planilla_id = pago_consumo.id
     _guardar_idempotencia(db, usuario_actual, "ventas", idempotency_key, payload, "Venta", db_venta.id)
     db.commit()
     db.refresh(db_venta)
@@ -9185,6 +9291,13 @@ def editar_pago_planilla(
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="Un pago anulado no se puede editar")
+    venta_consumo = db.query(models.Venta).filter(
+        models.Venta.pago_planilla_id == pago.id,
+        models.Venta.gimnasio_id == get_gid(usuario),
+        models.Venta.anulada == False,
+    ).first()
+    if venta_consumo:
+        raise HTTPException(status_code=409, detail=f"Este pago corresponde al consumo de la venta #{venta_consumo.id}; corrígelo anulando la venta")
     _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
 
     datos_dict = datos.model_dump(exclude_unset=True)
@@ -9234,6 +9347,13 @@ def eliminar_pago_planilla(pago_id: int, datos: schemas.AnulacionOperacionReques
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     if pago.anulada:
         raise HTTPException(status_code=409, detail="El pago ya fue anulado")
+    venta_consumo = db.query(models.Venta).filter(
+        models.Venta.pago_planilla_id == pago.id,
+        models.Venta.gimnasio_id == get_gid(usuario),
+        models.Venta.anulada == False,
+    ).first()
+    if venta_consumo:
+        raise HTTPException(status_code=409, detail=f"Este pago corresponde al consumo de la venta #{venta_consumo.id}; anula la venta para restaurar también el stock")
     _exigir_periodo_financiero_abierto(db, get_gid(usuario), pago.fecha_pago)
     pago.anulada = True; pago.anulada_en = ahora_lima(); pago.anulada_por_id = usuario.id; pago.motivo_anulacion = datos.motivo.strip()
     db.commit()

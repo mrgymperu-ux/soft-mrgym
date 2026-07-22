@@ -673,6 +673,7 @@ class MetodoPago(str, enum.Enum):
     EFECTIVO = "efectivo"
     TARJETA = "tarjeta"
     QR = "qr"
+    CUENTA_SALDO = "cuenta_saldo"
 
 
 class Venta(Base):
@@ -681,6 +682,8 @@ class Venta(Base):
     id = Column(Integer, primary_key=True, index=True)
     gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=True, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=True)
+    empleado_id = Column(Integer, ForeignKey("empleados.id"), nullable=True, index=True)
+    pago_planilla_id = Column(Integer, ForeignKey("pagos_planilla.id"), nullable=True, unique=True)
     fecha_venta = Column(DateTime, default=ahora_lima)
     total = Column(Numeric(12, 2, asdecimal=False), nullable=False)
     metodo_pago = Column(Enum(MetodoPago), nullable=False)
@@ -694,6 +697,8 @@ class Venta(Base):
     motivo_anulacion = Column(Text, nullable=True)
 
     cliente = relationship("Cliente", back_populates="ventas")
+    empleado = relationship("Empleado", foreign_keys=[empleado_id])
+    pago_planilla = relationship("PagoPlanilla", foreign_keys=[pago_planilla_id])
     detalles = relationship("DetalleVenta", back_populates="venta", cascade="all, delete-orphan")
 
 

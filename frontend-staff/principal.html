@@ -224,11 +224,13 @@
                 <div class="vr-footer">
                     <div class="form-group" style="margin-bottom:10px;">
                         <label style="font-size:0.78em;">Metodo de pago</label>
-                        <select id="vr-metodo" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.85em;" onchange="renderCarritoMini()">
+                        <select id="vr-metodo" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.85em;" onchange="actualizarResumenMetodoVenta()">
                             <option value="efectivo">Efectivo</option>
                             <option value="tarjeta">Tarjeta</option>
                             <option value="qr">QR</option>
+                            <option value="cuenta_saldo" id="vr-metodo-cuenta-saldo" hidden disabled>A cuenta de saldo</option>
                         </select>
+                        <div id="vr-cuenta-saldo-hint" style="display:none;margin-top:5px;font-size:.7em;color:var(--color-texto-secundario);">Se descontará como pago a cuenta de la planilla del mes actual, con el detalle de los productos.</div>
                     </div>
                     <div style="display:flex;justify-content:space-between;font-size:0.95em;margin-bottom:10px;">
                         <span>Total</span>
@@ -564,9 +566,13 @@
                 const acciones = esProfesor
                     ? `<div class="bi-item-acciones">
                            <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirAsistenciaProfesor(${Number(empleado.id)})" title="Ver asistencia del profesor">✅ Asistencia</button>
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();seleccionarPersonalParaVenta(${Number(empleado.id)}, '${escapeAttr(empleado.nombre_completo)}', 'profesor_de_sala')" title="Vender un producto al profesor">🛒 Vender</button>
                            <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'profesor_de_sala')" title="Registrar pago al profesor">💵 Pagar</button>
                        </div>`
-                    : `<button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'staff_fijo')" title="Registrar pago al trabajador">💵 Pagar</button>`;
+                    : `<div class="bi-item-acciones">
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();seleccionarPersonalParaVenta(${Number(empleado.id)}, '${escapeAttr(empleado.nombre_completo)}', 'staff_fijo')" title="Vender un producto al trabajador">🛒 Vender</button>
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'staff_fijo')" title="Registrar pago al trabajador">💵 Pagar</button>
+                       </div>`;
                 return `<div class="bi-item">
                     ${avatarHtml(empleado.nombre_completo, null)}
                     <div class="bi-item-info">
@@ -689,7 +695,7 @@
     }
 
     function escapeAttr(str) {
-        return (str || "").replace(/'/g, "\\'");
+        return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "\\'");
     }
 
     async function onClienteEncontradoClick(clienteId, nombre) {
@@ -950,6 +956,7 @@
     let productosMiniCache = [];
     let carritoMini = [];
     let clienteSeleccionadoVenta = null;
+    let personalSeleccionadoVenta = null;
 
     async function cargarProductosMini() {
         if (!ACCESO_PRINCIPAL.ventas) return;
@@ -1037,15 +1044,46 @@
     }
 
     function seleccionarClienteParaVenta(clienteId, nombre) {
+        personalSeleccionadoVenta = null;
         clienteSeleccionadoVenta = { id: clienteId, nombre };
+        actualizarMetodoCuentaSaldo(false);
         const badge = document.getElementById("vr-cliente-badge");
         badge.classList.remove("vacio");
         document.getElementById("vr-cliente-texto").innerHTML = `<span class="nombre-cliente">👤 ${escapeHTML(nombre)}</span>`;
         document.getElementById("vr-cliente-quitar").style.display = "inline";
     }
 
+    function seleccionarPersonalParaVenta(empleadoId, nombre, tipo) {
+        clienteSeleccionadoVenta = null;
+        personalSeleccionadoVenta = { id: empleadoId, nombre, tipo };
+        actualizarMetodoCuentaSaldo(true);
+        const badge = document.getElementById("vr-cliente-badge");
+        badge.classList.remove("vacio");
+        const tipoTexto = tipo === "profesor_de_sala" ? "Profesor" : "Staff";
+        document.getElementById("vr-cliente-texto").innerHTML = `<span class="nombre-cliente">👤 ${escapeHTML(nombre)}</span><small style="margin-left:6px;color:var(--color-texto-secundario);">${tipoTexto}</small>`;
+        document.getElementById("vr-cliente-quitar").style.display = "inline";
+        document.getElementById("panel-ventas").scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("vr-buscar").focus({ preventScroll: true });
+    }
+
+    function actualizarMetodoCuentaSaldo(habilitado) {
+        const opcion = document.getElementById("vr-metodo-cuenta-saldo");
+        const selector = document.getElementById("vr-metodo");
+        opcion.hidden = !habilitado;
+        opcion.disabled = !habilitado;
+        if (!habilitado && selector.value === "cuenta_saldo") selector.value = "efectivo";
+        actualizarResumenMetodoVenta();
+    }
+
+    function actualizarResumenMetodoVenta() {
+        document.getElementById("vr-cuenta-saldo-hint").style.display = document.getElementById("vr-metodo").value === "cuenta_saldo" ? "block" : "none";
+        renderCarritoMini();
+    }
+
     function limpiarClienteVenta() {
         clienteSeleccionadoVenta = null;
+        personalSeleccionadoVenta = null;
+        actualizarMetodoCuentaSaldo(false);
         const badge = document.getElementById("vr-cliente-badge");
         badge.classList.add("vacio");
         document.getElementById("vr-cliente-texto").textContent = "Sin cliente seleccionado";
@@ -1056,6 +1094,11 @@
     // con el cliente ya seleccionado en el panel mini (si hay uno), y
     // le indica que al cobrar debe regresar de vuelta a este Panel.
     function irAVentaRapidaCompleta() {
+        if (personalSeleccionadoVenta) {
+            showInfo("La venta al personal se completa aquí para conservar el descuento de planilla.");
+            document.getElementById("vr-buscar").focus();
+            return;
+        }
         const clienteId = clienteSeleccionadoVenta ? clienteSeleccionadoVenta.id : "";
         window.location.href = `venta-rapida.html?volver=panel${clienteId ? `&cliente=${clienteId}` : ""}`;
     }
@@ -1073,12 +1116,13 @@
                 method: "POST",
                 body: JSON.stringify({
                     cliente_id: clienteSeleccionadoVenta ? clienteSeleccionadoVenta.id : null,
+                    empleado_id: personalSeleccionadoVenta ? personalSeleccionadoVenta.id : null,
                     metodo_pago: metodo,
                     es_venta_rapida: true,
                     detalles,
                 }),
             });
-            showSuccess("Venta registrada ✅");
+            showSuccess(metodo === "cuenta_saldo" ? "Venta registrada y descontada del saldo ✅" : "Venta registrada ✅");
             carritoMini = [];
             renderCarritoMini();
             limpiarClienteVenta();

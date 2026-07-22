@@ -23,7 +23,7 @@
         <div class="card">
             <div class="table-container">
                 <table class="table">
-                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Metodo</th><th>Tipo</th><th>Estado</th></tr></thead>
+                    <thead><tr><th>Fecha</th><th>Cliente / Personal</th><th>Productos</th><th>Total</th><th>Metodo</th><th>Tipo</th><th>Estado</th></tr></thead>
                     <tbody id="tabla-ventas"><tr class="empty-row"><td colspan="7">Cargando...</td></tr></tbody>
                 </table>
             </div>
@@ -75,11 +75,11 @@
 <script src="js/sidebar.js"></script>
 <script>
     const LIMIT = 50;
-    let paginaActual = 0, productosCache = [], clientesCache = [], config = null, moneda = "S/";
+    let paginaActual = 0, productosCache = [], clientesCache = [], empleadosCache = [], config = null, moneda = "S/";
 
     async function cargarDatos() {
         config = await getConfiguracion(); moneda = config.moneda;
-        [productosCache, clientesCache] = await Promise.all([apiFetch("/productos/"), apiFetch("/clientes/?limit=200")]);
+        [productosCache, clientesCache, empleadosCache] = await Promise.all([apiFetch("/productos/"), apiFetch("/clientes/?limit=200"), apiFetch("/empleados/")]);
     }
 
     async function cargarVentas() {
@@ -89,13 +89,18 @@
         if (!ventas.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay ventas</td></tr>'; }
         else tbody.innerHTML = ventas.map(v => {
             const c = clientesCache.find(x => x.id === v.cliente_id);
+            const empleado = empleadosCache.find(x => x.id === v.empleado_id);
+            const receptor = c
+                ? `<a href="clientes.html?ver=${c.id}" onclick="event.stopPropagation()" style="color:var(--color-primario);font-weight:600;text-decoration:none;">${c.nombre}</a>`
+                : (empleado ? `<strong>${escapeHTML(empleado.nombre_completo)}</strong><div style="font-size:.68em;color:var(--color-texto-secundario);">Personal</div>` : "Sin cliente");
+            const metodoTexto = v.metodo_pago === "cuenta_saldo" ? "A cuenta de saldo" : v.metodo_pago;
             const prods = v.detalles ? v.detalles.map(d => `${d.cantidad}x ${d.producto ? d.producto.nombre : "#"+d.producto_id}`).join(", ") : "—";
             return `<tr style="cursor:pointer;${v.anulada ? 'opacity:.62;' : ''}" onclick="verDetalleVenta(${v.id})">
                 <td>${formatFechaHora(v.fecha_venta)}</td>
-                <td>${c ? `<a href="clientes.html?ver=${c.id}" onclick="event.stopPropagation()" style="color:var(--color-primario);font-weight:600;text-decoration:none;">${c.nombre}</a>` : "Sin cliente"}</td>
+                <td>${receptor}</td>
                 <td style="font-size:0.82em;color:#636E72;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${prods}</td>
                 <td><strong>${formatCurrency(v.total,moneda)}</strong></td>
-                <td><span class="badge badge-info">${v.metodo_pago}</span></td>
+                <td><span class="badge badge-info">${metodoTexto}</span></td>
                 <td>${v.es_venta_rapida ? '<span class="badge badge-success">⚡ Rapida</span>' : '<span class="badge">Normal</span>'}</td>
                 <td>${v.anulada ? '<span class="badge badge-danger">Anulada</span>' : '<span class="badge badge-success">Vigente</span>'}</td>
             </tr>`;
@@ -113,6 +118,7 @@
         const detalleReal = ventasCacheDetalle.find(v => v.id === id);
         if (!detalleReal) return;
         const c = clientesCache.find(x => x.id === detalleReal.cliente_id);
+        const empleado = empleadosCache.find(x => x.id === detalleReal.empleado_id);
         const filasProductos = detalleReal.detalles.map(d => `
             <tr>
                 <td>${d.producto ? `<a href="productos.html?editar=${d.producto_id}" style="color:var(--color-primario);text-decoration:none;">${d.producto.nombre}</a>` : "#"+d.producto_id}</td>
@@ -123,8 +129,8 @@
         `).join("");
         document.getElementById("detalle-venta-contenido").innerHTML = `
             <p><strong>Fecha:</strong> ${formatFechaHora(detalleReal.fecha_venta)}</p>
-            <p><strong>Cliente:</strong> ${c ? `<a href="clientes.html?ver=${c.id}" style="color:var(--color-primario);text-decoration:none;">${c.nombre} ${c.apellidos||""}</a>` : "Sin cliente"}</p>
-            <p><strong>Metodo de pago:</strong> ${detalleReal.metodo_pago}</p>
+            <p><strong>Cliente / Personal:</strong> ${c ? `<a href="clientes.html?ver=${c.id}" style="color:var(--color-primario);text-decoration:none;">${c.nombre} ${c.apellidos||""}</a>` : (empleado ? escapeHTML(empleado.nombre_completo) : "Sin cliente")}</p>
+            <p><strong>Metodo de pago:</strong> ${detalleReal.metodo_pago === "cuenta_saldo" ? "A cuenta de saldo" : detalleReal.metodo_pago}</p>
             <table class="table" style="margin-top:10px;">
                 <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
                 <tbody>${filasProductos}</tbody>
