@@ -228,7 +228,7 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
 
     document.getElementById("fc-am-cliente-nombre").textContent = nombreCliente;
     document.getElementById("fc-am-plan").innerHTML = '<option value="">Seleccionar...</option>' +
-        _fcPlanesCache.map((p) => `<option value="${p.id}">${p.nombre} — ${formatCurrency(p.precio, config.moneda)}</option>`).join("");
+        _fcPlanesCache.map((p) => `<option value="${p.id}">${p.nombre} — ${formatCurrency(p.precio, config.moneda)}${p.permite_invitado ? ` · invitado ${p.dias_invitado}d` : ""}</option>`).join("");
     const vendedorActual = getNombreUsuario();
     document.getElementById("fc-am-vendedor").innerHTML = _fcVendedoresCache
         .map((v) => `<option value="${v.id}"${v.nombre === vendedorActual ? " selected" : ""}>${escapeHTML(v.nombre)}</option>`).join("");

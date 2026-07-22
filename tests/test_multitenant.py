@@ -29,6 +29,7 @@ from backend.main import (
     asignar_paquete_rutina,
     asignar_membresia_a_cliente,
     abrir_caja,
+    actualizar_membresia,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
     crear_equipamiento_personalizado,
@@ -36,6 +37,7 @@ from backend.main import (
     crear_ajuste_caja,
     crear_documento_financiero,
     crear_empleado,
+    crear_membresia,
     crear_paquete_rutina,
     crear_reserva_sala,
     crear_tipo_ejercicio,
@@ -449,6 +451,39 @@ class MultiTenantTest(unittest.TestCase):
             idempotency_key=None, db=self.db, usuario_actual=self.admin1,
         )
         self.assertEqual(cm.vendido_por_id, self.staff1.id)
+
+    def test_membresia_configura_beneficio_invitado(self):
+        with self.assertRaises(ValueError):
+            schemas.MembresiaCreate(
+                nombre="Plan con invitado inválido",
+                precio=100,
+                duracion_dias=30,
+                permite_invitado=True,
+                dias_invitado=0,
+            )
+
+        creada = crear_membresia(
+            schemas.MembresiaCreate(
+                nombre="Plan con invitado",
+                precio=100,
+                duracion_dias=30,
+                permite_invitado=True,
+                dias_invitado=3,
+            ),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertTrue(creada.permite_invitado)
+        self.assertEqual(creada.dias_invitado, 3)
+
+        actualizada = actualizar_membresia(
+            creada.id,
+            schemas.MembresiaUpdate(permite_invitado=False, dias_invitado=3),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.assertFalse(actualizada.permite_invitado)
+        self.assertEqual(actualizada.dias_invitado, 0)
 
     def test_reprogramar_matricula_solo_sin_asistencias(self):
         plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)

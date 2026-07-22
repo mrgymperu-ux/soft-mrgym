@@ -776,6 +776,8 @@ def _migrar_columnas_nuevas():
             ("no_aparecer_reporte_cruce_medidas", "BOOLEAN DEFAULT 0"),
             ("incluye_nutricion", "BOOLEAN DEFAULT 0"),
             ("incluye_retos", "BOOLEAN DEFAULT 0"),
+            ("permite_invitado", "BOOLEAN DEFAULT 0"),
+            ("dias_invitado", "INTEGER DEFAULT 0"),
             ("gimnasio_id", "INTEGER"),
         ],
         "clases_dictadas": [
@@ -5574,6 +5576,10 @@ def actualizar_membresia(
         raise HTTPException(status_code=404, detail="Membresia no encontrada")
     for campo, valor in datos.model_dump(exclude_unset=True).items():
         setattr(membresia, campo, valor)
+    if membresia.permite_invitado and int(membresia.dias_invitado or 0) < 1:
+        raise HTTPException(status_code=400, detail="Indica al menos un día para el invitado")
+    if not membresia.permite_invitado:
+        membresia.dias_invitado = 0
     db.commit()
     db.refresh(membresia)
     return membresia
@@ -5594,7 +5600,8 @@ _CAMPOS_MEMBRESIA_EXPORTABLES = [
     "monto_inicial", "fracciones_pago_deuda", "penalizacion", "dias_gracia_pago", "monto_mensual",
     "dias_congelamiento", "permite_congelamiento", "dias_acceso_periodo", "hora_inicio_acceso",
     "hora_fin_acceso", "dias_semana_acceso", "password_tarifa", "congelado_no_aparece_pagos",
-    "no_aparecer_reporte_cruce_medidas", "incluye_nutricion", "activo",
+    "no_aparecer_reporte_cruce_medidas", "incluye_nutricion", "incluye_retos",
+    "permite_invitado", "dias_invitado", "activo",
 ]
 
 
@@ -5644,8 +5651,8 @@ async def importar_membresias(
     lector = csv.DictReader(io.StringIO(contenido), delimiter=delimitador)
     lector.fieldnames = [(c or "").strip().lower() for c in (lector.fieldnames or [])]
 
-    campos_bool = {"activo", "permite_congelamiento", "congelado_no_aparece_pagos", "no_aparecer_reporte_cruce_medidas", "incluye_nutricion"}
-    campos_int = {"duracion_dias", "duracion_meses", "duracion_dias_extra", "fracciones_pago_deuda", "dias_gracia_pago", "dias_congelamiento", "dias_acceso_periodo"}
+    campos_bool = {"activo", "permite_congelamiento", "congelado_no_aparece_pagos", "no_aparecer_reporte_cruce_medidas", "incluye_nutricion", "incluye_retos", "permite_invitado"}
+    campos_int = {"duracion_dias", "duracion_meses", "duracion_dias_extra", "fracciones_pago_deuda", "dias_gracia_pago", "dias_congelamiento", "dias_acceso_periodo", "dias_invitado"}
     campos_float = {"precio", "monto_inicial", "penalizacion", "monto_mensual"}
     campos_validos = set(_CAMPOS_MEMBRESIA_EXPORTABLES) - {"id"}
 
@@ -5672,6 +5679,11 @@ async def importar_membresias(
             if not datos.get("nombre") or "precio" not in datos or "duracion_dias" not in datos:
                 errores.append(f"Fila {indice}: falta nombre, precio o duracion_dias")
                 continue
+            if datos.get("permite_invitado") and int(datos.get("dias_invitado") or 0) < 1:
+                errores.append(f"Fila {indice}: indica al menos un día para el invitado")
+                continue
+            if not datos.get("permite_invitado"):
+                datos["dias_invitado"] = 0
 
             db.add(models.Membresia(**datos, gimnasio_id=get_gid(usuario)))
             total_importadas += 1

@@ -569,6 +569,8 @@ class Membresia(Base):
     no_aparecer_reporte_cruce_medidas = Column(Boolean, default=False)
     incluye_nutricion = Column(Boolean, default=False)  # si True, el cliente puede tener plan de nutricion incluido en esta tarifa
     incluye_retos = Column(Boolean, default=False)
+    permite_invitado = Column(Boolean, nullable=False, default=False)
+    dias_invitado = Column(Integer, nullable=False, default=0)
 
     clientes_con_este_plan = relationship("ClienteMembresia", back_populates="membresia")
 

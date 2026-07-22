@@ -464,6 +464,16 @@ class MembresiaBase(BaseModel):
     no_aparecer_reporte_cruce_medidas: bool = False
     incluye_nutricion: bool = False
     incluye_retos: bool = False
+    permite_invitado: bool = False
+    dias_invitado: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validar_beneficio_invitado(self):
+        if self.permite_invitado and self.dias_invitado < 1:
+            raise ValueError("Indica al menos un día para el invitado")
+        if not self.permite_invitado:
+            self.dias_invitado = 0
+        return self
 
 
 class MembresiaCreate(MembresiaBase):
@@ -493,6 +503,8 @@ class MembresiaUpdate(BaseModel):
     no_aparecer_reporte_cruce_medidas: Optional[bool] = None
     incluye_nutricion: Optional[bool] = None
     incluye_retos: Optional[bool] = None
+    permite_invitado: Optional[bool] = None
+    dias_invitado: Optional[int] = Field(default=None, ge=0)
     activo: Optional[bool] = None
 
 
