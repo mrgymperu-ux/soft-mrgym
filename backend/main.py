@@ -8450,6 +8450,7 @@ def resumen_comercial_staff(
         pagado = _comision_pagada_para_mes_venta(db, vendedor, gid, anio, mes)
         pagado_anterior = _comision_pagada_para_mes_venta(db, vendedor, gid, anio_anterior, mes_anterior)
         planilla = _resumen_planilla_comercial(db, vendedor, gid, anio, mes)
+        planilla_anterior = _resumen_planilla_comercial(db, vendedor, gid, anio_anterior, mes_anterior)
         filas.append({
             "usuario_id": vendedor.id,
             "nombre": vendedor.nombre_completo,
@@ -8458,6 +8459,7 @@ def resumen_comercial_staff(
             "saldo": round(max(actual["comision_total"] - pagado, 0), 2),
             "saldo_anterior": round(max(anterior["comision_total"] - pagado_anterior, 0), 2),
             **planilla,
+            "planilla_saldo_anterior": planilla_anterior["planilla_saldo"],
         })
     gimnasio = db.get(models.Gimnasio, gid)
     return {"anio": anio, "mes": mes, "moneda": (gimnasio.moneda or "S/") if gimnasio else "S/", "filas": filas}
