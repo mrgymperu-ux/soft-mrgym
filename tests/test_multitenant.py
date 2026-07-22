@@ -417,6 +417,7 @@ class MultiTenantTest(unittest.TestCase):
 
     def test_zonas_se_validan_en_backend(self):
         self.assertIs(auth.requiere_staff(_request("/clientes/"), self.staff1), self.staff1)
+        self.assertIs(auth.requiere_staff(_request("/comercial/resumen"), self.staff1), self.staff1)
         with self.assertRaises(HTTPException) as error:
             auth.requiere_staff(_request("/ventas/"), self.staff1)
         self.assertEqual(error.exception.status_code, 403)
@@ -545,6 +546,10 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(fila["comision_total"], 10)
         self.assertEqual(fila["pagado"], 5)
         self.assertEqual(fila["saldo"], 5)
+
+        resumen_trabajador = resumen_comercial_staff(2026, 1, db=self.db, usuario=self.staff1)
+        self.assertEqual(len(resumen_trabajador["filas"]), 1)
+        self.assertEqual(resumen_trabajador["filas"][0]["usuario_id"], self.staff1.id)
 
         consultas_ingresos = []
         def contar_consulta_ingresos(*_):

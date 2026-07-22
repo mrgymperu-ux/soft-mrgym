@@ -384,7 +384,8 @@ _ZONA_POR_PREFIJO = {
     "nutricion": "nutricion", "alimentos": "nutricion", "paquetes-nutricion": "nutricion",
     "retos": "retos", "agenda": "agenda", "clases": "agenda", "reservas-sala": "agenda", "salas": "agenda",
     "planilla": "planilla", "pagos-planilla": "planilla",
-    "comercial": "planilla",
+    # Ventas Staff es autoservicio: el endpoint limita a los trabajadores
+    # no administradores a consultar exclusivamente su propia fila.
     "servicios": "pagos", "cargos-servicio": "pagos", "pagos-servicio": "pagos",
     "dashboard": "sistema", "reportes": "sistema", "caja": "sistema", "documentos-financieros": "sistema",
     "ingresos": "sistema", "egresos": "sistema", "gastos": "sistema",

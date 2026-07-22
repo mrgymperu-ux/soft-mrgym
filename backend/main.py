@@ -8812,11 +8812,14 @@ def resumen_comercial_staff(
     periodo_anteanterior = desplazar_periodo(periodo_actual, -2)
     periodos_ventas = (periodo_actual, periodo_anterior, periodo_anteanterior)
 
-    usuarios = db.query(models.Usuario).filter(
+    usuarios_query = db.query(models.Usuario).filter(
         models.Usuario.gimnasio_id == gid,
         models.Usuario.rol == models.RolUsuario.STAFF,
         models.Usuario.activo == True,
-    ).order_by(models.Usuario.nombre_completo).all()
+    )
+    if not usuario.es_administrador:
+        usuarios_query = usuarios_query.filter(models.Usuario.id == usuario.id)
+    usuarios = usuarios_query.order_by(models.Usuario.nombre_completo).all()
 
     # Estos conjuntos no dependen del vendedor. Cargarlos una sola vez evita
     # las 20-25 consultas repetidas que antes se ejecutaban por cada usuario.
