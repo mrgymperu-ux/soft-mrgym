@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 from PIL import Image
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
@@ -54,6 +54,7 @@ from backend.main import (
     anular_deuda_cliente_membresia,
     estado_biometria_facial,
     generar_rutinas_por_equipamiento,
+    get_dashboard_stats,
     guardar_biometria_facial,
     obtener_equipamiento_gimnasio,
     registrar_compra,
@@ -67,8 +68,10 @@ from backend.main import (
     renovar_suscripcion_saas,
     guardar_recomendacion_rutina,
     listar_whatsapp_mensajes,
+    listar_ingresos,
     listar_descriptores_faciales,
     listado_completo_clientes,
+    listado_paginado_clientes,
     listar_usuarios_counter,
     login_counter,
     obtener_whatsapp_configuracion,
@@ -527,18 +530,83 @@ class MultiTenantTest(unittest.TestCase):
             ),
         ])
         self.db.commit()
-        resumen = resumen_comercial_staff(2026, 1, db=self.db, usuario=self.admin1)
+        consultas = []
+        def contar_consulta(*_):
+            consultas.append(1)
+        event.listen(self.db.bind, "before_cursor_execute", contar_consulta)
+        try:
+            resumen = resumen_comercial_staff(2026, 1, db=self.db, usuario=self.admin1)
+        finally:
+            event.remove(self.db.bind, "before_cursor_execute", contar_consulta)
+        self.assertLessEqual(len(consultas), 14)
         fila = next(f for f in resumen["filas"] if f["usuario_id"] == self.staff1.id)
         self.assertEqual(fila["ventas_membresias"], 100)
         self.assertEqual(fila["venta_rapida"], 50)
         self.assertEqual(fila["comision_total"], 10)
         self.assertEqual(fila["pagado"], 5)
         self.assertEqual(fila["saldo"], 5)
+
+        consultas_ingresos = []
+        def contar_consulta_ingresos(*_):
+            consultas_ingresos.append(1)
+        event.listen(self.db.bind, "before_cursor_execute", contar_consulta_ingresos)
+        try:
+            ingresos = listar_ingresos(
+                desde=date(2026, 1, 1), hasta=date(2026, 1, 31), solo_hoy=False,
+                tipo=None, db=self.db, usuario=self.admin1,
+            )
+        finally:
+            event.remove(self.db.bind, "before_cursor_execute", contar_consulta_ingresos)
+        self.assertEqual(ingresos["total"], 150)
+        self.assertLessEqual(len(consultas_ingresos), 10)
+
         febrero = resumen_comercial_staff(2026, 2, db=self.db, usuario=self.admin1)
         fila_febrero = next(f for f in febrero["filas"] if f["usuario_id"] == self.staff1.id)
         self.assertEqual(fila_febrero["planilla_total"], 10)
         self.assertEqual(fila_febrero["planilla_pagado"], 5)
         self.assertEqual(fila_febrero["planilla_saldo"], 5)
+
+    def test_dashboard_usa_acumulados_sin_cargar_el_libro_de_movimientos(self):
+        hoy = date.today()
+        ahora = datetime.combine(hoy, datetime.min.time()) + timedelta(hours=10)
+        self.gym1.comision_tarjeta = 10
+        plan = models.Membresia(
+            gimnasio_id=self.gym1.id, nombre="Mensual dashboard", precio=100, duracion_dias=30,
+        )
+        self.db.add(plan); self.db.flush()
+        membresia = models.ClienteMembresia(
+            cliente_id=self.cliente1.id, membresia_id=plan.id,
+            fecha_inicio=hoy, fecha_fin=hoy + timedelta(days=30), activo=True,
+        )
+        self.db.add(membresia); self.db.flush()
+        self.db.add_all([
+            models.PagoMembresia(
+                cliente_membresia_id=membresia.id, monto=100, metodo_pago="tarjeta",
+                fecha_pago=ahora, registrado_por_id=self.admin1.id,
+            ),
+            models.Venta(
+                gimnasio_id=self.gym1.id, usuario_id=self.admin1.id, total=50,
+                metodo_pago=models.MetodoPago.EFECTIVO, es_venta_rapida=True,
+                fecha_venta=ahora,
+            ),
+        ])
+        self.db.commit()
+
+        consultas = []
+        def contar_consulta(*_):
+            consultas.append(1)
+        event.listen(self.db.bind, "before_cursor_execute", contar_consulta)
+        try:
+            stats = get_dashboard_stats(db=self.db, usuario=self.admin1)
+        finally:
+            event.remove(self.db.bind, "before_cursor_execute", contar_consulta)
+
+        self.assertEqual(stats.ingresos_mes, 150)
+        self.assertEqual(stats.ingresos_hoy_membresias, 100)
+        self.assertEqual(stats.ingresos_hoy_venta_rapida, 50)
+        self.assertEqual(stats.balance_efectivo_hoy, 50)
+        self.assertEqual(stats.balance_cuenta_hoy, 90)
+        self.assertLessEqual(len(consultas), 18)
 
     def test_clientes_todos_incluye_inscritos_y_no_inscritos_historicos(self):
         historico = models.ClienteHistorico(
@@ -552,6 +620,50 @@ class MultiTenantTest(unittest.TestCase):
         )
         self.assertTrue(any(f.id == self.cliente1.id and not f.es_historico for f in filas))
         self.assertTrue(any(f.historico_id == historico.id and f.es_historico for f in filas))
+
+    def test_listado_clientes_pagina_activos_y_busqueda_global_importados(self):
+        hoy = date.today()
+        plan = models.Membresia(
+            gimnasio_id=self.gym1.id, nombre="Plan vigente", precio=80, duracion_dias=30,
+        )
+        importado = models.Cliente(
+            gimnasio_id=self.gym1.id, nombre="Importado", apellidos="Pendiente",
+            telefono="987654321", activo=True,
+        )
+        historico = models.ClienteHistorico(
+            gimnasio_id=self.gym1.id, nombre_completo="Antiguo Coincidente",
+            telefono1="987654321", migrado=False,
+        )
+        self.db.add_all([plan, importado, historico]); self.db.flush()
+        self.db.add(models.ClienteMembresia(
+            cliente_id=self.cliente1.id, membresia_id=plan.id,
+            fecha_inicio=hoy, fecha_fin=hoy + timedelta(days=30), activo=True,
+        ))
+        self.db.commit()
+
+        activos = listado_paginado_clientes(
+            filtro="activos", dias_vencimiento=30, desde=None, hasta=None,
+            buscar=None, offset=0, limit=40, db=self.db, usuario=self.admin1,
+        )
+        self.assertEqual([fila.id for fila in activos.items], [self.cliente1.id])
+        self.assertFalse(activos.has_more)
+
+        consultas = []
+        def contar_consulta(*_):
+            consultas.append(1)
+        event.listen(self.db.bind, "before_cursor_execute", contar_consulta)
+        try:
+            encontrados = listado_paginado_clientes(
+                filtro="activos", dias_vencimiento=30, desde=None, hasta=None,
+                buscar="987654", offset=0, limit=1, db=self.db, usuario=self.admin1,
+            )
+        finally:
+            event.remove(self.db.bind, "before_cursor_execute", contar_consulta)
+
+        self.assertEqual(encontrados.total, 2)
+        self.assertEqual(len(encontrados.items), 1)
+        self.assertTrue(encontrados.has_more)
+        self.assertLessEqual(len(consultas), 9)
 
     def test_staff_puede_leer_configuracion_pero_no_modificarla(self):
         self.assertIs(auth.requiere_staff(_request("/configuracion/"), self.staff1), self.staff1)

@@ -1773,6 +1773,15 @@ class ClienteListadoRow(BaseModel):
     historico_id: Optional[int] = None
 
 
+class ClienteListadoPagina(BaseModel):
+    """Bloque paginado del listado para no descargar toda la base."""
+    items: List[ClienteListadoRow]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
 # ==================================================================
 # 14. FICHA RAPIDA DE CLIENTE (panel principal)
 # ==================================================================

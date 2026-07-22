@@ -19,10 +19,6 @@
         .panel-card-body { padding: 14px 18px; }
 
         .bi-input { width: 100%; padding: 10px 12px; border: 1px solid var(--color-borde); background: var(--color-fondo); color: var(--color-texto); border-radius: 8px; font-size: 0.88em; box-sizing: border-box; }
-        .intent-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-        .intent-chip { display: flex; align-items: center; gap: 5px; font-size: 0.74em; padding: 5px 10px; border-radius: 14px; background: var(--color-fondo); color: var(--color-texto-secundario); cursor: pointer; user-select: none; }
-        .intent-chip input { margin: 0; }
-        .intent-chip.activo { background: var(--color-primario); color: #fff; }
 
         .bi-resultados { max-height: 340px; overflow-y: auto; }
         .bi-item { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
@@ -30,6 +26,9 @@
         .bi-item-info { flex: 1; min-width: 0; }
         .bi-item-nombre { font-size: 0.85em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .bi-item-sub { font-size: 0.72em; color: var(--color-texto-secundario); }
+        .bi-item-acciones { display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap; }
+        .bi-accion { border:1px solid var(--color-borde);background:var(--color-blanco);color:var(--color-texto);border-radius:8px;padding:5px 8px;font-size:.68em;font-weight:600;cursor:pointer;white-space:nowrap; }
+        .bi-accion:hover { border-color:var(--color-primario);color:var(--color-primario); }
 
         /* ---- Ficha de asistencia ampliada ---- */
         .ficha-asistencia { padding: 16px 18px; border-top: 1px solid var(--color-borde); }
@@ -71,6 +70,9 @@
         .vr-carrito-item { display: flex; align-items: center; gap: 6px; padding: 6px 18px; font-size: 0.8em; }
         .vr-ci-btn { width: 20px; height: 20px; border: 1px solid var(--color-borde); background: var(--color-blanco); border-radius: 5px; cursor: pointer; font-size: 0.85em; padding: 0; line-height: 1; }
         .vr-footer { padding: 14px 18px; border-top: 1px solid var(--color-borde); }
+        .carga-suave { padding:12px 18px; }
+        .carga-suave-linea { height:34px; margin:7px 0; border-radius:8px; background:linear-gradient(90deg,var(--color-fondo) 20%,var(--color-borde) 45%,var(--color-fondo) 70%); background-size:220% 100%; animation:carga-suave 1.15s ease-in-out infinite; }
+        @keyframes carga-suave { to { background-position:-220% 0; } }
         .oi-modal-content { max-height:min(90vh, calc(100dvh - 20px)); }
         .oi-concepto-row { display:flex; align-items:flex-end; gap:8px; margin-bottom:16px; }
         .oi-concepto-row .form-group { flex:1; min-width:0; margin-bottom:0; }
@@ -111,7 +113,7 @@
         </div>
 
         <!-- Stats -->
-        <div class="stats-grid" id="panel-stats">
+        <div class="stats-grid" id="panel-stats" aria-busy="true">
             <div class="stat-card">
                 <div class="stat-icon blue">👥</div>
                 <div>
@@ -171,7 +173,7 @@
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>🔎 Busqueda inteligente</span>
                     <span class="rf-header-actions">
-                        <button id="btn-reconocimiento-facial" class="rf-eye-button" type="button" onclick="alternarReconocimientoFacial()" title="Reconocimiento facial apagado" aria-label="Activar reconocimiento facial" aria-pressed="false">
+                        <button id="btn-reconocimiento-facial" class="rf-eye-button" type="button" onclick="alternarReconocimientoFacialLazy()" title="Reconocimiento facial apagado" aria-label="Activar reconocimiento facial" aria-pressed="false">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>
                             <span class="rf-dot"></span>
                         </button>
@@ -179,18 +181,8 @@
                     </span>
                 </div>
                 <div class="panel-card-body">
-                    <input type="text" class="bi-input" id="bi-input" placeholder="Nombre, DNI o email... (+ para personal)" oninput="onBusquedaInput()">
-                    <div class="intent-chips" id="intent-chips">
-                        <label class="intent-chip" data-intent="marcar_asistencia">
-                            <input type="checkbox" onclick="onIntentClick(event,'marcar_asistencia')"> Asistencia
-                        </label>
-                        <label class="intent-chip" data-intent="reingreso">
-                            <input type="checkbox" onclick="onIntentClick(event,'reingreso')"> Reingreso
-                        </label>
-                        <label class="intent-chip" data-intent="clase_dia">
-                            <input type="checkbox" onclick="onIntentClick(event,'clase_dia')"> Por día
-                        </label>
-                    </div>
+                    <input type="text" class="bi-input" id="bi-input" placeholder="Nombre, DNI, celular o email... (+ para personal)" oninput="onBusquedaInput()">
+                    <div style="font-size:.7em;color:var(--color-texto-secundario);margin-top:8px;">Las acciones disponibles aparecen según la matrícula del cliente.</div>
                 </div>
                 <div id="bi-resultados-wrap">
                     <div class="bi-resultados" id="bi-resultados"></div>
@@ -204,8 +196,8 @@
                     <button class="ui-resumen-tab" id="ui-tab-hoy" onclick="cambiarVistaIngresos('hoy')">Ingresos de hoy (—)</button>
                     <button class="ui-resumen-tab activo" id="ui-tab-sala" onclick="cambiarVistaIngresos('en_sala')">En sala (—)</button>
                 </div>
-                <div id="ui-lista" style="max-height:420px;overflow-y:auto;">
-                    <p style="text-align:center;color:#636E72;padding:20px;">Cargando...</p>
+                <div id="ui-lista" style="max-height:420px;overflow-y:auto;" aria-busy="true">
+                    <div class="carga-suave"><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div></div>
                 </div>
             </div>
 
@@ -225,8 +217,8 @@
                 <div class="panel-card-body" style="padding-bottom:8px;">
                     <input type="text" class="bi-input" id="vr-buscar" placeholder="Buscar producto..." oninput="filtrarProductosMini()">
                 </div>
-                <div class="vr-lista-productos" id="vr-lista-productos">
-                    <p style="text-align:center;color:#636E72;padding:20px;">Cargando...</p>
+                <div class="vr-lista-productos" id="vr-lista-productos" aria-busy="true">
+                    <div class="carga-suave"><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div></div>
                 </div>
                 <div class="vr-carrito" id="vr-carrito"></div>
                 <div class="vr-footer">
@@ -343,11 +335,44 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260721-2"></script>
-<script src="vendor/human/human.js"></script>
-<script src="js/reconocimiento-facial.js?v=20260721-5"></script>
+<script src="js/flujo-cliente.js?v=20260722-1"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
+
+    let cargaReconocimientoFacial = null;
+    function cargarScriptPrincipal(src) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = src;
+            script.onload = resolve;
+            script.onerror = () => reject(new Error("No se pudo cargar el reconocimiento facial"));
+            document.head.appendChild(script);
+        });
+    }
+    function asegurarReconocimientoFacial() {
+        if (window.alternarReconocimientoFacial && window.abrirRegistroFacial) return Promise.resolve();
+        if (!cargaReconocimientoFacial) {
+            cargaReconocimientoFacial = cargarScriptPrincipal("vendor/human/human.js")
+                .then(() => cargarScriptPrincipal("js/reconocimiento-facial.js?v=20260721-5"))
+                .catch(error => { cargaReconocimientoFacial = null; throw error; });
+        }
+        return cargaReconocimientoFacial;
+    }
+    async function alternarReconocimientoFacialLazy() {
+        const boton = document.getElementById("btn-reconocimiento-facial");
+        if (boton) boton.disabled = true;
+        try {
+            await asegurarReconocimientoFacial();
+            await window.alternarReconocimientoFacial();
+        } catch (error) { showError(error.message); }
+        finally { if (boton) boton.disabled = false; }
+    }
+    async function abrirRegistroFacialLazy(clienteId) {
+        try {
+            await asegurarReconocimientoFacial();
+            await window.abrirRegistroFacial(clienteId);
+        } catch (error) { showError(error.message); }
+    }
 
     const ACCESO_PRINCIPAL = {
         sistema: tieneAccesoZona("sistema"),
@@ -382,6 +407,7 @@
     // ============================================================
     // Reloj y stats
     // ============================================================
+    let secuenciaDashboardPrincipal = 0;
     function actualizarHora() {
         document.getElementById("hora-actual").textContent =
             new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -389,19 +415,40 @@
     actualizarHora();
     setInterval(actualizarHora, 1000);
 
-    async function cargarDashboard() {
-        if (!ACCESO_PRINCIPAL.sistema) return;
-        try {
-            let moneda = "S/";
-            try { moneda = (await getConfiguracion()).moneda || moneda; } catch (_) {}
-            const stats = await apiFetch("/dashboard/stats");
+    function mostrarDashboardPrincipal(stats, moneda) {
+        document.getElementById("panel-stats").setAttribute("aria-busy", "false");
+        document.getElementById("stat-clientes-activos").textContent = stats.clientes_activos;
+        document.getElementById("stat-ingresos-membresias").textContent = formatCurrency(stats.ingresos_hoy_membresias, moneda);
+        document.getElementById("stat-ingresos-ventarapida").textContent = formatCurrency(stats.ingresos_hoy_venta_rapida, moneda);
+        document.getElementById("stat-balance-efectivo").textContent = formatCurrency(stats.balance_efectivo_hoy, moneda);
+        document.getElementById("stat-balance-cuenta").textContent = formatCurrency(stats.balance_cuenta_hoy, moneda);
+        document.getElementById("stat-por-vencer").textContent = stats.membresias_por_vencer;
+    }
 
-            document.getElementById("stat-clientes-activos").textContent = stats.clientes_activos;
-            document.getElementById("stat-ingresos-membresias").textContent = formatCurrency(stats.ingresos_hoy_membresias, moneda);
-            document.getElementById("stat-ingresos-ventarapida").textContent = formatCurrency(stats.ingresos_hoy_venta_rapida, moneda);
-            document.getElementById("stat-balance-efectivo").textContent = formatCurrency(stats.balance_efectivo_hoy, moneda);
-            document.getElementById("stat-balance-cuenta").textContent = formatCurrency(stats.balance_cuenta_hoy, moneda);
-            document.getElementById("stat-por-vencer").textContent = stats.membresias_por_vencer;
+    async function cargarDashboard(opciones={}) {
+        if (!ACCESO_PRINCIPAL.sistema) return;
+        const secuencia = ++secuenciaDashboardPrincipal;
+        try {
+            let moneda = sessionStorage.getItem("mrgym_moneda") || "S/";
+            let datosVigentes = null;
+            const promesaMoneda = getConfiguracion().then(config => {
+                moneda = config.moneda || moneda;
+                if (secuencia === secuenciaDashboardPrincipal && datosVigentes) {
+                    mostrarDashboardPrincipal(datosVigentes, moneda);
+                }
+            }).catch(() => {});
+            const respuesta = await apiFetchConCache("/dashboard/stats", {forzar:opciones.forzar===true});
+            if (secuencia !== secuenciaDashboardPrincipal) return;
+            datosVigentes = respuesta.datos;
+            mostrarDashboardPrincipal(datosVigentes, moneda);
+            if (respuesta.desdeCache) {
+                const datosActualizados = await respuesta.actualizando;
+                if (secuencia === secuenciaDashboardPrincipal) {
+                    datosVigentes = datosActualizados;
+                    mostrarDashboardPrincipal(datosVigentes, moneda);
+                }
+            }
+            void promesaMoneda;
         } catch (error) {
             showError(error.message);
         }
@@ -410,29 +457,7 @@
     // ============================================================
     // Panel 1: Busqueda inteligente
     // ============================================================
-    let intentActivo = null;
     let busquedaTimeout = null;
-
-    function onIntentClick(evt, intent) {
-        const input = evt.target;
-        document.querySelectorAll(".intent-chip").forEach((chip) => {
-            chip.classList.remove("activo");
-            const chipInput = chip.querySelector("input");
-            if (chipInput !== input) chipInput.checked = false;
-        });
-
-        if (input.checked) {
-            intentActivo = intent;
-            input.closest(".intent-chip").classList.add("activo");
-        } else {
-            intentActivo = null;
-        }
-
-        if (intentActivo) {
-            document.getElementById("bi-resultados").innerHTML = "";
-        }
-        onBusquedaInput();
-    }
 
     function onBusquedaInput() {
         clearTimeout(busquedaTimeout);
@@ -453,38 +478,30 @@
             return;
         }
 
-        if (intentActivo === "reingreso") {
-            await buscarClientesHistoricos(termino);
-            return;
-        }
-
         try {
-            if (intentActivo === "marcar_asistencia") {
-                // Asistencia: usa el endpoint ligero con filtro de membresia activa
-                const clientes = await apiFetch(`/clientes/?buscar=${encodeURIComponent(termino)}&limit=8&solo_con_membresia_activa=true`);
-                if (!clientes.length) {
-                    contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">Sin resultados entre clientes con membresia activa</p>';
-                    return;
-                }
-                contenedor.innerHTML = clientes.map((c) => `
-                    <div class="bi-item" onclick="onClienteEncontradoClick(${c.id}, '${escapeAttr(c.nombre + ' ' + (c.apellidos || ''))}')">
-                        ${avatarHtml(c.nombre + ' ' + (c.apellidos || ''), c.foto_url)}
-                        <div class="bi-item-info">
-                            <div class="bi-item-nombre">${c.nombre} ${c.apellidos || ''}</div>
-                            <div class="bi-item-sub">${c.dni || 'Sin DNI'}</div>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                // Busqueda general: usa listado-completo que trae saldo/deuda
-                const clientes = await apiFetch(`/clientes/listado-completo?buscar=${encodeURIComponent(termino)}&filtro=todos`);
-                const resultados = clientes.slice(0, 8);
+                // Búsqueda progresiva global: actuales, importados e históricos.
+                const pagina = await apiFetch(`/clientes/listado-paginado?buscar=${encodeURIComponent(termino)}&filtro=todos&limit=8`);
+                const resultados = pagina.items || [];
                 if (!resultados.length) {
                     contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:16px;font-size:0.82em;">Sin resultados</p>';
                     return;
                 }
                 const cfg = await getConfiguracion();
                 contenedor.innerHTML = resultados.map((c) => {
+                    if (c.es_historico) {
+                        return `
+                            <div class="bi-item">
+                                ${avatarHtml(c.nombre_completo, null)}
+                                <div class="bi-item-info">
+                                    <div class="bi-item-nombre">${escapeHTML(c.nombre_completo)}</div>
+                                    <div class="bi-item-sub">Cliente histórico · ${c.ultimo_plan ? escapeHTML(c.ultimo_plan) : 'sin matrícula'}</div>
+                                </div>
+                                <div class="bi-item-acciones">
+                                    <button type="button" class="bi-accion" onclick="event.stopPropagation();onHistoricoClick(${c.historico_id})" title="Reingresar, actualizar datos y asignar membresía">＋ Membresía</button>
+                                    <button type="button" class="bi-accion" onclick="event.stopPropagation();onHistoricoPorDia(${c.historico_id})" title="Reingresar y cobrar pase por día">☀️ Por día</button>
+                                </div>
+                            </div>`;
+                    }
                     const saldo = c.saldo || 0;
                     // Info de saldo a la derecha (solo si hay deuda)
                     let saldoHtml = '';
@@ -502,18 +519,23 @@
                         </div>
                         <span onclick="event.stopPropagation();_biPagarSaldo(${c.id})" title="Pagar saldo" style="cursor:pointer;font-size:1.2em;flex-shrink:0;margin-left:6px;">\uD83D\uDCB3</span>`;
                     }
+                    const nombreSeguro = escapeAttr(c.nombre_completo);
+                    const accionesHtml = c.tiene_membresia_catalogo
+                        ? `<button type="button" class="bi-accion" onclick="event.stopPropagation();mostrarFichaParaAsistencia(${c.id})" title="Registrar ingreso">✅ Ingreso</button>`
+                        : `<button type="button" class="bi-accion" onclick="event.stopPropagation();actualizarDatosYAsignarMembresia(${c.id})" title="Actualizar datos y asignar membresía">＋ Membresía</button>
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();mostrarFichaClaseDia(${c.id}, '${nombreSeguro}')" title="Cobrar pase por día">☀️ Por día</button>`;
                     return `
-                        <div class="bi-item" onclick="onClienteEncontradoClick(${c.id}, '${escapeAttr(c.nombre_completo)}')">
+                        <div class="bi-item" onclick="onClienteEncontradoClick(${c.id}, '${nombreSeguro}')">
                             ${avatarHtml(c.nombre_completo, null)}
                             <div class="bi-item-info">
-                                <div class="bi-item-nombre">${c.nombre_completo}</div>
-                                <div class="bi-item-sub">${c.ultimo_plan || 'Sin plan'}${c.fecha_vencimiento ? ' \u00b7 vence ' + formatFecha(c.fecha_vencimiento) : ''}</div>
+                                <div class="bi-item-nombre">${escapeHTML(c.nombre_completo)}</div>
+                                <div class="bi-item-sub">${c.ultimo_plan ? escapeHTML(c.ultimo_plan) : 'Sin matrícula'}${c.fecha_vencimiento ? ' \u00b7 vence ' + formatFecha(c.fecha_vencimiento) : ''}</div>
                             </div>
                             ${saldoHtml}
+                            <div class="bi-item-acciones">${accionesHtml}</div>
                         </div>
                     `;
                 }).join('');
-            }
         } catch (error) {
             showError(error.message);
         }
@@ -619,17 +641,15 @@
     // faltan datos basicos, abre el formulario para completarlos
     // primero; si ya esta completo, va directo a Asignar Membresia.
     async function onClienteActivoParaReingreso(clienteId) {
+        await actualizarDatosYAsignarMembresia(clienteId);
+    }
+
+    async function actualizarDatosYAsignarMembresia(clienteId) {
         try {
             const cliente = await apiFetch(`/clientes/${clienteId}`);
             document.getElementById("bi-input").value = "";
             document.getElementById("bi-resultados").innerHTML = "";
-            const nombreCompleto = `${cliente.nombre} ${cliente.apellidos || ""}`.trim();
-            const faltanDatos = !cliente.dni || !cliente.telefono || !cliente.fecha_nacimiento;
-            if (faltanDatos) {
-                abrirModalClienteCompletar(cliente, _panelFcTerminado);
-            } else {
-                await abrirAsignarMembresiaPara(cliente.id, nombreCompleto, _panelFcTerminado);
-            }
+            abrirModalClienteCompletar(cliente, _panelFcTerminado);
         } catch (error) {
             showError(error.message);
         }
@@ -641,8 +661,18 @@
             showSuccess(`Cliente reingresado: ${cliente.nombre} ${cliente.apellidos || ""}`);
             document.getElementById("bi-input").value = "";
             document.getElementById("bi-resultados").innerHTML = "";
-            seleccionarClienteParaVenta(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`);
-            await cargarDashboard();
+            abrirModalClienteCompletar(cliente, _panelFcTerminado);
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function onHistoricoPorDia(historicoId) {
+        try {
+            const cliente = await apiFetch(`/clientes-historicos/${historicoId}/reingresar`, { method: "POST" });
+            const nombre = `${cliente.nombre} ${cliente.apellidos || ""}`.trim();
+            document.getElementById("bi-input").value = "";
+            await mostrarFichaClaseDia(cliente.id, nombre);
         } catch (error) {
             showError(error.message);
         }
@@ -653,13 +683,7 @@
     }
 
     async function onClienteEncontradoClick(clienteId, nombre) {
-        if (intentActivo === "marcar_asistencia") {
-            await mostrarFichaParaAsistencia(clienteId);
-        } else if (intentActivo === "clase_dia") {
-            await mostrarFichaClaseDia(clienteId, nombre);
-        } else {
-            seleccionarClienteParaVenta(clienteId, nombre);
-        }
+        seleccionarClienteParaVenta(clienteId, nombre);
     }
 
     async function mostrarFichaParaAsistencia(clienteId) {
@@ -716,6 +740,12 @@
             const ultimoIngreso = ficha.ultimos_ingresos[0]
                 ? `Último ingreso: ${formatFechaHora(ficha.ultimos_ingresos[0].fecha_hora_entrada)}`
                 : "Sin ingresos previos";
+            const accionesIngresoHtml = m
+                ? `<button class="btn btn-success" style="width:100%;" onclick="confirmarIngreso(${clienteId})">✅ Confirmar ingreso</button>`
+                : `<div style="display:flex;gap:8px;">
+                       <button class="btn btn-primary" style="flex:1;" onclick="actualizarDatosYAsignarMembresia(${clienteId})">＋ Membresía</button>
+                       <button class="btn btn-secondary" style="flex:1;" onclick="mostrarFichaClaseDia(${clienteId}, '${escapeAttr(ficha.nombre_completo)}')">☀️ Por día</button>
+                   </div>`;
 
             contenedor.innerHTML = `
                 <div class="ficha-asistencia">
@@ -731,8 +761,8 @@
                     ${proxPagoHtml}
                     <div style="font-size:0.72em;color:var(--color-texto-secundario);text-align:center;margin-bottom:12px;">${ultimoIngreso}</div>
                     ${btnPagoHtml}
-                    ${getRol() === "staff" ? `<button class="btn btn-secondary" style="width:100%;margin-bottom:8px;" onclick="abrirRegistroFacial(${clienteId})">👁 ${biometria.registrada ? 'Actualizar rostro' : 'Registrar rostro'}</button>` : ""}
-                    <button class="btn btn-success" style="width:100%;" onclick="confirmarIngreso(${clienteId})">✅ Confirmar ingreso</button>
+                    ${getRol() === "staff" ? `<button class="btn btn-secondary" style="width:100%;margin-bottom:8px;" onclick="abrirRegistroFacialLazy(${clienteId})">👁 ${biometria.registrada ? 'Actualizar rostro' : 'Registrar rostro'}</button>` : ""}
+                    ${accionesIngresoHtml}
                 </div>
             `;
         } catch (error) {
@@ -865,6 +895,7 @@
 
     function renderIngresosHoy() {
         const contenedor = document.getElementById("ui-lista");
+        contenedor.setAttribute("aria-busy", "false");
         const asistencias = vistaIngresosActiva === "en_sala"
             ? asistenciasHoyCache.filter(a => !a.fecha_hora_salida)
             : asistenciasHoyCache;
@@ -923,6 +954,7 @@
 
     function renderProductosMini(items) {
         const contenedor = document.getElementById("vr-lista-productos");
+        contenedor.setAttribute("aria-busy", "false");
         if (!items.length) {
             contenedor.innerHTML = '<p style="text-align:center;color:#636E72;padding:20px;">No hay productos</p>';
             return;
@@ -1232,13 +1264,15 @@
     // Init
     // ============================================================
     cargarDashboard();
-    cargarUltimosIngresos();
-    cargarProductosMini();
+    requestAnimationFrame(() => {
+        cargarUltimosIngresos();
+        setTimeout(cargarProductosMini, 80);
+    });
     setInterval(cargarDashboard, 120000);
     setInterval(cargarUltimosIngresos, 15000);
     window.addEventListener("mrgym:datos-actualizados", () => {
         cargarUltimosIngresos();
-        cargarDashboard();
+        cargarDashboard({forzar:true});
     });
 </script>
 </body>

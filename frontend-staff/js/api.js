@@ -20,6 +20,10 @@ const SESSION_KEYS = {
 };
 let _syncVersionStaff = Number(sessionStorage.getItem("mrgym_sync_version") || 0);
 const _operacionesEnCurso = new Map();
+const _lecturasEnCurso = new Map();
+const CACHE_LECTURA_PREFIX = "mrgym:lectura:v1:";
+const CACHE_LECTURA_MAX_ENTRADAS = 24;
+const CACHE_LECTURA_MAX_BYTES = 900000;
 
 function _registrarVersionStaff(response) {
     const version = Number(response.headers.get("X-Sync-Version") || 0);
@@ -71,6 +75,7 @@ function tieneAccesoZona(zona) {
 }
 
 function cerrarSesion() {
+    limpiarCacheLectura();
     sessionStorage.removeItem(SESSION_KEYS.token);
     sessionStorage.removeItem(SESSION_KEYS.rol);
     sessionStorage.removeItem(SESSION_KEYS.nombre);
@@ -79,6 +84,7 @@ function cerrarSesion() {
     sessionStorage.removeItem("mrgym_puede_exportar");
     sessionStorage.removeItem("mrgym_zonas");
     sessionStorage.removeItem("mrgym_gimnasio_id");
+    sessionStorage.removeItem("mrgym_moneda");
     window.location.href = "login.html";
 }
 
@@ -131,7 +137,111 @@ async function apiFetch(path, options = {}) {
         }
         throw new Error(typeof mensaje === "string" ? mensaje : JSON.stringify(mensaje));
     }
+    if (!{"GET":1,"HEAD":1}[metodo]) invalidarCacheLectura(path);
     return data;
+}
+
+function _ambitoCacheLectura() {
+    const gimnasioId = sessionStorage.getItem("mrgym_gimnasio_id") || "sin-gym";
+    const rol = getRol() || "sin-rol";
+    return `${gimnasioId}:${rol}`;
+}
+
+function _claveCacheLectura(path) {
+    return `${CACHE_LECTURA_PREFIX}${_ambitoCacheLectura()}:${path}`;
+}
+
+function _leerCacheLectura(path, maxStaleMs) {
+    try {
+        const entrada = JSON.parse(sessionStorage.getItem(_claveCacheLectura(path)) || "null");
+        if (!entrada || entrada.datos === undefined || !entrada.guardadoEn) return null;
+        if (Date.now() - entrada.guardadoEn > maxStaleMs) return null;
+        return entrada;
+    } catch (_) { return null; }
+}
+
+function _depurarCacheLectura() {
+    const entradas = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+        const clave = sessionStorage.key(i);
+        if (!clave || !clave.startsWith(CACHE_LECTURA_PREFIX)) continue;
+        try {
+            const valor = JSON.parse(sessionStorage.getItem(clave) || "null");
+            entradas.push({ clave, guardadoEn: Number(valor?.guardadoEn || 0) });
+        } catch (_) {
+            sessionStorage.removeItem(clave);
+        }
+    }
+    entradas.sort((a, b) => b.guardadoEn - a.guardadoEn);
+    entradas.slice(CACHE_LECTURA_MAX_ENTRADAS).forEach(({ clave }) => sessionStorage.removeItem(clave));
+}
+
+function _guardarCacheLectura(path, datos) {
+    try {
+        const serializado = JSON.stringify({
+            datos,
+            guardadoEn: Date.now(),
+            version: _syncVersionStaff,
+        });
+        if (serializado.length > CACHE_LECTURA_MAX_BYTES) return;
+        sessionStorage.setItem(_claveCacheLectura(path), serializado);
+        _depurarCacheLectura();
+    } catch (_) {
+        _depurarCacheLectura();
+    }
+}
+
+function limpiarCacheLectura() {
+    const claves = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+        const clave = sessionStorage.key(i);
+        if (clave?.startsWith(CACHE_LECTURA_PREFIX) || clave?.startsWith("mrgym:comercial:")) claves.push(clave);
+    }
+    claves.forEach(clave => sessionStorage.removeItem(clave));
+    _lecturasEnCurso.clear();
+}
+
+function invalidarCacheLectura(path) {
+    try { sessionStorage.removeItem(_claveCacheLectura(path)); } catch (_) {}
+}
+
+function _refrescarLectura(path, forzarNueva = false) {
+    const clave = _claveCacheLectura(path);
+    let peticion = _lecturasEnCurso.get(clave);
+    if (peticion && !forzarNueva) return peticion;
+    peticion = apiFetch(path).then(datos => {
+        if (_lecturasEnCurso.get(clave) === peticion) _guardarCacheLectura(path, datos);
+        return datos;
+    }).finally(() => {
+        if (_lecturasEnCurso.get(clave) === peticion) _lecturasEnCurso.delete(clave);
+    });
+    _lecturasEnCurso.set(clave, peticion);
+    return peticion;
+}
+
+/**
+ * Lectura stale-while-revalidate para pantallas informativas.
+ * Nunca acepta metodos de escritura y nunca cambia el comportamiento de
+ * apiFetch: cada operacion POST/PUT/PATCH/DELETE sigue yendo al servidor.
+ */
+async function apiFetchConCache(path, opciones = {}) {
+    const forzar = opciones.forzar === true;
+    const maxStaleMs = Number(opciones.maxStaleMs || 12 * 60 * 60 * 1000);
+    const cache = forzar ? null : _leerCacheLectura(path, maxStaleMs);
+    if (!cache) {
+        const datos = await _refrescarLectura(path, forzar);
+        return { datos, desdeCache: false, actualizando: Promise.resolve(datos) };
+    }
+
+    // La pantalla recibe la copia local ya; la red se resuelve aparte. Si
+    // falla, se conserva la ultima version sin generar un error no controlado.
+    const actualizando = _refrescarLectura(path).catch(() => cache.datos);
+    return {
+        datos: cache.datos,
+        desdeCache: true,
+        actualizando,
+        version: cache.version || 0,
+    };
 }
 
 async function apiUploadFile(path, file, fieldName = "foto") {
@@ -296,7 +406,15 @@ let configuracionCache = null;
 
 async function getConfiguracion() {
     if (configuracionCache) return configuracionCache;
-    configuracionCache = await apiFetch("/configuracion/");
+    const respuesta = await apiFetchConCache("/configuracion/");
+    configuracionCache = respuesta.datos;
+    if (configuracionCache?.moneda) sessionStorage.setItem("mrgym_moneda", configuracionCache.moneda);
+    if (respuesta.desdeCache) {
+        respuesta.actualizando.then(datos => {
+            configuracionCache = datos;
+            if (datos?.moneda) sessionStorage.setItem("mrgym_moneda", datos.moneda);
+        });
+    }
     return configuracionCache;
 }
 

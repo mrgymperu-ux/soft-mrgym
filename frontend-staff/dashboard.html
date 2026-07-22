@@ -56,7 +56,7 @@
     <main class="main-content">
         <div class="header">
             <div><h1 class="header-title">Dashboard</h1><p class="header-subtitle">Evolución general del gimnasio con información real</p></div>
-            <div class="dashboard-filtro"><select id="anio" onchange="cargar()"></select><button class="btn btn-secondary btn-sm" onclick="cargar()">Actualizar</button></div>
+            <div class="dashboard-filtro"><select id="anio" onchange="cargar()"></select><button class="btn btn-secondary btn-sm" onclick="cargar({forzar:true})">Actualizar</button></div>
         </div>
         <div id="contenido"><div class="cargando">Cargando indicadores...</div></div>
     </main>
@@ -65,6 +65,7 @@
 <script src="js/sidebar.js"></script>
 <script>
     const MESES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    let secuenciaDashboard = 0;
     function prepararAnios() {
         const actual = new Date().getFullYear(), sel = document.getElementById("anio");
         sel.innerHTML = Array.from({length:6},(_,i)=>actual-i).map(a=>`<option>${a}</option>`).join("");
@@ -133,8 +134,20 @@
                 <section class="grafica-card"><div class="grafica-head"><div><h2>Composición de ingresos</h2><p>Distribución anual</p></div></div><div class="donut-layout">${donut(composicion,['#62C879','#52B9E8','#F7BD52'],totalComp,'total',v=>moneda(v,d.moneda))}<div class="donut-detalle"><div class="donut-fila"><span><i style="background:#62C879"></i>Membresías</span><strong>${moneda(composicion[0],d.moneda)}</strong></div><div class="donut-fila"><span><i style="background:#52B9E8"></i>Productos</span><strong>${moneda(composicion[1],d.moneda)}</strong></div><div class="donut-fila"><span><i style="background:#F7BD52"></i>Otros</span><strong>${moneda(composicion[2],d.moneda)}</strong></div></div></div></section>
             </div>`;
     }
-    async function cargar(){try{document.getElementById("contenido").innerHTML='<div class="cargando">Cargando indicadores...</div>';render(await apiFetch(`/dashboard/empresarial?anio=${document.getElementById("anio").value}`));}catch(e){showError(e.message);}}
+    async function cargar(opciones={}){
+        const secuencia=++secuenciaDashboard, anio=document.getElementById("anio").value;
+        try{
+            const respuesta=await apiFetchConCache(`/dashboard/empresarial?anio=${anio}`,{forzar:opciones.forzar===true});
+            if(secuencia!==secuenciaDashboard) return;
+            render(respuesta.datos);
+            if(respuesta.desdeCache){
+                const datosActualizados=await respuesta.actualizando;
+                if(secuencia===secuenciaDashboard && document.getElementById("anio").value===anio) render(datosActualizados);
+            }
+        }catch(e){showError(e.message);}
+    }
     prepararAnios(); cargar();
+    window.addEventListener("mrgym:datos-actualizados",()=>cargar({forzar:true}));
 </script>
 </body>
 </html>

@@ -163,8 +163,8 @@ function abrirModalClienteCompletar(cliente, onTerminar) {
     _fcOnTerminar = onTerminar || null;
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = cliente.id;
-    document.querySelector("#modal-fc-cliente .modal-title").textContent = "Completar datos del cliente";
-    document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y continuar";
+    document.querySelector("#modal-fc-cliente .modal-title").textContent = "Actualizar Datos";
+    document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y asignar membresía";
     document.getElementById("fc-nombre").value = cliente.nombre || "";
     document.getElementById("fc-apellidos").value = cliente.apellidos || "";
     document.getElementById("fc-dni").value = cliente.dni || "";

@@ -137,7 +137,7 @@
         </div>
         <div class="card">
             <div class="search-bar">
-                <input type="search" id="buscador" value="" autocomplete="new-password" data-lpignore="true" data-form-type="other" readonly placeholder="Buscar por nombre o DNI..." onfocus="this.removeAttribute('readonly')" onpointerdown="this.removeAttribute('readonly')" oninput="debouncarBusqueda(this.value)">
+                <input type="search" id="buscador" value="" autocomplete="new-password" data-lpignore="true" data-form-type="other" readonly placeholder="Buscar por nombre, DNI, celular o correo..." onfocus="this.removeAttribute('readonly')" onpointerdown="this.removeAttribute('readonly')" oninput="debouncarBusqueda(this.value)">
             </div>
             <button id="filtros-toggle" class="filtros-toggle" type="button" onclick="alternarFiltrosMovil()">Filtros ▾</button>
             <div class="filtros-bar">
@@ -156,7 +156,10 @@
                     <tbody id="tabla-clientes"><tr class="empty-row"><td colspan="9">Cargando...</td></tr></tbody>
                 </table>
             </div>
-            <div style="padding:12px 20px;border-top:1px solid var(--color-borde);font-size:0.8em;color:var(--color-texto-secundario);" id="info-total"></div>
+            <div style="padding:12px 20px;border-top:1px solid var(--color-borde);font-size:0.8em;color:var(--color-texto-secundario);display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <span id="info-total"></span>
+                <button id="btn-cargar-mas-clientes" type="button" class="btn btn-secondary btn-sm" style="display:none;" onclick="cargarMasClientes()">Cargar más</button>
+            </div>
         </div>
         <div id="ficha-detalle" style="display:none;">
             <div class="card">
@@ -168,7 +171,7 @@
                         <p id="ficha-cumple" style="margin:2px 0 0;color:#636E72;font-size:0.82em;"></p>
                     </div>
                     <div class="ficha-acciones-cliente">
-                        <button class="btn btn-secondary btn-sm" id="btn-registro-facial-cliente" onclick="abrirRegistroFacial(clienteActual.id)">📷 Registrar rostro</button>
+                        <button class="btn btn-secondary btn-sm" id="btn-registro-facial-cliente" onclick="abrirRegistroFacialLazy(clienteActual.id)">📷 Registrar rostro</button>
                         <button class="btn btn-secondary btn-sm" onclick="abrirModalEditar()">✏️ Editar</button>
                         <button class="btn btn-danger btn-sm" id="btn-eliminar-ficha" onclick="eliminarClienteActual()" style="display:none;">🗑️ Eliminar</button>
                     </div>
@@ -402,13 +405,50 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260721-2"></script>
+<script src="js/flujo-cliente.js?v=20260722-1"></script>
 <script src="js/medidas-catalogo.js"></script>
-<script src="vendor/human/human.js"></script>
-<script src="js/reconocimiento-facial.js?v=20260721-5"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
     let clientesListadoCache = [], configuracionListadoCache = null, ordenClientesCampo = "nombre", ordenClientesAsc = true;
+    const TAMANO_BLOQUE_CLIENTES = 40;
+    let totalClientesListado = 0, hayMasClientes = false, cargandoClientes = false, secuenciaListado = 0;
+    let promesaReconocimientoFacial = null;
+
+    function cargarScriptUnaVez(src) {
+        return new Promise((resolve, reject) => {
+            const existente = document.querySelector(`script[data-src-lazy="${src}"]`);
+            if (existente) {
+                if (existente.dataset.cargado === "1") resolve();
+                else existente.addEventListener("load", resolve, { once:true });
+                return;
+            }
+            const script = document.createElement("script");
+            script.src = src;
+            script.dataset.srcLazy = src;
+            script.onload = () => { script.dataset.cargado = "1"; resolve(); };
+            script.onerror = () => reject(new Error("No se pudo cargar el reconocimiento facial"));
+            document.body.appendChild(script);
+        });
+    }
+
+    async function abrirRegistroFacialLazy(clienteId) {
+        const boton = document.getElementById("btn-registro-facial-cliente");
+        const textoOriginal = boton ? boton.textContent : "";
+        try {
+            if (!window.abrirRegistroFacial) {
+                if (boton) { boton.disabled = true; boton.textContent = "Preparando cámara..."; }
+                promesaReconocimientoFacial ||= cargarScriptUnaVez("vendor/human/human.js")
+                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260721-5"));
+                await promesaReconocimientoFacial;
+            }
+            await window.abrirRegistroFacial(clienteId);
+        } catch (error) {
+            promesaReconocimientoFacial = null;
+            showError(error.message || "No se pudo iniciar la cámara");
+        } finally {
+            if (boton) { boton.disabled = false; boton.textContent = textoOriginal; }
+        }
+    }
 
     async function getConfiguracionClientes() {
         if (configuracionListadoCache) return configuracionListadoCache;
@@ -473,7 +513,7 @@
 
     function debouncarBusqueda(v) {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => { busquedaActual = v.trim(); cargarClientes(); }, 350);
+        debounceTimer = setTimeout(() => { busquedaActual = v.trim(); cargarClientes(); }, 300);
     }
 
     function onChipFiltro(el) {
@@ -492,9 +532,11 @@
         return `${dias}d`;
     }
 
-    async function cargarClientes(soloOrdenar = false) {
+    async function cargarClientes(soloOrdenar = false, agregar = false) {
         const params = new URLSearchParams();
         params.set("filtro", filtroActual);
+        params.set("limit", String(TAMANO_BLOQUE_CLIENTES));
+        params.set("offset", String(agregar ? clientesListadoCache.length : 0));
         if (filtroActual === "por_vencer") params.set("dias_vencimiento", document.getElementById("f-dias-vencer").value || "30");
         const desde = document.getElementById("f-desde").value;
         const hasta = document.getElementById("f-hasta").value;
@@ -507,11 +549,36 @@
             clientes = clientesListadoCache;
             cfg = configuracionListadoCache;
         } else {
-            [clientes, cfg] = await Promise.all([
-                apiFetch(`/clientes/listado-completo?${params.toString()}`),
-                getConfiguracionClientes(),
-            ]);
-            clientesListadoCache = Array.isArray(clientes) ? clientes : [];
+            const secuencia = ++secuenciaListado;
+            const botonMas = document.getElementById("btn-cargar-mas-clientes");
+            if (botonMas) { botonMas.disabled = true; botonMas.textContent = "Cargando..."; }
+            let pagina;
+            try {
+                [pagina, cfg] = await Promise.all([
+                    apiFetch(`/clientes/listado-paginado?${params.toString()}`),
+                    getConfiguracionClientes(),
+                ]);
+            } catch (error) {
+                if (secuencia === secuenciaListado) {
+                    if (!clientesListadoCache.length) {
+                        document.getElementById("tabla-clientes").innerHTML = '<tr class="empty-row"><td colspan="9">No se pudo cargar el listado</td></tr>';
+                    }
+                    if (botonMas) { botonMas.disabled = false; botonMas.textContent = "Reintentar"; }
+                    showError(error.message || "No se pudo cargar clientes");
+                }
+                return;
+            }
+            if (secuencia !== secuenciaListado) return;
+            const bloque = Array.isArray(pagina.items) ? pagina.items : [];
+            if (agregar) {
+                const idsExistentes = new Set(clientesListadoCache.map(c => `${c.es_historico ? "h" : "c"}:${c.id}`));
+                clientesListadoCache.push(...bloque.filter(c => !idsExistentes.has(`${c.es_historico ? "h" : "c"}:${c.id}`)));
+            } else {
+                clientesListadoCache = bloque;
+            }
+            totalClientesListado = Number(pagina.total || 0);
+            hayMasClientes = Boolean(pagina.has_more);
+            clientes = clientesListadoCache;
             configuracionListadoCache = cfg;
         }
         clientes = _ordenarClientesLocal(clientesListadoCache);
@@ -527,9 +594,9 @@
             ? '<tr class="empty-row"><td colspan="9">No se encontraron clientes</td></tr>'
             : clientes.map(c => `<tr class="fila-cliente${c.tiene_membresia_catalogo ? ' fila-vigente' : ''}" ${c.es_historico ? '' : `onclick="verCliente(${c.id})"`}>
                 <td class="col-secundaria" style="color:var(--color-texto-secundario);">${c.es_historico ? "—" : c.id}</td>
-                <td><strong>${c.nombre_completo}</strong>${c.es_historico ? ' <span class="badge badge-warning" style="font-size:0.6em;">no inscrito</span>' : (!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : "")}</td>
+                <td><strong>${escapeHTML(c.nombre_completo)}</strong>${c.es_historico ? ' <span class="badge badge-warning" style="font-size:0.6em;">no inscrito</span>' : (!c.activo ? ' <span class="badge badge-error" style="font-size:0.6em;">inactivo</span>' : "")}</td>
                 <td>${c.fecha_vencimiento ? `<span class="venc-fecha">${formatFecha(c.fecha_vencimiento)} · </span>${_diasRestantesTexto(c.dias_para_vencer)}` : "—"}</td>
-                <td class="col-secundaria">${c.ultimo_plan || "—"}</td>
+                <td class="col-secundaria">${c.ultimo_plan ? escapeHTML(c.ultimo_plan) : "—"}</td>
                 <td class="col-secundaria" style="text-align:right;">${fmtNum(c.costo)}</td>
                 <td class="col-secundaria" style="text-align:right;">${fmtNum(c.pagado)}</td>
                 <td style="text-align:right;" class="${c.saldo > 0 ? 'fila-saldo' : ''}">${fmtNum(c.saldo)}</td>
@@ -538,7 +605,16 @@
                     ${c.es_historico ? `<button class="btn btn-sm btn-primary" onclick="inscribirHistorico(${c.historico_id})">Inscribir</button>` : (puedeBorrar ? `<button class="btn btn-sm btn-danger" onclick="eliminarCliente(${c.id})">🗑️</button>` : "")}
                 </td>
             </tr>`).join("");
-        document.getElementById("info-total").textContent = `${clientes.length} cliente${clientes.length !== 1 ? "s" : ""}`;
+        const contexto = busquedaActual ? " · búsqueda en actuales e importados" : "";
+        document.getElementById("info-total").textContent = `Mostrando ${clientes.length} de ${totalClientesListado} cliente${totalClientesListado !== 1 ? "s" : ""}${contexto}`;
+        const botonMas = document.getElementById("btn-cargar-mas-clientes");
+        botonMas.style.display = hayMasClientes ? "inline-flex" : "none";
+        botonMas.disabled = false;
+        botonMas.textContent = "Cargar más";
+    }
+
+    function cargarMasClientes() {
+        if (hayMasClientes) cargarClientes(false, true);
     }
 
     async function inscribirHistorico(historicoId) {
@@ -629,8 +705,12 @@
                 _getCatalogoMembresias(),
             ]);
             const cfg = await getConfiguracionClientes();
-            const activa = historial.find(cm => cm.activo);
-            if (!activa) { wrap.innerHTML = '<span style="font-size:0.82em;color:var(--color-texto-secundario);">Sin plan activo</span>'; return; }
+            const hoy = fechaLocalISO();
+            const activa = historial.find(cm => cm.activo && !cm.anulada && (!cm.fecha_fin || cm.fecha_fin >= hoy));
+            if (!activa) {
+                wrap.innerHTML = '<button type="button" class="btn btn-primary btn-sm" onclick="actualizarDatosYAsignarDesdeFicha()">Asignar Membresía</button>';
+                return;
+            }
             const plan = catalogo.find(m => m.id === activa.membresia_id);
             const precio = plan ? plan.precio : 0;
             wrap.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;">
@@ -640,6 +720,11 @@
                 <span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>
             </div>`;
         } catch (e) { wrap.innerHTML = ''; }
+    }
+
+    function actualizarDatosYAsignarDesdeFicha() {
+        if (!clienteActual) return;
+        abrirModalClienteCompletar(clienteActual, _clientesFcTerminado);
     }
 
     function cerrarFicha() {

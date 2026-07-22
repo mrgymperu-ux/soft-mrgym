@@ -76,7 +76,7 @@
                 <span class="chip-cat" data-cat="productos" onclick="onChipCat(this)">📦 Productos</span>
                 <span class="chip-cat" data-cat="otros" onclick="onChipCat(this)">💼 Otros</span>
             </div>
-            <button class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="cargar()">🔄 Actualizar</button>
+            <button class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="cargar({forzar:true})">🔄 Actualizar</button>
         </div>
 
         <!-- KPIs (identicas a Resumen) -->
@@ -169,6 +169,7 @@
     let tipoActivo = new URLSearchParams(location.search).get("tipo") || "todos";
     let moneda = "S/";
     let conceptosIngreso = [];
+    let secuenciaCargaMovimientos = 0;
 
     // Formato numero sin simbolo de moneda (la moneda va en la cabecera)
     function fmtNum(v) {
@@ -314,7 +315,7 @@
         try {
             await apiFetch(ruta(id), { method: "DELETE", body: JSON.stringify({ motivo }) });
             showSuccess("Movimiento corregido");
-            cargar();
+            cargar({forzar:true});
         } catch (e) { showError(e.message); }
     }
 
@@ -355,7 +356,7 @@
         if (!concepto_id || !fecha || monto <= 0) return showError("Completa fecha, concepto y monto");
         try {
             await apiFetch("/otros-ingresos/", {method:"POST", body:JSON.stringify({concepto_id, monto, fecha:`${fecha}T12:00:00`, metodo_pago:document.getElementById("mi-metodo").value, descripcion:document.getElementById("mi-descripcion").value.trim() || null})});
-            cerrarModalFinanza("modal-ingreso"); showSuccess("Ingreso registrado"); cargar();
+            cerrarModalFinanza("modal-ingreso"); showSuccess("Ingreso registrado"); cargar({forzar:true});
         } catch (e) { showError(e.message); }
     }
 
@@ -372,7 +373,7 @@
         if (!descripcion || !fecha || monto <= 0) return showError("Completa fecha, descripción y monto");
         try {
             await apiFetch("/gastos/", {method:"POST", body:JSON.stringify({categoria:"otros", descripcion, monto, fecha:`${fecha}T12:00:00`, metodo_pago:document.getElementById("mg-metodo").value, notas:document.getElementById("mg-notas").value.trim() || null})});
-            cerrarModalFinanza("modal-gasto"); showSuccess("Gasto registrado"); cargar();
+            cerrarModalFinanza("modal-gasto"); showSuccess("Gasto registrado"); cargar({forzar:true});
         } catch (e) { showError(e.message); }
     }
 
@@ -391,25 +392,12 @@
         return { efectivo, cuenta };
     }
 
-    async function cargar() {
-        const cfg = await getConfiguracion(); moneda = cfg.moneda;
-
-        // Moneda solo en cabecera
-        document.getElementById('th-mov-monto').textContent = `Monto (${moneda})`;
-
-        const chkHoy = document.getElementById("chk-hoy").checked;
-        const desde = document.getElementById("f-desde").value;
-        const hasta = document.getElementById("f-hasta").value;
-        const qs = chkHoy ? "solo_hoy=true" : `desde=${desde}&hasta=${hasta}`;
-
-        const [ing, egr] = await Promise.all([
-            apiFetch(`/ingresos/?${qs}`),
-            apiFetch(`/egresos/?${qs}`),
-        ]);
+    function mostrarMovimientos(ing, egr, cfg, chkHoy, desde, hasta, actualizando=false) {
+        if (!ing || !egr) return;
         window._ing = ing; window._egr = egr;
 
         const rangoTexto = chkHoy ? "hoy" : `del ${formatFecha(desde)} al ${formatFecha(hasta)}`;
-        document.getElementById("subtitulo-rango").textContent = `Movimientos ${rangoTexto}`;
+        document.getElementById("subtitulo-rango").textContent = `Movimientos ${rangoTexto}${actualizando ? " · actualizando…" : ""}`;
 
         const balance = ing.total - egr.total;
         document.getElementById("kpi-ingresos").textContent = formatCurrency(ing.total, moneda);
@@ -426,14 +414,44 @@
         const { efectivo, cuenta } = calcularEfectivoCuenta(ing, cfg);
         document.getElementById("kpi-efectivo").textContent = formatCurrency(efectivo, moneda);
         document.getElementById("kpi-cuenta").textContent = formatCurrency(cuenta, moneda);
-
         renderTabla(ing, egr);
+    }
+
+    async function cargar(opciones={}) {
+        const secuencia = ++secuenciaCargaMovimientos;
+        const cfg = await getConfiguracion(); moneda = cfg.moneda;
+
+        // Moneda solo en cabecera
+        document.getElementById('th-mov-monto').textContent = `Monto (${moneda})`;
+
+        const chkHoy = document.getElementById("chk-hoy").checked;
+        const desde = document.getElementById("f-desde").value;
+        const hasta = document.getElementById("f-hasta").value;
+        const qs = chkHoy ? "solo_hoy=true" : `desde=${desde}&hasta=${hasta}`;
+
+        const [respuestaIng, respuestaEgr] = await Promise.all([
+            apiFetchConCache(`/ingresos/?${qs}`, {forzar:opciones.forzar === true}),
+            apiFetchConCache(`/egresos/?${qs}`, {forzar:opciones.forzar === true}),
+        ]);
+        if (secuencia !== secuenciaCargaMovimientos) return;
+        const desdeCache = respuestaIng.desdeCache || respuestaEgr.desdeCache;
+        mostrarMovimientos(respuestaIng.datos, respuestaEgr.datos, cfg, chkHoy, desde, hasta, desdeCache);
+
+        if (desdeCache) {
+            const [ingActualizado, egrActualizado] = await Promise.all([
+                respuestaIng.actualizando,
+                respuestaEgr.actualizando,
+            ]);
+            if (secuencia !== secuenciaCargaMovimientos) return;
+            mostrarMovimientos(ingActualizado, egrActualizado, cfg, chkHoy, desde, hasta, false);
+        }
     }
 
     initFechas();
     if (!["todos", "ingreso", "egreso"].includes(tipoActivo)) tipoActivo = "todos";
     document.querySelectorAll(".direccion-filtro button").forEach(b => b.classList.toggle("activo", b.dataset.tipo === tipoActivo));
     cargar();
+    window.addEventListener("mrgym:datos-actualizados", () => cargar({forzar:true}));
 </script>
 </body>
 </html>

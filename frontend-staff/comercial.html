@@ -24,6 +24,7 @@
         .comercial-tabla thead tr:first-child th{color:var(--color-blanco);background:var(--color-primario);font-size:.84em}
         .comercial-tabla thead tr:nth-child(2) th{color:var(--color-texto);background:var(--color-fondo);font-weight:600}
         .comercial-tabla tfoot td{font-weight:700;border-top:2px solid var(--color-borde)}
+        .comercial-estado{min-height:18px;margin:8px 0 0;color:var(--color-texto-secundario);font-size:.78em}
         @media(max-width:900px){.comercial-bloques{grid-template-columns:1fr}.comercial-bloque.planilla{grid-column:auto}}
         @media(max-width:600px){.comercial-resumen{gap:12px}.comercial-resumen div{min-width:calc(50% - 12px)}}
     </style>
@@ -46,6 +47,7 @@
                 </select></div>
                 <button class="btn btn-primary" onclick="cargarComercial()">Consultar</button>
             </div>
+            <p class="comercial-estado" id="co-estado" aria-live="polite"></p>
         </div>
 
         <div class="comercial-bloques">
@@ -88,39 +90,74 @@
 <script src="js/sidebar.js"></script>
 <script>
     let monedaComercial = "S/";
+    let secuenciaComercial = 0;
+    const CACHE_COMERCIAL_VERSION = "v2";
     const dineroCo = (valor) => formatCurrency(Number(valor || 0), monedaComercial);
     const resumenCo = (items) => items.map(([etiqueta, valor]) => `<div><span>${etiqueta}</span><strong>${dineroCo(valor)}</strong></div>`).join("");
+    const claveCacheComercial = (anio, mes) => `mrgym:comercial:${CACHE_COMERCIAL_VERSION}:${sessionStorage.getItem("mrgym_gimnasio_id") || "gym"}:${anio}:${mes}`;
+    const leerCacheComercial = (clave) => {
+        try {
+            const cache = JSON.parse(sessionStorage.getItem(clave) || "null");
+            return cache && cache.datos ? cache : null;
+        } catch (_) { return null; }
+    };
+    const guardarCacheComercial = (clave, datos) => {
+        try { sessionStorage.setItem(clave, JSON.stringify({ datos, guardadoEn: Date.now() })); } catch (_) {}
+    };
+    const estadoActualizacionCo = (mensaje = "") => { document.getElementById("co-estado").textContent = mensaje; };
     const estadoCo = (mensaje) => {
         document.getElementById("co-body-membresias").innerHTML = `<tr class="empty-row"><td colspan="4">${mensaje}</td></tr>`;
         document.getElementById("co-body-venta").innerHTML = `<tr class="empty-row"><td colspan="3">${mensaje}</td></tr>`;
         document.getElementById("co-body-planilla").innerHTML = `<tr class="empty-row"><td colspan="5">${mensaje}</td></tr>`;
     };
 
-    async function cargarComercial(){
+    function mostrarComercial(datos){
+        monedaComercial=datos.moneda||"S/";
+        const filas=datos.filas||[], suma=c=>filas.reduce((s,f)=>s+Number(f[c]||0),0), vacio="No hay personal activo";
+        const meta=Number(filas[0]?.meta_membresias||0);
+
+        document.getElementById("co-body-membresias").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.ventas_membresias)}</td><td>${dineroCo(f.meta_membresias)}</td><td>${dineroCo(f.comision_membresias)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="4">${vacio}</td></tr>`;
+        document.getElementById("co-body-venta").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.venta_rapida)}</td><td>${dineroCo(f.comision_venta_rapida)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="3">${vacio}</td></tr>`;
+        document.getElementById("co-body-planilla").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.planilla_total)}</td><td>${dineroCo(f.planilla_pagado)}</td><td>${dineroCo(f.planilla_saldo_anterior)}</td><td>${dineroCo(f.planilla_saldo)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="5">${vacio}</td></tr>`;
+
+        document.getElementById("co-foot-membresias").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("ventas_membresias"))}</td><td>${dineroCo(meta)}</td><td>${dineroCo(suma("comision_membresias"))}</td></tr>`:"";
+        document.getElementById("co-foot-venta").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("venta_rapida"))}</td><td>${dineroCo(suma("comision_venta_rapida"))}</td></tr>`:"";
+        document.getElementById("co-foot-planilla").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("planilla_total"))}</td><td>${dineroCo(suma("planilla_pagado"))}</td><td>${dineroCo(suma("planilla_saldo_anterior"))}</td><td>${dineroCo(suma("planilla_saldo"))}</td></tr>`:"";
+
+        document.getElementById("co-resumen-membresias").innerHTML=resumenCo([["Ventas",suma("ventas_membresias")],["Meta del mes",meta],["Comisiones",suma("comision_membresias")]]);
+        document.getElementById("co-resumen-venta").innerHTML=resumenCo([["Ventas",suma("venta_rapida")],["Comisiones",suma("comision_venta_rapida")]]);
+        document.getElementById("co-resumen-planilla").innerHTML=resumenCo([["Total",suma("planilla_total")],["Pagado",suma("planilla_pagado")],["Saldo anterior",suma("planilla_saldo_anterior")],["Saldo actual",suma("planilla_saldo")]]);
+    }
+
+    async function cargarComercial(opciones={}){
         const anio=parseInt(document.getElementById("co-anio").value), mes=parseInt(document.getElementById("co-mes").value);
-        estadoCo("Cargando...");
+        const clave=claveCacheComercial(anio,mes), cache=leerCacheComercial(clave), secuencia=++secuenciaComercial;
+        if(cache){
+            mostrarComercial(cache.datos);
+            estadoActualizacionCo("Mostrando datos guardados · actualizando…");
+        }else if(!opciones.silencioso){
+            estadoCo("Cargando...");
+            estadoActualizacionCo("");
+        }
         try{
-            const datos=await apiFetch(`/comercial/resumen?anio=${anio}&mes=${mes}`); monedaComercial=datos.moneda||"S/";
-            const filas=datos.filas||[], suma=c=>filas.reduce((s,f)=>s+Number(f[c]||0),0), vacio="No hay personal activo";
-            const meta=Number(filas[0]?.meta_membresias||0);
-
-            document.getElementById("co-body-membresias").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.ventas_membresias)}</td><td>${dineroCo(f.meta_membresias)}</td><td>${dineroCo(f.comision_membresias)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="4">${vacio}</td></tr>`;
-            document.getElementById("co-body-venta").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.venta_rapida)}</td><td>${dineroCo(f.comision_venta_rapida)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="3">${vacio}</td></tr>`;
-            document.getElementById("co-body-planilla").innerHTML=filas.length?filas.map(f=>`<tr><td>${escapeHTML(f.nombre)}</td><td>${dineroCo(f.planilla_total)}</td><td>${dineroCo(f.planilla_pagado)}</td><td>${dineroCo(f.planilla_saldo_anterior)}</td><td>${dineroCo(f.planilla_saldo)}</td></tr>`).join(""):`<tr class="empty-row"><td colspan="5">${vacio}</td></tr>`;
-
-            document.getElementById("co-foot-membresias").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("ventas_membresias"))}</td><td>${dineroCo(meta)}</td><td>${dineroCo(suma("comision_membresias"))}</td></tr>`:"";
-            document.getElementById("co-foot-venta").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("venta_rapida"))}</td><td>${dineroCo(suma("comision_venta_rapida"))}</td></tr>`:"";
-            document.getElementById("co-foot-planilla").innerHTML=filas.length?`<tr><td>Total</td><td>${dineroCo(suma("planilla_total"))}</td><td>${dineroCo(suma("planilla_pagado"))}</td><td>${dineroCo(suma("planilla_saldo_anterior"))}</td><td>${dineroCo(suma("planilla_saldo"))}</td></tr>`:"";
-
-            document.getElementById("co-resumen-membresias").innerHTML=resumenCo([["Ventas",suma("ventas_membresias")],["Meta del mes",meta],["Comisiones",suma("comision_membresias")]]);
-            document.getElementById("co-resumen-venta").innerHTML=resumenCo([["Ventas",suma("venta_rapida")],["Comisiones",suma("comision_venta_rapida")]]);
-            document.getElementById("co-resumen-planilla").innerHTML=resumenCo([["Total",suma("planilla_total")],["Pagado",suma("planilla_pagado")],["Saldo anterior",suma("planilla_saldo_anterior")],["Saldo actual",suma("planilla_saldo")]]);
+            const datos=await apiFetch(`/comercial/resumen?anio=${anio}&mes=${mes}`);
+            if(secuencia!==secuenciaComercial) return;
+            guardarCacheComercial(clave,datos);
+            mostrarComercial(datos);
+            estadoActualizacionCo("Datos actualizados");
         }catch(e){
-            estadoCo(escapeHTML(e.message));
-            ["membresias","venta","planilla"].forEach(id=>{document.getElementById(`co-foot-${id}`).innerHTML="";document.getElementById(`co-resumen-${id}`).innerHTML=""});
+            if(secuencia!==secuenciaComercial) return;
+            if(cache){
+                estadoActualizacionCo("Sin conexión · se mantienen los últimos datos guardados");
+            }else{
+                estadoCo(escapeHTML(e.message));
+                estadoActualizacionCo("");
+                ["membresias","venta","planilla"].forEach(id=>{document.getElementById(`co-foot-${id}`).innerHTML="";document.getElementById(`co-resumen-${id}`).innerHTML=""});
+            }
         }
     }
     document.addEventListener("DOMContentLoaded",()=>{const hoy=new Date();document.getElementById("co-anio").value=hoy.getFullYear();document.getElementById("co-mes").value=hoy.getMonth()+1;cargarComercial()});
+    window.addEventListener("mrgym:datos-actualizados",()=>cargarComercial({silencioso:true}));
 </script>
 </body>
 </html>
