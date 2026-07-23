@@ -342,6 +342,7 @@ class MultiTenantTest(unittest.TestCase):
         self.assertEqual(self.staff1.email, "staff@example.com")
         self.assertEqual(empleado.email, "staff@example.com")
         self.assertTrue(self.staff1.email_verificado)
+        self.assertTrue(schemas.Usuario.model_validate(self.staff1).pin_counter_configurado)
 
         with self.assertRaises(HTTPException):
             configurar_pin_desde_invitacion(

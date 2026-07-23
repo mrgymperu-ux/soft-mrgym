@@ -289,6 +289,10 @@ class Usuario(Base):
     empleado_id = Column(Integer, ForeignKey("empleados.id"), nullable=True)
     empleado = relationship("Empleado", back_populates="usuario")
 
+    @property
+    def pin_counter_configurado(self):
+        return bool(self.pin_counter_hash)
+
 
 class TokenAutenticacion(Base):
     """Token de un solo uso; solo se persiste su hash SHA-256."""

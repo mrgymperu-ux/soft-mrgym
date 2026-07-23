@@ -72,6 +72,7 @@ class Usuario(UsuarioBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     activo: bool
+    pin_counter_configurado: bool = False
     fecha_creacion: datetime
 
 

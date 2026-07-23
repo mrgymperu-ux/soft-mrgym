@@ -97,6 +97,20 @@ function inyectarModalesPersonal() {
     </div>
 </div>
 
+<!-- Modal vista de accesos -->
+<div id="modal-ver-acceso" class="modal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Permisos y accesos</h3>
+            <button class="modal-close" onclick="cerrarModalVerAcceso()">✕</button>
+        </div>
+        <div id="detalle-acceso-staff"></div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" type="button" onclick="cerrarModalVerAcceso()">Cerrar</button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal invitacion Counter -->
 <div id="modal-invitacion-counter" class="modal">
     <div class="modal-content" style="max-width:480px;">
@@ -289,11 +303,74 @@ async function cargarPersonal() {
         <td><span class="badge ${f.activo ? "badge-success" : "badge-error"}">${f.activo ? "Activo" : "Inactivo"}</span></td>
         <td>
             ${esAdministrador()
-                ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">✏️ Editar</button>
-                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalInvitacion(${f.id})">Invitar</button>` : ""}`
+                ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">Editar</button>
+                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalInvitacion(${f.id})" ${f.activo ? "" : "disabled"}>Invitar</button>
+                   <button class="btn btn-sm btn-secondary" onclick="abrirModalVerAcceso(${f.id})">Ver</button>` : ""}`
                 : '<span style="color:#636E72;font-size:0.8em;">Solo lectura</span>'}
         </td>
     </tr>`).join("");
+}
+
+function abrirModalVerAcceso(usuarioId) {
+    const usuario = usuariosCache.find(u => u.id === usuarioId);
+    if (!usuario) { showError("No se encontró el trabajador"); return; }
+    const empleado = usuario.empleado_id
+        ? empleadosCache.find(e => e.id === usuario.empleado_id)
+        : null;
+    const zonas = (usuario.zonas_permitidas || "").split(",").map(z => z.trim()).filter(Boolean);
+    const nombresZonas = usuario.es_administrador
+        ? ["Todas las zonas del sistema"]
+        : zonas.map(zona => (ZONAS_DISPONIBLES.find(([valor]) => valor === zona) || [zona, zona])[1]);
+    const accesoRealEliminar = usuario.es_administrador || usuario.puede_eliminar;
+    const accesoRealExportar = usuario.es_administrador || usuario.puede_exportar;
+    const estado = usuario.activo
+        ? '<span class="badge badge-success">Activo</span>'
+        : '<span class="badge badge-error">Inactivo</span>';
+    const pin = usuario.pin_counter_configurado
+        ? '<span class="badge badge-success">PIN configurado</span>'
+        : '<span class="badge badge-warning">Invitación pendiente</span>';
+    const indicador = permitido => permitido
+        ? '<span class="badge badge-success">Permitido</span>'
+        : '<span class="badge badge-error">Sin permiso</span>';
+
+    document.getElementById("detalle-acceso-staff").innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:16px;">
+            <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;">
+                <small style="color:var(--color-texto-secundario);">Trabajador</small>
+                <div style="font-weight:600;margin-top:3px;">${escapeHTML(usuario.nombre_completo)}</div>
+                <div style="font-size:.82em;color:var(--color-texto-secundario);">${escapeHTML((empleado && empleado.puesto) || "Sin puesto")}</div>
+            </div>
+            <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;">
+                <small style="color:var(--color-texto-secundario);">Ingreso al software</small>
+                <div style="font-weight:600;margin-top:3px;">${escapeHTML(usuario.username)}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">${estado}${pin}</div>
+            </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--color-borde);">
+                <span>Tipo de acceso</span>
+                <strong>${usuario.es_administrador ? "Administrador · acceso total" : "Staff · acceso por zonas"}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--color-borde);">
+                <span>Eliminar registros</span>${indicador(accesoRealEliminar)}
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--color-borde);">
+                <span>Exportar/importar datos</span>${indicador(accesoRealExportar)}
+            </div>
+        </div>
+        <div style="margin-top:16px;">
+            <strong style="font-size:.9em;">Zonas visibles al ingresar</strong>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                ${(nombresZonas.length ? nombresZonas : ["Ninguna zona asignada"]).map(nombre =>
+                    `<span class="badge ${nombresZonas.length ? "badge-info" : "badge-warning"}">${escapeHTML(nombre)}</span>`
+                ).join("")}
+            </div>
+        </div>`;
+    document.getElementById("modal-ver-acceso").classList.add("active");
+}
+
+function cerrarModalVerAcceso() {
+    document.getElementById("modal-ver-acceso").classList.remove("active");
 }
 
 let invitacionCounterUsuarioId = null;
