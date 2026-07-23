@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activar cuenta - Soft-Gym</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="login-page">
+    <main class="login-card" style="max-width:560px;">
+        <h1>Activa tu cuenta</h1>
+        <p>El gimnasio ya registró tu usuario y tus permisos. Revisa la información y crea tu contraseña personal.</p>
+
+        <div id="estado-invitacion" class="alert" style="margin-bottom:14px;">Consultando invitación...</div>
+
+        <section id="datos-cuenta" style="display:none;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px;">
+                <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;">
+                    <small style="color:var(--color-texto-secundario);">Trabajador</small>
+                    <div id="nombre-trabajador" style="font-weight:600;margin-top:3px;"></div>
+                </div>
+                <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;">
+                    <small style="color:var(--color-texto-secundario);">Tu nombre de usuario</small>
+                    <div id="username-trabajador" style="font-weight:600;margin-top:3px;"></div>
+                </div>
+            </div>
+
+            <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;margin-bottom:16px;">
+                <strong style="font-size:.9em;">Permisos asignados</strong>
+                <div id="permisos-trabajador" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
+                <div id="zonas-trabajador" style="font-size:.82em;color:var(--color-texto-secundario);margin-top:8px;"></div>
+            </div>
+
+            <div class="form-group">
+                <label>Crear contraseña</label>
+                <input id="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="Mínimo 10 caracteres, letras y números">
+            </div>
+            <div class="form-group">
+                <label>Confirmar contraseña</label>
+                <input id="confirmar" type="password" minlength="10" maxlength="128" autocomplete="new-password" placeholder="Repite tu contraseña">
+            </div>
+            <button class="btn btn-primary" id="guardar" type="button">Crear mi contraseña</button>
+            <div id="mensaje" style="margin-top:12px;"></div>
+        </section>
+    </main>
+
+    <script src="js/api.js"></script>
+    <script>
+        const token = new URLSearchParams(location.search).get("token") || "";
+        const etiquetasZonas = {
+            clientes: "Clientes", membresias: "Membresías", productos: "Productos",
+            ventas: "Ventas", venta_rapida: "Venta rápida", asistencias: "Asistencias",
+            agenda: "Agenda", entrenamientos: "Rutinas", nutricion: "Nutrición",
+            retos: "Retos", planilla: "Planilla", pagos: "Pagos",
+            sistema: "Sistema", configuracion: "Configuración",
+        };
+
+        function badge(texto, clase = "badge-info") {
+            return `<span class="badge ${clase}">${escapeHTML(texto)}</span>`;
+        }
+
+        async function cargarInvitacion() {
+            const estado = document.getElementById("estado-invitacion");
+            try {
+                const respuesta = await fetch(`${API_BASE_URL}/auth/invitacion-staff?token=${encodeURIComponent(token)}`);
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.detail || "La invitación no está disponible");
+
+                document.getElementById("nombre-trabajador").textContent = datos.nombre_completo;
+                document.getElementById("username-trabajador").textContent = datos.username;
+                const permisos = [];
+                permisos.push(badge(datos.es_administrador ? "Administrador · acceso total" : "Staff · acceso por zonas"));
+                permisos.push(badge(
+                    datos.es_administrador || datos.puede_eliminar ? "Puede eliminar" : "No puede eliminar",
+                    datos.es_administrador || datos.puede_eliminar ? "badge-success" : "badge-warning"
+                ));
+                permisos.push(badge(
+                    datos.es_administrador || datos.puede_exportar ? "Puede exportar/importar" : "No puede exportar/importar",
+                    datos.es_administrador || datos.puede_exportar ? "badge-success" : "badge-warning"
+                ));
+                document.getElementById("permisos-trabajador").innerHTML = permisos.join("");
+
+                const zonas = datos.es_administrador
+                    ? ["Todas las zonas del sistema"]
+                    : (datos.zonas_permitidas || "").split(",").filter(Boolean).map(zona => etiquetasZonas[zona] || zona);
+                document.getElementById("zonas-trabajador").textContent =
+                    `Zonas visibles: ${zonas.length ? zonas.join(", ") : "ninguna zona asignada"}.`;
+
+                estado.textContent = "Invitación válida";
+                estado.className = "alert alert-success";
+                document.getElementById("datos-cuenta").style.display = "block";
+            } catch (error) {
+                estado.textContent = error.message;
+                estado.className = "alert alert-error";
+            }
+        }
+
+        document.getElementById("guardar").onclick = async () => {
+            const password = document.getElementById("password").value;
+            const confirmar = document.getElementById("confirmar").value;
+            const mensaje = document.getElementById("mensaje");
+            if (password.length < 10 || !/[A-Za-zÁÉÍÓÚáéíóúÑñ]/.test(password) || !/\d/.test(password)) {
+                mensaje.textContent = "La contraseña debe tener al menos 10 caracteres, una letra y un número.";
+                return;
+            }
+            if (password !== confirmar) {
+                mensaje.textContent = "Las contraseñas no coinciden.";
+                return;
+            }
+            try {
+                const respuesta = await fetch(`${API_BASE_URL}/auth/aceptar-invitacion-staff`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ token, password }),
+                });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.detail || "No se pudo crear la contraseña");
+                mensaje.innerHTML = `${escapeHTML(datos.message)} <a href="login.html">Iniciar sesión</a>`;
+                document.getElementById("guardar").disabled = true;
+                document.getElementById("password").disabled = true;
+                document.getElementById("confirmar").disabled = true;
+            } catch (error) {
+                mensaje.textContent = error.message;
+            }
+        };
+
+        cargarInvitacion();
+    </script>
+</body>
+</html>

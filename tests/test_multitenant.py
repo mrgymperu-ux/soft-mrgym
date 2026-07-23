@@ -33,14 +33,14 @@ from backend.main import (
     actualizar_membresia,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
-    configurar_pin_desde_invitacion,
+    aceptar_invitacion_staff,
     crear_equipamiento_personalizado,
     crear_concepto_ingreso,
     crear_ajuste_caja,
     crear_documento_financiero,
     crear_empleado,
     crear_invitado_membresia,
-    crear_invitacion_pin_counter,
+    crear_invitacion_acceso_staff,
     crear_membresia,
     crear_paquete_rutina,
     crear_reserva_sala,
@@ -67,6 +67,7 @@ from backend.main import (
     get_dashboard_stats,
     guardar_biometria_facial,
     obtener_equipamiento_gimnasio,
+    obtener_invitacion_staff,
     registrar_compra,
     registrar_entrada,
     registrar_salida,
@@ -311,7 +312,7 @@ class MultiTenantTest(unittest.TestCase):
                 _request("/counter/login"), self.db,
             )
 
-    def test_invitacion_counter_configura_pin_del_usuario_ya_creado(self):
+    def test_invitacion_staff_configura_password_del_usuario_ya_creado(self):
         empleado = models.Empleado(
             gimnasio_id=self.gym1.id,
             nombre_completo="Staff Uno",
@@ -324,29 +325,36 @@ class MultiTenantTest(unittest.TestCase):
         self.db.commit()
 
         with patch.dict("os.environ", {"APP_BASE_URL": "https://gym.example.com"}):
-            respuesta = crear_invitacion_pin_counter(
+            respuesta = crear_invitacion_acceso_staff(
                 self.staff1.id,
-                schemas.CounterInvitacionCreate(email="staff@example.com", enviar_correo=False),
+                schemas.StaffInvitacionCreate(email="staff@example.com", enviar_correo=False),
                 db=self.db,
                 admin=self.admin1,
             )
 
         token = parse_qs(urlparse(respuesta["enlace"]).query)["token"][0]
-        configurar_pin_desde_invitacion(
-            schemas.CounterInvitacionAceptar(token=token, pin="654321"),
+        detalle = obtener_invitacion_staff(token=token, db=self.db)
+        self.assertEqual(detalle.nombre_completo, self.staff1.nombre_completo)
+        self.assertEqual(detalle.username, self.staff1.username)
+        self.assertFalse(detalle.es_administrador)
+        self.assertEqual(detalle.zonas_permitidas, "clientes")
+
+        aceptar_invitacion_staff(
+            schemas.StaffInvitacionAceptar(token=token, password="ClaveNueva2026"),
             db=self.db,
         )
         self.db.refresh(self.staff1)
         self.db.refresh(empleado)
-        self.assertTrue(auth.verificar_codigo_acceso("654321", self.staff1.pin_counter_hash))
+        self.assertTrue(auth.verificar_password("ClaveNueva2026", self.staff1.password_hash))
+        self.assertIsNone(self.staff1.pin_counter_hash)
         self.assertEqual(self.staff1.email, "staff@example.com")
         self.assertEqual(empleado.email, "staff@example.com")
         self.assertTrue(self.staff1.email_verificado)
-        self.assertTrue(schemas.Usuario.model_validate(self.staff1).pin_counter_configurado)
+        self.assertEqual(self.staff1.zonas_permitidas, "clientes")
 
         with self.assertRaises(HTTPException):
-            configurar_pin_desde_invitacion(
-                schemas.CounterInvitacionAceptar(token=token, pin="111111"),
+            aceptar_invitacion_staff(
+                schemas.StaffInvitacionAceptar(token=token, password="OtraClave2026"),
                 db=self.db,
             )
 

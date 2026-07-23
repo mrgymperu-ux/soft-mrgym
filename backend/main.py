@@ -2273,14 +2273,14 @@ def configurar_pin_counter(
     return {"message": "PIN de Counter actualizado"}
 
 
-@app.post("/usuarios/{usuario_id}/invitacion-counter", tags=["Counter"])
-def crear_invitacion_pin_counter(
+@app.post("/usuarios/{usuario_id}/invitacion-acceso", tags=["Usuarios"])
+def crear_invitacion_acceso_staff(
     usuario_id: int,
-    datos: schemas.CounterInvitacionCreate,
+    datos: schemas.StaffInvitacionCreate,
     db: Session = Depends(get_db),
     admin: models.Usuario = Depends(auth.requiere_administrador),
 ):
-    """Crea un enlace para que un trabajador ya registrado elija su propio PIN."""
+    """Invita a un trabajador ya registrado a crear su contraseña personal."""
     usuario = db.query(models.Usuario).filter(
         models.Usuario.id == usuario_id,
         models.Usuario.gimnasio_id == admin.gimnasio_id,
@@ -2308,14 +2308,14 @@ def crear_invitacion_pin_counter(
     ahora = ahora_lima()
     db.query(models.TokenAutenticacion).filter(
         models.TokenAutenticacion.usuario_id == usuario.id,
-        models.TokenAutenticacion.proposito == "configurar_pin_counter",
+        models.TokenAutenticacion.proposito == "configurar_password_staff",
         models.TokenAutenticacion.usado_en.is_(None),
     ).update({"usado_en": ahora}, synchronize_session=False)
     db.commit()
 
-    token = _crear_token_un_solo_uso(db, usuario.id, "configurar_pin_counter", 72 * 60)
+    token = _crear_token_un_solo_uso(db, usuario.id, "configurar_password_staff", 72 * 60)
     base = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
-    url = f"{base}/configurar-pin.html?token={token}"
+    url = f"{base}/activar-cuenta.html?token={token}"
     enviado = False
     if datos.enviar_correo and email and email_service.esta_configurado():
         try:
@@ -2323,15 +2323,15 @@ def crear_invitacion_pin_counter(
                 email,
                 "Configura tu acceso a Soft-Gym",
                 email_service.plantilla_accion(
-                    "Configura tu PIN personal",
-                    f"Hola {usuario.nombre_completo}. El gimnasio ya creó tu usuario. Elige tu PIN de 6 dígitos; este enlace vence en 72 horas.",
-                    "Crear mi PIN",
+                    "Activa tu cuenta de trabajador",
+                    f"Hola {usuario.nombre_completo}. El gimnasio ya creó tu usuario y asignó tus permisos. Crea tu contraseña personal; este enlace vence en 72 horas.",
+                    "Crear mi contraseña",
                     url,
                 ),
             )
             enviado = True
         except Exception:
-            logger.exception("No se pudo enviar la invitacion Counter al usuario %s", usuario.id)
+            logger.exception("No se pudo enviar la invitacion de acceso al usuario %s", usuario.id)
 
     return {
         "usuario_id": usuario.id,
@@ -2343,23 +2343,50 @@ def crear_invitacion_pin_counter(
     }
 
 
-@app.post("/auth/configurar-pin-invitacion", tags=["Counter"])
-def configurar_pin_desde_invitacion(
-    datos: schemas.CounterInvitacionAceptar,
+@app.get("/auth/invitacion-staff", response_model=schemas.StaffInvitacionDetalle, tags=["Auth"])
+def obtener_invitacion_staff(
+    token: str = Query(..., min_length=32, max_length=256),
     db: Session = Depends(get_db),
 ):
-    registro = _consumir_token_un_solo_uso(db, datos.token, "configurar_pin_counter")
+    registro = _obtener_token_un_solo_uso(db, token, "configurar_password_staff")
     usuario = db.query(models.Usuario).filter(
         models.Usuario.id == registro.usuario_id,
         models.Usuario.activo == True,
     ).first()
     if not usuario:
         raise HTTPException(status_code=400, detail="La cuenta ya no está disponible")
-    usuario.pin_counter_hash = auth.hash_codigo_acceso(datos.pin)
+    return schemas.StaffInvitacionDetalle(
+        nombre_completo=usuario.nombre_completo,
+        username=usuario.username,
+        es_administrador=usuario.es_administrador,
+        puede_eliminar=usuario.puede_eliminar,
+        puede_exportar=usuario.puede_exportar,
+        zonas_permitidas=usuario.zonas_permitidas,
+    )
+
+
+@app.post("/auth/aceptar-invitacion-staff", tags=["Auth"])
+def aceptar_invitacion_staff(
+    datos: schemas.StaffInvitacionAceptar,
+    db: Session = Depends(get_db),
+):
+    try:
+        auth.validar_password_segura(datos.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    registro = _consumir_token_un_solo_uso(db, datos.token, "configurar_password_staff")
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.id == registro.usuario_id,
+        models.Usuario.activo == True,
+    ).first()
+    if not usuario:
+        raise HTTPException(status_code=400, detail="La cuenta ya no está disponible")
+    usuario.password_hash = auth.hash_password(datos.password)
+    usuario.sesion_version = int(usuario.sesion_version or 1) + 1
     if usuario.email:
         usuario.email_verificado = True
     db.commit()
-    return {"message": "PIN creado correctamente. Ya puedes ingresar en el Counter del gimnasio."}
+    return {"message": "Contraseña creada correctamente. Ya puedes ingresar con tu usuario."}
 
 
 @app.get("/counter/usuarios", response_model=List[schemas.CounterUsuarioOut], tags=["Counter"])
@@ -2425,7 +2452,7 @@ def _crear_token_un_solo_uso(db: Session, usuario_id: int, proposito: str, minut
     return token
 
 
-def _consumir_token_un_solo_uso(db: Session, token: str, proposito: str) -> models.TokenAutenticacion:
+def _obtener_token_un_solo_uso(db: Session, token: str, proposito: str) -> models.TokenAutenticacion:
     import hashlib
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     registro = db.query(models.TokenAutenticacion).filter(
@@ -2435,6 +2462,11 @@ def _consumir_token_un_solo_uso(db: Session, token: str, proposito: str) -> mode
     ).first()
     if not registro or registro.expira_en < ahora_lima():
         raise HTTPException(status_code=400, detail="El enlace es invalido o ya vencio")
+    return registro
+
+
+def _consumir_token_un_solo_uso(db: Session, token: str, proposito: str) -> models.TokenAutenticacion:
+    registro = _obtener_token_un_solo_uso(db, token, proposito)
     registro.usado_en = ahora_lima()
     return registro
 

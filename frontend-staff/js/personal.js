@@ -111,26 +111,26 @@ function inyectarModalesPersonal() {
     </div>
 </div>
 
-<!-- Modal invitacion Counter -->
-<div id="modal-invitacion-counter" class="modal">
+<!-- Modal invitacion de acceso -->
+<div id="modal-invitacion-staff" class="modal">
     <div class="modal-content" style="max-width:480px;">
         <div class="modal-header">
             <h3 class="modal-title">Invitar trabajador</h3>
             <button class="modal-close" onclick="cerrarModalInvitacion()">✕</button>
         </div>
-        <p id="invitacion-counter-trabajador" style="margin:0 0 6px;color:#636E72;"></p>
+        <p id="invitacion-staff-trabajador" style="margin:0 0 6px;color:#636E72;"></p>
         <p style="margin:0 0 16px;color:#636E72;font-size:.85em;">
-            Le enviaremos un enlace seguro para que el trabajador cree su propio PIN de 6 dígitos. El enlace vence en 72 horas.
+            Le enviaremos un enlace seguro. El trabajador verá el usuario y los permisos que ya le asignaste, y creará su propia contraseña. El enlace vence en 72 horas.
         </p>
         <div class="form-group">
             <label>Correo del trabajador</label>
-            <input type="email" id="invitacion-counter-email" placeholder="trabajador@correo.com">
+            <input type="email" id="invitacion-staff-email" placeholder="trabajador@correo.com">
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:10px;">
-            <button class="btn btn-secondary" type="button" onclick="invitarCounterPorCorreo()" style="flex:1 1 180px;">✉️ Enviar por correo</button>
-            <button class="btn" type="button" onclick="invitarCounterPorWhatsApp()" style="flex:1 1 180px;background:#25D366;color:#fff;">💬 Enviar por WhatsApp</button>
+            <button class="btn btn-secondary" type="button" onclick="invitarStaffPorCorreo()" style="flex:1 1 180px;">✉️ Enviar por correo</button>
+            <button class="btn" type="button" onclick="invitarStaffPorWhatsApp()" style="flex:1 1 180px;background:#25D366;color:#fff;">💬 Enviar por WhatsApp</button>
         </div>
-        <p id="invitacion-counter-telefono" style="margin:10px 0 0;color:#636E72;font-size:.78em;"></p>
+        <p id="invitacion-staff-telefono" style="margin:10px 0 0;color:#636E72;font-size:.78em;"></p>
     </div>
 </div>
 
@@ -326,9 +326,9 @@ function abrirModalVerAcceso(usuarioId) {
     const estado = usuario.activo
         ? '<span class="badge badge-success">Activo</span>'
         : '<span class="badge badge-error">Inactivo</span>';
-    const pin = usuario.pin_counter_configurado
-        ? '<span class="badge badge-success">PIN configurado</span>'
-        : '<span class="badge badge-warning">Invitación pendiente</span>';
+    const pinCounter = usuario.pin_counter_configurado
+        ? '<span class="badge badge-success">Counter: PIN configurado</span>'
+        : '<span class="badge badge-warning">Counter: sin PIN</span>';
     const indicador = permitido => permitido
         ? '<span class="badge badge-success">Permitido</span>'
         : '<span class="badge badge-error">Sin permiso</span>';
@@ -343,7 +343,7 @@ function abrirModalVerAcceso(usuarioId) {
             <div style="padding:12px;border:1px solid var(--color-borde);border-radius:10px;">
                 <small style="color:var(--color-texto-secundario);">Ingreso al software</small>
                 <div style="font-weight:600;margin-top:3px;">${escapeHTML(usuario.username)}</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">${estado}${pin}</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">${estado}${pinCounter}</div>
             </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;">
@@ -373,10 +373,10 @@ function cerrarModalVerAcceso() {
     document.getElementById("modal-ver-acceso").classList.remove("active");
 }
 
-let invitacionCounterUsuarioId = null;
+let invitacionStaffUsuarioId = null;
 
 function datosTrabajadorInvitacion() {
-    const usuario = usuariosCache.find(u => u.id === invitacionCounterUsuarioId);
+    const usuario = usuariosCache.find(u => u.id === invitacionStaffUsuarioId);
     const empleado = usuario && usuario.empleado_id
         ? empleadosCache.find(e => e.id === usuario.empleado_id)
         : null;
@@ -388,43 +388,43 @@ function abrirModalInvitacion(usuarioId) {
     const empleado = usuario && usuario.empleado_id
         ? empleadosCache.find(e => e.id === usuario.empleado_id)
         : null;
-    invitacionCounterUsuarioId = usuarioId;
-    document.getElementById("invitacion-counter-trabajador").textContent =
+    invitacionStaffUsuarioId = usuarioId;
+    document.getElementById("invitacion-staff-trabajador").textContent =
         usuario ? `Trabajador: ${usuario.nombre_completo}` : "";
-    document.getElementById("invitacion-counter-email").value = (empleado && empleado.email) || "";
-    document.getElementById("invitacion-counter-telefono").textContent =
+    document.getElementById("invitacion-staff-email").value = (empleado && empleado.email) || "";
+    document.getElementById("invitacion-staff-telefono").textContent =
         empleado && empleado.telefono
             ? `WhatsApp: ${empleado.telefono}`
             : "Este trabajador no tiene celular registrado.";
-    document.getElementById("modal-invitacion-counter").classList.add("active");
+    document.getElementById("modal-invitacion-staff").classList.add("active");
 }
 
 function cerrarModalInvitacion() {
-    document.getElementById("modal-invitacion-counter").classList.remove("active");
-    invitacionCounterUsuarioId = null;
+    document.getElementById("modal-invitacion-staff").classList.remove("active");
+    invitacionStaffUsuarioId = null;
 }
 
-async function generarInvitacionCounter(email, enviarCorreo) {
-    return apiFetch(`/usuarios/${invitacionCounterUsuarioId}/invitacion-counter`, {
+async function generarInvitacionStaff(email, enviarCorreo) {
+    return apiFetch(`/usuarios/${invitacionStaffUsuarioId}/invitacion-acceso`, {
         method: "POST",
         body: JSON.stringify({ email: email || null, enviar_correo: enviarCorreo }),
     });
 }
 
-function mensajeInvitacionCounter(nombre, enlace) {
-    return `Hola ${nombre}, el gimnasio ya creó tu usuario en Soft-Gym. Crea tu PIN personal de 6 dígitos desde este enlace (vence en 72 horas): ${enlace}`;
+function mensajeInvitacionStaff(nombre, enlace) {
+    return `Hola ${nombre}, el gimnasio ya creó tu usuario y asignó tus permisos en Soft-Gym. Revisa tus accesos y crea tu contraseña personal desde este enlace (vence en 72 horas): ${enlace}`;
 }
 
-async function invitarCounterPorCorreo() {
-    const email = document.getElementById("invitacion-counter-email").value.trim();
+async function invitarStaffPorCorreo() {
+    const email = document.getElementById("invitacion-staff-email").value.trim();
     if (!email) { showError("Escribe el correo del trabajador"); return; }
     try {
-        const respuesta = await generarInvitacionCounter(email, true);
+        const respuesta = await generarInvitacionStaff(email, true);
         if (respuesta.enviado) {
             showSuccess("Invitación enviada por correo");
         } else {
             const asunto = "Configura tu acceso a Soft-Gym";
-            const cuerpo = mensajeInvitacionCounter(respuesta.nombre, respuesta.enlace);
+            const cuerpo = mensajeInvitacionStaff(respuesta.nombre, respuesta.enlace);
             window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
             showInfo("Abrimos tu correo con la invitación lista para enviar");
         }
@@ -432,7 +432,7 @@ async function invitarCounterPorCorreo() {
     } catch (e) { showError(e.message); }
 }
 
-async function invitarCounterPorWhatsApp() {
+async function invitarStaffPorWhatsApp() {
     const { usuario, empleado } = datosTrabajadorInvitacion();
     if (!empleado || !empleado.telefono) {
         showError("Registra el celular del trabajador antes de invitarlo por WhatsApp");
@@ -440,8 +440,8 @@ async function invitarCounterPorWhatsApp() {
     }
     const ventana = window.open("", "_blank");
     try {
-        const respuesta = await generarInvitacionCounter(null, false);
-        const url = linkWhatsApp(empleado.telefono, mensajeInvitacionCounter(usuario.nombre_completo, respuesta.enlace));
+        const respuesta = await generarInvitacionStaff(null, false);
+        const url = linkWhatsApp(empleado.telefono, mensajeInvitacionStaff(usuario.nombre_completo, respuesta.enlace));
         if (ventana) ventana.location.href = url;
         else window.location.href = url;
         cerrarModalInvitacion();

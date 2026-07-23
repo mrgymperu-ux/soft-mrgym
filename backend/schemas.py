@@ -166,14 +166,23 @@ class CounterPinRequest(BaseModel):
     pin: str = Field(pattern=r"^\d{6}$")
 
 
-class CounterInvitacionCreate(BaseModel):
+class StaffInvitacionCreate(BaseModel):
     email: Optional[EmailStr] = None
     enviar_correo: bool = False
 
 
-class CounterInvitacionAceptar(BaseModel):
+class StaffInvitacionAceptar(BaseModel):
     token: str = Field(min_length=32, max_length=256)
-    pin: str = Field(pattern=r"^\d{6}$")
+    password: str = Field(min_length=10, max_length=128)
+
+
+class StaffInvitacionDetalle(BaseModel):
+    nombre_completo: str
+    username: str
+    es_administrador: bool
+    puede_eliminar: bool
+    puede_exportar: bool
+    zonas_permitidas: Optional[str] = None
 
 
 # ==================================================================
