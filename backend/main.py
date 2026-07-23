@@ -2273,6 +2273,95 @@ def configurar_pin_counter(
     return {"message": "PIN de Counter actualizado"}
 
 
+@app.post("/usuarios/{usuario_id}/invitacion-counter", tags=["Counter"])
+def crear_invitacion_pin_counter(
+    usuario_id: int,
+    datos: schemas.CounterInvitacionCreate,
+    db: Session = Depends(get_db),
+    admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Crea un enlace para que un trabajador ya registrado elija su propio PIN."""
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.id == usuario_id,
+        models.Usuario.gimnasio_id == admin.gimnasio_id,
+        models.Usuario.activo == True,
+    ).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    email = str(datos.email).strip().lower() if datos.email else None
+    if datos.enviar_correo and not email:
+        raise HTTPException(status_code=400, detail="Indica el correo del trabajador")
+
+    if email:
+        email_en_uso = db.query(models.Usuario).filter(
+            func.lower(models.Usuario.email) == email,
+            models.Usuario.id != usuario.id,
+            models.Usuario.activo == True,
+        ).first()
+        if email_en_uso:
+            raise HTTPException(status_code=400, detail="Ese correo ya pertenece a otra cuenta activa")
+        usuario.email = email
+        if usuario.empleado:
+            usuario.empleado.email = email
+
+    ahora = ahora_lima()
+    db.query(models.TokenAutenticacion).filter(
+        models.TokenAutenticacion.usuario_id == usuario.id,
+        models.TokenAutenticacion.proposito == "configurar_pin_counter",
+        models.TokenAutenticacion.usado_en.is_(None),
+    ).update({"usado_en": ahora}, synchronize_session=False)
+    db.commit()
+
+    token = _crear_token_un_solo_uso(db, usuario.id, "configurar_pin_counter", 72 * 60)
+    base = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
+    url = f"{base}/configurar-pin.html?token={token}"
+    enviado = False
+    if datos.enviar_correo and email and email_service.esta_configurado():
+        try:
+            email_service.enviar(
+                email,
+                "Configura tu acceso a Soft-Gym",
+                email_service.plantilla_accion(
+                    "Configura tu PIN personal",
+                    f"Hola {usuario.nombre_completo}. El gimnasio ya creó tu usuario. Elige tu PIN de 6 dígitos; este enlace vence en 72 horas.",
+                    "Crear mi PIN",
+                    url,
+                ),
+            )
+            enviado = True
+        except Exception:
+            logger.exception("No se pudo enviar la invitacion Counter al usuario %s", usuario.id)
+
+    return {
+        "usuario_id": usuario.id,
+        "nombre": usuario.nombre_completo,
+        "email": email,
+        "enviado": enviado,
+        "enlace": url,
+        "expira_en": ahora + timedelta(hours=72),
+    }
+
+
+@app.post("/auth/configurar-pin-invitacion", tags=["Counter"])
+def configurar_pin_desde_invitacion(
+    datos: schemas.CounterInvitacionAceptar,
+    db: Session = Depends(get_db),
+):
+    registro = _consumir_token_un_solo_uso(db, datos.token, "configurar_pin_counter")
+    usuario = db.query(models.Usuario).filter(
+        models.Usuario.id == registro.usuario_id,
+        models.Usuario.activo == True,
+    ).first()
+    if not usuario:
+        raise HTTPException(status_code=400, detail="La cuenta ya no está disponible")
+    usuario.pin_counter_hash = auth.hash_codigo_acceso(datos.pin)
+    if usuario.email:
+        usuario.email_verificado = True
+    db.commit()
+    return {"message": "PIN creado correctamente. Ya puedes ingresar en el Counter del gimnasio."}
+
+
 @app.get("/counter/usuarios", response_model=List[schemas.CounterUsuarioOut], tags=["Counter"])
 def listar_usuarios_counter(dispositivo_token: str, db: Session = Depends(get_db)):
     dispositivo = _buscar_dispositivo_counter(db, dispositivo_token)

@@ -165,6 +165,16 @@ class CounterPinRequest(BaseModel):
     pin: str = Field(pattern=r"^\d{6}$")
 
 
+class CounterInvitacionCreate(BaseModel):
+    email: Optional[EmailStr] = None
+    enviar_correo: bool = False
+
+
+class CounterInvitacionAceptar(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    pin: str = Field(pattern=r"^\d{6}$")
+
+
 # ==================================================================
 # 0. SAAS / MULTI-TENANT
 # ==================================================================

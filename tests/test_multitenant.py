@@ -4,6 +4,7 @@ import io
 import unittest
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from PIL import Image
@@ -32,12 +33,14 @@ from backend.main import (
     actualizar_membresia,
     actualizar_tipo_ejercicio,
     actualizar_whatsapp_configuracion,
+    configurar_pin_desde_invitacion,
     crear_equipamiento_personalizado,
     crear_concepto_ingreso,
     crear_ajuste_caja,
     crear_documento_financiero,
     crear_empleado,
     crear_invitado_membresia,
+    crear_invitacion_pin_counter,
     crear_membresia,
     crear_paquete_rutina,
     crear_reserva_sala,
@@ -306,6 +309,44 @@ class MultiTenantTest(unittest.TestCase):
                     dispositivo_token=vinculo.dispositivo_token, usuario_id=otro.id, pin="123456",
                 ),
                 _request("/counter/login"), self.db,
+            )
+
+    def test_invitacion_counter_configura_pin_del_usuario_ya_creado(self):
+        empleado = models.Empleado(
+            gimnasio_id=self.gym1.id,
+            nombre_completo="Staff Uno",
+            tipo=models.TipoEmpleado.STAFF_FIJO,
+            telefono="999888777",
+        )
+        self.db.add(empleado)
+        self.db.flush()
+        self.staff1.empleado_id = empleado.id
+        self.db.commit()
+
+        with patch.dict("os.environ", {"APP_BASE_URL": "https://gym.example.com"}):
+            respuesta = crear_invitacion_pin_counter(
+                self.staff1.id,
+                schemas.CounterInvitacionCreate(email="staff@example.com", enviar_correo=False),
+                db=self.db,
+                admin=self.admin1,
+            )
+
+        token = parse_qs(urlparse(respuesta["enlace"]).query)["token"][0]
+        configurar_pin_desde_invitacion(
+            schemas.CounterInvitacionAceptar(token=token, pin="654321"),
+            db=self.db,
+        )
+        self.db.refresh(self.staff1)
+        self.db.refresh(empleado)
+        self.assertTrue(auth.verificar_codigo_acceso("654321", self.staff1.pin_counter_hash))
+        self.assertEqual(self.staff1.email, "staff@example.com")
+        self.assertEqual(empleado.email, "staff@example.com")
+        self.assertTrue(self.staff1.email_verificado)
+
+        with self.assertRaises(HTTPException):
+            configurar_pin_desde_invitacion(
+                schemas.CounterInvitacionAceptar(token=token, pin="111111"),
+                db=self.db,
             )
 
     def test_crear_staff_counter_no_requiere_password_visible(self):

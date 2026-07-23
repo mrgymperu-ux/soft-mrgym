@@ -18,7 +18,6 @@
             </div>
             <div style="display:flex;gap:8px;">
                 <button id="btn-gestionar-puestos" class="btn btn-secondary" onclick="abrirModalPuestos()">⚙️ Puestos</button>
-                <button class="btn btn-secondary" onclick="invitarStaff()">Invitar por correo</button>
                 <button class="btn btn-primary" onclick="abrirModalNuevo()">+ Nuevo Staff</button>
             </div>
         </div>
@@ -41,20 +40,6 @@
 <script src="js/api.js"></script>
 <script src="js/sidebar.js"></script>
 <script src="js/personal.js"></script>
-<script>
-async function invitarStaff(){
-    const email=prompt("Correo del nuevo trabajador:");
-    if(!email)return;
-    try{
-        const r=await apiFetch("/usuarios/invitaciones",{method:"POST",body:JSON.stringify({email,rol:"staff",zonas_permitidas:"clientes,membresias,ventas,asistencias"})});
-        if(r.enviado) showSuccess("Invitación enviada correctamente");
-        else {
-            try{await navigator.clipboard.writeText(r.enlace);showSuccess("Correo aún no configurado. El enlace de invitación fue copiado.");}
-            catch(_){prompt("Comparte este enlace seguro con el trabajador:",r.enlace);}
-        }
-    }catch(e){showError(e.message)}
-}
-</script>
 <script>initPersonal("staff_fijo");</script>
 </body>
 </html>

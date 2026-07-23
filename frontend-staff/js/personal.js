@@ -97,26 +97,26 @@ function inyectarModalesPersonal() {
     </div>
 </div>
 
-<!-- Modal PIN Counter -->
-<div id="modal-pin-counter" class="modal">
-    <div class="modal-content" style="max-width:420px;">
+<!-- Modal invitacion Counter -->
+<div id="modal-invitacion-counter" class="modal">
+    <div class="modal-content" style="max-width:480px;">
         <div class="modal-header">
-            <h3 class="modal-title">Crear PIN</h3>
-            <button class="modal-close" onclick="cerrarModalPinCounter()">✕</button>
+            <h3 class="modal-title">Invitar trabajador</h3>
+            <button class="modal-close" onclick="cerrarModalInvitacion()">✕</button>
         </div>
-        <p id="pin-counter-trabajador" style="margin:0 0 14px;color:#636E72;"></p>
+        <p id="invitacion-counter-trabajador" style="margin:0 0 6px;color:#636E72;"></p>
+        <p style="margin:0 0 16px;color:#636E72;font-size:.85em;">
+            Le enviaremos un enlace seguro para que el trabajador cree su propio PIN de 6 dígitos. El enlace vence en 72 horas.
+        </p>
         <div class="form-group">
-            <label>PIN de 6 dígitos *</label>
-            <input type="text" id="pin-counter-valor" class="pin-counter-input" inputmode="numeric" maxlength="6" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Ejemplo: 482615">
+            <label>Correo del trabajador</label>
+            <input type="email" id="invitacion-counter-email" placeholder="trabajador@correo.com">
         </div>
-        <div class="form-group">
-            <label>Confirmar PIN *</label>
-            <input type="text" id="pin-counter-confirmacion" class="pin-counter-input" inputmode="numeric" maxlength="6" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Repite el PIN">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;">
+            <button class="btn btn-secondary" type="button" onclick="invitarCounterPorCorreo()" style="flex:1 1 180px;">✉️ Enviar por correo</button>
+            <button class="btn" type="button" onclick="invitarCounterPorWhatsApp()" style="flex:1 1 180px;background:#25D366;color:#fff;">💬 Enviar por WhatsApp</button>
         </div>
-        <div class="form-actions">
-            <button class="btn btn-secondary" onclick="cerrarModalPinCounter()">Cancelar</button>
-            <button class="btn btn-primary" onclick="guardarPinCounter()">Crear PIN</button>
-        </div>
+        <p id="invitacion-counter-telefono" style="margin:10px 0 0;color:#636E72;font-size:.78em;"></p>
     </div>
 </div>
 
@@ -290,39 +290,88 @@ async function cargarPersonal() {
         <td>
             ${esAdministrador()
                 ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">✏️ Editar</button>
-                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalPinCounter(${f.id})">Crear PIN</button>` : ""}`
+                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalInvitacion(${f.id})">Invitar</button>` : ""}`
                 : '<span style="color:#636E72;font-size:0.8em;">Solo lectura</span>'}
         </td>
     </tr>`).join("");
 }
 
-let pinCounterUsuarioId = null;
+let invitacionCounterUsuarioId = null;
 
-function abrirModalPinCounter(usuarioId) {
+function datosTrabajadorInvitacion() {
+    const usuario = usuariosCache.find(u => u.id === invitacionCounterUsuarioId);
+    const empleado = usuario && usuario.empleado_id
+        ? empleadosCache.find(e => e.id === usuario.empleado_id)
+        : null;
+    return { usuario, empleado };
+}
+
+function abrirModalInvitacion(usuarioId) {
     const usuario = usuariosCache.find(u => u.id === usuarioId);
-    pinCounterUsuarioId = usuarioId;
-    document.getElementById("pin-counter-trabajador").textContent = usuario ? `Trabajador: ${usuario.nombre_completo}` : "";
-    document.getElementById("pin-counter-valor").value = "";
-    document.getElementById("pin-counter-confirmacion").value = "";
-    document.getElementById("modal-pin-counter").classList.add("active");
-    document.getElementById("pin-counter-valor").focus();
+    const empleado = usuario && usuario.empleado_id
+        ? empleadosCache.find(e => e.id === usuario.empleado_id)
+        : null;
+    invitacionCounterUsuarioId = usuarioId;
+    document.getElementById("invitacion-counter-trabajador").textContent =
+        usuario ? `Trabajador: ${usuario.nombre_completo}` : "";
+    document.getElementById("invitacion-counter-email").value = (empleado && empleado.email) || "";
+    document.getElementById("invitacion-counter-telefono").textContent =
+        empleado && empleado.telefono
+            ? `WhatsApp: ${empleado.telefono}`
+            : "Este trabajador no tiene celular registrado.";
+    document.getElementById("modal-invitacion-counter").classList.add("active");
 }
 
-function cerrarModalPinCounter() {
-    document.getElementById("modal-pin-counter").classList.remove("active");
-    pinCounterUsuarioId = null;
+function cerrarModalInvitacion() {
+    document.getElementById("modal-invitacion-counter").classList.remove("active");
+    invitacionCounterUsuarioId = null;
 }
 
-async function guardarPinCounter() {
-    const pin = document.getElementById("pin-counter-valor").value.trim();
-    const confirmacion = document.getElementById("pin-counter-confirmacion").value.trim();
-    if (!/^\d{6}$/.test(pin)) { showError("El PIN debe tener exactamente 6 dígitos"); return; }
-    if (pin !== confirmacion) { showError("Los PIN no coinciden"); return; }
+async function generarInvitacionCounter(email, enviarCorreo) {
+    return apiFetch(`/usuarios/${invitacionCounterUsuarioId}/invitacion-counter`, {
+        method: "POST",
+        body: JSON.stringify({ email: email || null, enviar_correo: enviarCorreo }),
+    });
+}
+
+function mensajeInvitacionCounter(nombre, enlace) {
+    return `Hola ${nombre}, el gimnasio ya creó tu usuario en Soft-Gym. Crea tu PIN personal de 6 dígitos desde este enlace (vence en 72 horas): ${enlace}`;
+}
+
+async function invitarCounterPorCorreo() {
+    const email = document.getElementById("invitacion-counter-email").value.trim();
+    if (!email) { showError("Escribe el correo del trabajador"); return; }
     try {
-        await apiFetch(`/usuarios/${pinCounterUsuarioId}/pin-counter`, { method: "PUT", body: JSON.stringify({ pin }) });
-        cerrarModalPinCounter();
-        showSuccess("PIN creado correctamente");
+        const respuesta = await generarInvitacionCounter(email, true);
+        if (respuesta.enviado) {
+            showSuccess("Invitación enviada por correo");
+        } else {
+            const asunto = "Configura tu acceso a Soft-Gym";
+            const cuerpo = mensajeInvitacionCounter(respuesta.nombre, respuesta.enlace);
+            window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`;
+            showInfo("Abrimos tu correo con la invitación lista para enviar");
+        }
+        cerrarModalInvitacion();
     } catch (e) { showError(e.message); }
+}
+
+async function invitarCounterPorWhatsApp() {
+    const { usuario, empleado } = datosTrabajadorInvitacion();
+    if (!empleado || !empleado.telefono) {
+        showError("Registra el celular del trabajador antes de invitarlo por WhatsApp");
+        return;
+    }
+    const ventana = window.open("", "_blank");
+    try {
+        const respuesta = await generarInvitacionCounter(null, false);
+        const url = linkWhatsApp(empleado.telefono, mensajeInvitacionCounter(usuario.nombre_completo, respuesta.enlace));
+        if (ventana) ventana.location.href = url;
+        else window.location.href = url;
+        cerrarModalInvitacion();
+    } catch (e) {
+        if (ventana) ventana.close();
+        showError(e.message);
+    }
 }
 
 // ==================================================================
