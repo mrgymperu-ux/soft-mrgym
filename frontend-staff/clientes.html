@@ -724,7 +724,7 @@
             }
             wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
                 <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;align-items:center;">
-                    <span>📋 <strong>${plan ? plan.nombre : 'Plan #' + activa.membresia_id}</strong></span>
+                    <span>📋 <strong>${esInvitado ? 'Invitado' : (plan ? plan.nombre : 'Plan #' + activa.membresia_id)}</strong></span>
                     <span>Inicio: <strong>${formatFecha(activa.fecha_inicio)}</strong></span>
                     <span>Fin: <strong>${activa.fecha_fin ? formatFecha(activa.fecha_fin) : '—'}</strong></span>
                     <span>${cfg.moneda} <strong>${fmtNum(esInvitado ? 0 : precio)}</strong></span>
@@ -1148,7 +1148,8 @@
 
             historial.forEach(cm => {
                 const plan = catalogo.find(m => m.id === cm.membresia_id);
-                const precio = plan ? plan.precio : 0;
+                const esInvitado = !!cm.invitado_por_cm_id;
+                const precio = esInvitado ? 0 : (plan ? plan.precio : 0);
                 const totalPagado = cm.monto_pagado || 0;
                 const saldoActual = Math.max(precio - totalPagado, 0);
                 const pagos = cm.pagos || [];
@@ -1156,7 +1157,7 @@
                 html += `<div style="border:1px solid var(--color-borde);border-radius:12px;margin-bottom:16px;overflow:hidden;">`;
                 html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:var(--color-fondo);flex-wrap:wrap;gap:8px;">`;
                 html += `<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:0.88em;">`;
-                html += `<span><strong>${plan ? plan.nombre : 'Plan #' + cm.membresia_id}</strong></span>`;
+                html += `<span><strong>${esInvitado ? 'Invitado' : (plan ? plan.nombre : 'Plan #' + cm.membresia_id)}</strong></span>`;
                 html += `<span>Inicio: <strong>${formatFecha(cm.fecha_inicio)}</strong></span>`;
                 html += `<span>Fin: <strong>${cm.fecha_fin ? formatFecha(cm.fecha_fin) : '\u2014'}</strong></span>`;
                 html += `<span>${cfg.moneda} <strong>${fmtNum(precio)}</strong></span>`;

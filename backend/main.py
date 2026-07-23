@@ -3143,6 +3143,64 @@ def _precio_aplicable_membresia(cm: Optional[models.ClienteMembresia], membresia
     return float(plan.precio or 0.0) if plan else 0.0
 
 
+def _nombre_visible_membresia(
+    cm: Optional[models.ClienteMembresia],
+    membresia: Optional[models.Membresia] = None,
+) -> Optional[str]:
+    """El plan técnico del titular no se expone como plan propio del invitado."""
+    if not cm:
+        return None
+    if cm.invitado_por_cm_id is not None:
+        return "Invitado"
+    plan = membresia or cm.membresia
+    return plan.nombre if plan else None
+
+
+def _periodo_efectivo_membresia(
+    db: Session,
+    cm: models.ClienteMembresia,
+) -> tuple[Optional[date], Optional[date]]:
+    """Limita una cortesía a la intersección con la vigencia de su titular."""
+    inicio, fin = cm.fecha_inicio, cm.fecha_fin
+    if cm.invitado_por_cm_id is None:
+        return inicio, fin
+    titular = db.query(models.ClienteMembresia).filter(
+        models.ClienteMembresia.id == cm.invitado_por_cm_id,
+        models.ClienteMembresia.activo == True,
+        models.ClienteMembresia.anulada == False,
+    ).first()
+    if not titular:
+        return None, None
+    if titular.fecha_inicio:
+        inicio = max(inicio, titular.fecha_inicio) if inicio else titular.fecha_inicio
+    if titular.fecha_fin:
+        fin = min(fin, titular.fecha_fin) if fin else titular.fecha_fin
+    if inicio and fin and fin < inicio:
+        return None, None
+    return inicio, fin
+
+
+def _exigir_vigencia_invitado_para_asistencia(db: Session, cliente_id: int, fecha: date):
+    """Los clientes normales conservan su flujo; una cortesía exige también un titular vigente."""
+    ultima = (
+        db.query(models.ClienteMembresia)
+        .filter(
+            models.ClienteMembresia.cliente_id == cliente_id,
+            models.ClienteMembresia.anulada == False,
+        )
+        .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
+        .first()
+    )
+    if not ultima or ultima.invitado_por_cm_id is None:
+        return
+    inicio, fin = _periodo_efectivo_membresia(db, ultima)
+    if not ultima.activo or not inicio or not fin or fecha < inicio or fecha > fin:
+        raise HTTPException(
+            status_code=403,
+            detail="La invitación no está vigente dentro del plan de quien invitó al cliente",
+        )
+
+
 @app.get("/egresos/", tags=["Finanzas"])
 def listar_egresos(
     desde: Optional[date] = None,
@@ -4192,7 +4250,7 @@ def listado_completo_clientes(
         ultimo_plan_nombre, costo, pagado, saldo, dias_para_vencer = None, None, None, None, None
         if ultimo_plan_cm:
             membresia = db.query(models.Membresia).filter(models.Membresia.id == ultimo_plan_cm.membresia_id).first()
-            ultimo_plan_nombre = membresia.nombre if membresia else None
+            ultimo_plan_nombre = _nombre_visible_membresia(ultimo_plan_cm, membresia)
             costo = _precio_aplicable_membresia(ultimo_plan_cm, membresia)
             pagado = _total_pagado_membresia(db, ultimo_plan_cm.id)
             saldo = max((costo or 0.0) - pagado, 0.0)
@@ -4339,14 +4397,18 @@ def _hidratar_filas_clientes_paginadas(
 
         porcentaje = None
         plan_asistencia = ultimo_valido_por_cliente.get(cliente.id)
-        if plan_asistencia and plan_asistencia.fecha_inicio and plan_asistencia.fecha_fin:
-            fecha_limite = min(plan_asistencia.fecha_fin, hoy)
-            if fecha_limite < plan_asistencia.fecha_inicio:
+        inicio_asistencia, fin_asistencia = (
+            _periodo_efectivo_membresia(db, plan_asistencia)
+            if plan_asistencia else (None, None)
+        )
+        if inicio_asistencia and fin_asistencia:
+            fecha_limite = min(fin_asistencia, hoy)
+            if fecha_limite < inicio_asistencia:
                 porcentaje = 0.0
             else:
-                dias_transcurridos = max((fecha_limite - plan_asistencia.fecha_inicio).days, 1)
+                dias_transcurridos = max((fecha_limite - inicio_asistencia).days, 1)
                 dias_asistidos = sum(
-                    plan_asistencia.fecha_inicio <= fecha <= fecha_limite
+                    inicio_asistencia <= fecha <= fecha_limite
                     for fecha in asistencias_por_cliente.get(cliente.id, set())
                 )
                 porcentaje = round(min(dias_asistidos / dias_transcurridos * 100, 100.0), 1)
@@ -4357,7 +4419,7 @@ def _hidratar_filas_clientes_paginadas(
             activo=cliente.activo,
             fecha_vencimiento=fecha_vencimiento,
             dias_para_vencer=dias_para_vencer,
-            ultimo_plan=plan.nombre if plan else cliente.membresia_texto,
+            ultimo_plan=_nombre_visible_membresia(ultimo, plan) if ultimo else cliente.membresia_texto,
             costo=costo,
             pagado=pagado,
             saldo=saldo,
@@ -4748,23 +4810,26 @@ def _calcular_porcentaje_asistencia(db: Session, cliente_id: int) -> Optional[fl
         .order_by(models.ClienteMembresia.fecha_inicio.desc())
         .first()
     )
-    if not ultimo_plan or not ultimo_plan.fecha_inicio or not ultimo_plan.fecha_fin:
+    if not ultimo_plan:
         return None
 
+    fecha_inicio, fecha_fin = _periodo_efectivo_membresia(db, ultimo_plan)
+    if not fecha_inicio or not fecha_fin:
+        return None
     hoy = hoy_lima()
-    fecha_limite = min(ultimo_plan.fecha_fin, hoy)
-    if fecha_limite < ultimo_plan.fecha_inicio:
+    fecha_limite = min(fecha_fin, hoy)
+    if fecha_limite < fecha_inicio:
         return 0.0
 
     # Dias transcurridos desde el inicio del plan hasta hoy (o hasta
     # que vencio, si ya vencio). Minimo 1 para evitar division por 0.
-    dias_transcurridos = max((fecha_limite - ultimo_plan.fecha_inicio).days, 1)
+    dias_transcurridos = max((fecha_limite - fecha_inicio).days, 1)
 
     dias_asistidos = (
         db.query(func.count(func.distinct(func.date(models.Asistencia.fecha_hora_entrada))))
         .filter(
             models.Asistencia.cliente_id == cliente_id,
-            models.Asistencia.fecha_hora_entrada >= datetime.combine(ultimo_plan.fecha_inicio, datetime.min.time()),
+            models.Asistencia.fecha_hora_entrada >= datetime.combine(fecha_inicio, datetime.min.time()),
             models.Asistencia.fecha_hora_entrada <= datetime.combine(fecha_limite, datetime.max.time()),
         )
         .scalar()
@@ -5684,7 +5749,7 @@ def membresias_por_vencer(
                 cliente_id=cliente.id,
                 nombre_cliente=nombre_completo,
                 telefono=cliente.telefono,
-                membresia_nombre=membresia.nombre,
+                membresia_nombre=_nombre_visible_membresia(cm, membresia),
                 fecha_fin=cm.fecha_fin,
                 dias_restantes=(cm.fecha_fin - hoy).days,
             )
@@ -5997,16 +6062,20 @@ def crear_invitado_membresia(
 
     valores = datos.model_dump()
     valores["codigo_acceso"] = None
+    valores["membresia_texto"] = "Invitado"
     invitado = models.Cliente(**valores, gimnasio_id=gid)
     db.add(invitado)
     db.flush()
 
     dias = int(plan.dias_invitado)
+    fecha_fin_invitado = hoy + timedelta(days=dias)
+    if titular.fecha_fin:
+        fecha_fin_invitado = min(fecha_fin_invitado, titular.fecha_fin)
     acceso = models.ClienteMembresia(
         cliente_id=invitado.id,
         membresia_id=plan.id,
         fecha_inicio=hoy,
-        fecha_fin=hoy + timedelta(days=dias),
+        fecha_fin=fecha_fin_invitado,
         monto_pagado=0,
         fecha_pago_saldo=None,
         metodo_pago="efectivo",
@@ -6023,7 +6092,11 @@ def crear_invitado_membresia(
     db.refresh(invitado)
     db.refresh(acceso)
     invitado.porcentaje_asistencia = None
-    return {"cliente": invitado, "membresia": acceso, "dias_asignados": dias}
+    return {
+        "cliente": invitado,
+        "membresia": acceso,
+        "dias_asignados": max((acceso.fecha_fin - acceso.fecha_inicio).days, 0),
+    }
 
 
 def _sincronizar_fechas_cliente(db: Session, cliente_id: int):
@@ -6389,7 +6462,7 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
         dias_restantes = (cm_activa.fecha_fin - hoy).days if cm_activa.fecha_fin else None
         membresia_actual = schemas.FichaMembresiaActual(
             cm_id=cm_activa.id,
-            nombre=membresia.nombre if membresia else "—",
+            nombre=_nombre_visible_membresia(cm_activa, membresia) or "—",
             fecha_fin=cm_activa.fecha_fin,
             dias_restantes=dias_restantes,
             precio=precio_aplicable,
@@ -7166,6 +7239,7 @@ def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get
     cliente = db.query(models.Cliente).filter(models.Cliente.id == datos.cliente_id, models.Cliente.gimnasio_id == get_gid(usuario)).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    _exigir_vigencia_invitado_para_asistencia(db, cliente.id, hoy_lima())
 
     db_asistencia = models.Asistencia(
         cliente_id=datos.cliente_id,
@@ -7191,6 +7265,7 @@ def registrar_entrada_facial(datos: schemas.AsistenciaCreate, db: Session = Depe
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
     hoy = hoy_lima()
+    _exigir_vigencia_invitado_para_asistencia(db, cliente.id, hoy)
     membresia = db.query(models.ClienteMembresia).filter(
         models.ClienteMembresia.cliente_id == cliente.id,
         models.ClienteMembresia.activo == True,
@@ -11296,7 +11371,7 @@ def resumen_portal_alumno(cliente: models.Cliente = Depends(auth.get_cliente_act
         saldo = round(max(precio - pagado, 0), 2)
         pago_vencido = bool(saldo > 0.009 and membresia.fecha_pago_saldo and membresia.fecha_pago_saldo < hoy_lima())
         sin_pagos_pendientes = saldo <= 0.009
-        plan = {"nombre": membresia.membresia.nombre, "inicio": membresia.fecha_inicio,
+        plan = {"nombre": _nombre_visible_membresia(membresia, membresia.membresia), "inicio": membresia.fecha_inicio,
                 "fin": membresia.fecha_fin, "precio": round(precio, 2), "pagado": round(pagado, 2),
                 "saldo": saldo, "fecha_proximo_pago": membresia.fecha_pago_saldo,
                 "incluye_nutricion": bool(membresia.membresia.incluye_nutricion),
@@ -11335,6 +11410,7 @@ def marcar_asistencia_desde_portal(
     if not gimnasio or gimnasio.latitud is None or gimnasio.longitud is None:
         raise HTTPException(status_code=409, detail="El gimnasio aun no configuro la ubicacion para marcar asistencia")
     hoy = hoy_lima()
+    _exigir_vigencia_invitado_para_asistencia(db, cliente.id, hoy)
     membresia = db.query(models.ClienteMembresia).filter(
         models.ClienteMembresia.cliente_id == cliente.id,
         models.ClienteMembresia.activo == True,

@@ -88,7 +88,10 @@ def generar_recibo_membresia_pdf(cliente_membresia, cliente, membresia, config) 
     elementos.append(Spacer(1, 6))
 
     nombre_cliente = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
-    deuda = max(membresia.precio - (cliente_membresia.monto_pagado or 0.0), 0.0)
+    es_invitado = bool(getattr(cliente_membresia, "invitado_por_cm_id", None))
+    nombre_concepto = "Invitado" if es_invitado else membresia.nombre
+    precio = 0.0 if es_invitado else membresia.precio
+    deuda = max(precio - (cliente_membresia.monto_pagado or 0.0), 0.0)
 
     elementos.append(Paragraph(f"<b>Cliente:</b> {nombre_cliente}", _estilo_normal))
     elementos.append(Paragraph(f"<b>Fecha de emision:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", _estilo_normal))
@@ -96,7 +99,7 @@ def generar_recibo_membresia_pdf(cliente_membresia, cliente, membresia, config) 
 
     datos_tabla = [
         ["Concepto", "Monto"],
-        [membresia.nombre, f"{config.moneda} {membresia.precio:.2f}"],
+        [nombre_concepto, f"{config.moneda} {precio:.2f}"],
         ["Monto pagado", f"{config.moneda} {(cliente_membresia.monto_pagado or 0.0):.2f}"],
         ["Saldo pendiente", f"{config.moneda} {deuda:.2f}"],
         ["Vigencia", f"{cliente_membresia.fecha_inicio.strftime('%d/%m/%Y')} - {cliente_membresia.fecha_fin.strftime('%d/%m/%Y') if cliente_membresia.fecha_fin else 'N/A'}"],
@@ -177,6 +180,12 @@ def generar_contrato_pdf(cliente, cliente_membresia, membresia, config) -> bytes
     elementos = _encabezado_gimnasio(config, "Contrato de Matricula")
 
     nombre_cliente = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
+    es_invitado = bool(getattr(cliente_membresia, "invitado_por_cm_id", None))
+    nombre_plan = "Invitado" if es_invitado else membresia.nombre
+    precio = 0.0 if es_invitado else membresia.precio
+    duracion_dias = membresia.duracion_dias
+    if es_invitado and cliente_membresia.fecha_fin:
+        duracion_dias = max((cliente_membresia.fecha_fin - cliente_membresia.fecha_inicio).days, 0)
 
     elementos.append(Paragraph(
         f"Entre <b>{config.nombre_gimnasio or 'el gimnasio'}</b> y <b>{nombre_cliente}</b>"
@@ -186,9 +195,9 @@ def generar_contrato_pdf(cliente, cliente_membresia, membresia, config) -> bytes
     ))
 
     datos_tabla = [
-        ["Plan", membresia.nombre],
-        ["Monto", f"{config.moneda} {membresia.precio:.2f}"],
-        ["Duracion", f"{membresia.duracion_dias} dias"],
+        ["Plan", nombre_plan],
+        ["Monto", f"{config.moneda} {precio:.2f}"],
+        ["Duracion", f"{duracion_dias} dias"],
         ["Inicio", cliente_membresia.fecha_inicio.strftime("%d/%m/%Y")],
         ["Vencimiento", cliente_membresia.fecha_fin.strftime("%d/%m/%Y") if cliente_membresia.fecha_fin else "N/A"],
         ["Horario de acceso", f"{membresia.hora_inicio_acceso} - {membresia.hora_fin_acceso}"],

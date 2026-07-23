@@ -597,8 +597,10 @@ class MultiTenantTest(unittest.TestCase):
         self.db.refresh(titular)
         self.assertTrue(schemas.ClienteMembresia.model_validate(titular).invitacion_usada)
         ficha = ficha_rapida_cliente(invitado.id, db=self.db, usuario=self.admin1)
+        self.assertEqual(ficha.membresia_actual.nombre, "Invitado")
         self.assertEqual(ficha.membresia_actual.precio, 0)
         self.assertEqual(ficha.membresia_actual.deuda_pendiente, 0)
+        self.assertEqual(invitado.membresia_texto, "Invitado")
 
         with self.assertRaises(HTTPException) as ya_usada:
             crear_invitado_membresia(
@@ -629,6 +631,59 @@ class MultiTenantTest(unittest.TestCase):
         self.db.refresh(acceso)
         self.assertTrue(acceso.anulada)
         self.assertFalse(acceso.activo)
+
+    def test_invitado_no_excede_vigencia_del_titular_ni_registra_asistencia_fuera(self):
+        plan = models.Membresia(
+            gimnasio_id=self.gym1.id,
+            nombre="Plan corto con invitado",
+            precio=50,
+            duracion_dias=10,
+            permite_invitado=True,
+            dias_invitado=5,
+        )
+        self.db.add(plan)
+        self.db.commit()
+        titular = asignar_membresia_a_cliente(
+            self.cliente1.id,
+            schemas.ClienteMembresiaCreate(
+                cliente_id=self.cliente1.id,
+                membresia_id=plan.id,
+                monto_pagado=50,
+                vendido_por_id=self.admin1.id,
+            ),
+            idempotency_key="matricula-titular-corta-0001",
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+        titular.fecha_fin = titular.fecha_inicio + timedelta(days=3)
+        self.db.commit()
+
+        respuesta = crear_invitado_membresia(
+            titular.id,
+            schemas.ClienteCreate(nombre="Invitado Vigencia"),
+            idempotency_key="crear-invitado-corto-0001",
+            db=self.db,
+            usuario=self.admin1,
+        )
+        invitado = respuesta["cliente"]
+        acceso = respuesta["membresia"]
+        self.assertEqual(acceso.fecha_fin, titular.fecha_fin)
+        self.assertEqual(respuesta["dias_asignados"], 3)
+
+        # Si luego se acorta la membresía titular, el invitado deja de poder
+        # ingresar aunque su fecha_fin almacenada todavía sea posterior.
+        titular.fecha_fin = titular.fecha_inicio + timedelta(days=1)
+        self.db.commit()
+        fuera_de_vigencia = titular.fecha_fin + timedelta(days=1)
+        self.assertLessEqual(fuera_de_vigencia, acceso.fecha_fin)
+        with patch("backend.main.hoy_lima", return_value=fuera_de_vigencia):
+            with self.assertRaises(HTTPException) as vencida:
+                registrar_entrada(
+                    schemas.AsistenciaCreate(cliente_id=invitado.id),
+                    db=self.db,
+                    usuario=self.admin1,
+                )
+        self.assertEqual(vencida.exception.status_code, 403)
 
     def test_reprogramar_matricula_solo_sin_asistencias(self):
         plan = models.Membresia(gimnasio_id=self.gym1.id, nombre="Mensual", precio=100, duracion_dias=30)
