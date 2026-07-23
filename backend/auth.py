@@ -377,7 +377,9 @@ _ZONA_POR_PREFIJO = {
     "membresias": "membresias", "cliente-membresias": "membresias",
     "productos": "productos", "compras": "productos",
     "ventas": "ventas", "asistencias": "asistencias", "asistencias-empleado": "asistencias",
-    "progreso": "progreso", "medidas": "progreso",
+    # Medidas y progreso forman parte de la ficha del cliente, por lo
+    # que deben respetar el permiso ya existente de la zona Clientes.
+    "progreso": "clientes", "medidas": "clientes",
     "tipos-ejercicio": "entrenamientos", "rutinas": "entrenamientos", "paquetes-rutina": "entrenamientos",
     "equipamiento-gimnasio": "entrenamientos",
     "rutina-dias": "entrenamientos", "rutina-ejercicios": "entrenamientos",

@@ -17,7 +17,7 @@ const NAV_ITEMS = [
     {
         seccion: "Gestion",
         items: [
-            { href: "gestion-medidas.html", icono: "📏", texto: "Medidas", zona: "medidas" },
+            { href: "gestion-medidas.html", icono: "📏", texto: "Medidas", zona: "clientes" },
             { href: "membresias.html", icono: "🎫", texto: "Membresias", zona: "membresias" },
             { href: "productos.html", icono: "📦", texto: "Productos", zona: "productos" },
             { href: "ventas.html", icono: "💰", texto: "Ventas", zona: "ventas" },

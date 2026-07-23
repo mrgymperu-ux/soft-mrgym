@@ -474,6 +474,8 @@ class MultiTenantTest(unittest.TestCase):
 
     def test_zonas_se_validan_en_backend(self):
         self.assertIs(auth.requiere_staff(_request("/clientes/"), self.staff1), self.staff1)
+        self.assertIs(auth.requiere_staff(_request("/progreso/cliente/1"), self.staff1), self.staff1)
+        self.assertIs(auth.requiere_staff(_request("/medidas/cliente/1"), self.staff1), self.staff1)
         self.assertIs(auth.requiere_staff(_request("/comercial/resumen"), self.staff1), self.staff1)
         with self.assertRaises(HTTPException) as error:
             auth.requiere_staff(_request("/ventas/"), self.staff1)
