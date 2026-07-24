@@ -5,26 +5,28 @@
 
     const MODELO_VERSION = "human-3.3.6-faceres";
     const UMBRAL_COINCIDENCIA = 0.55;
-    const CAPTURAS_REGISTRO = 5;
+    const CAPTURAS_REGISTRO = 4;
+    const CLAVE_ESTACION_ACTIVA = "mrgym_rf_estacion_activa";
+    const CLAVE_EVENTO_RECONOCIDO = "mrgym_rf_evento";
     let modoDispositivo = "desactivado";
     let umbralReal = 0.60;
     let umbralVivo = 0.60;
     let umbralRostro = 0.65;
     let anchoRostroMinimo = 120;
-    let requiereParpadeo = true;
-    let intervaloMs = 220;
+    let requiereParpadeo = false;
+    let intervaloMs = 120;
     const CONFIG = {
         backend: "webgl",
         modelBasePath: "vendor/human/models/",
         cacheSensitivity: 0.01,
-        filter: { enabled: true, equalization: true },
+        filter: { enabled: true, equalization: false },
         face: {
             enabled: true,
             // La webcam del counter permanece vertical; evitar buscar rotaciones
             // reduce trabajo sin afectar el uso normal de frente.
             detector: { rotation: false, maxDetected: 2, minConfidence: 0.55 },
-            mesh: { enabled: true },
-            iris: { enabled: true },
+            mesh: { enabled: false },
+            iris: { enabled: false },
             description: { enabled: true },
             antispoof: { enabled: true },
             liveness: { enabled: true },
@@ -33,7 +35,7 @@
         body: { enabled: false },
         hand: { enabled: false },
         object: { enabled: false },
-        gesture: { enabled: true },
+        gesture: { enabled: false },
     };
 
     let human = null;
@@ -54,23 +56,62 @@
     let socketRemoto = null;
     let ofertaRemotaEnCurso = false;
     let candidatosRemotosPendientes = [];
+    let intervaloActividadEstacion = null;
     const ultimoIntentoPorCliente = new Map();
 
     const elemento = (id) => document.getElementById(id);
+    const esEstacion = () => document.body?.dataset.rfEstacion === "true";
+
+    function guardarActividadEstacion() {
+        if (!esEstacion()) return;
+        localStorage.setItem(CLAVE_ESTACION_ACTIVA, JSON.stringify({
+            activa: true,
+            actualizada_en: Date.now(),
+        }));
+    }
+
+    function iniciarActividadEstacion() {
+        if (!esEstacion()) return;
+        guardarActividadEstacion();
+        if (intervaloActividadEstacion) window.clearInterval(intervaloActividadEstacion);
+        intervaloActividadEstacion = window.setInterval(guardarActividadEstacion, 2000);
+    }
+
+    function detenerActividadEstacion() {
+        if (!esEstacion()) return;
+        if (intervaloActividadEstacion) window.clearInterval(intervaloActividadEstacion);
+        intervaloActividadEstacion = null;
+        localStorage.removeItem(CLAVE_ESTACION_ACTIVA);
+    }
+
+    function publicarIngresoFacial(clienteId, nombre, mensaje) {
+        localStorage.setItem(CLAVE_EVENTO_RECONOCIDO, JSON.stringify({
+            id: `${Date.now()}-${clienteId}`,
+            cliente_id: clienteId,
+            nombre,
+            mensaje,
+            creado_en: Date.now(),
+        }));
+    }
 
     async function cargarModoDispositivo() {
         const config = await window.getConfiguracion();
         modoDispositivo = config.reconocimiento_facial_modo || "desactivado";
+        umbralReal = 0.60;
+        umbralVivo = 0.60;
+        umbralRostro = 0.65;
+        anchoRostroMinimo = 120;
+        requiereParpadeo = false;
+        intervaloMs = 120;
+        CONFIG.face.detector.minConfidence = 0.55;
         if (modoDispositivo === "movil") {
             umbralReal = 0.45;
             umbralVivo = 0.45;
             umbralRostro = 0.55;
             anchoRostroMinimo = 85;
             requiereParpadeo = false;
-            intervaloMs = 350;
+            intervaloMs = 240;
             CONFIG.face.detector.minConfidence = 0.45;
-            CONFIG.face.iris.enabled = false;
-            CONFIG.gesture.enabled = false;
         }
         return modoDispositivo;
     }
@@ -121,7 +162,7 @@
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Este navegador no permite usar la cámara");
         if (!window.isSecureContext) throw new Error("En el móvil abre el sistema con HTTPS para permitir la cámara");
         const videoConfig = modoDispositivo === "webcam_1080p"
-            ? { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } }
+            ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
             : { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } };
         stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
@@ -132,6 +173,7 @@
         await video.play();
         elemento("rf-camera").style.display = "block";
         marcarBoton(true);
+        iniciarActividadEstacion();
     }
 
     function panelQrRemoto() {
@@ -163,6 +205,7 @@
             await video.play();
             elemento("rf-camera").style.display = "block";
             marcarBoton(true);
+            iniciarActividadEstacion();
             return;
         }
         const tokenRemoto = localStorage.getItem("mrgym_camara_remota_token");
@@ -181,6 +224,7 @@
                 await video.play();
                 elemento("rf-camera").style.display = "block";
                 marcarBoton(true);
+                iniciarActividadEstacion();
                 resolve();
             };
         });
@@ -214,6 +258,7 @@
         const video = elemento("rf-video");
         if (video) video.srcObject = null;
         marcarBoton(false);
+        detenerActividadEstacion();
     }
 
     function abrirModal(titulo) {
@@ -279,12 +324,18 @@
     }
 
     async function procesarReconocimiento(cara) {
-        const candidatos = descriptores
-            .map((item) => ({ ...item, similitud: similitud(cara.embedding, item.descriptor) }))
-            .sort((a, b) => b.similitud - a.similitud);
-        const mejor = candidatos[0];
-        const segundo = candidatos[1];
-        const margenSeguro = !segundo || mejor.similitud - segundo.similitud >= 0.03;
+        let mejor = null;
+        let segundo = null;
+        for (const item of descriptores) {
+            const valorSimilitud = similitud(cara.embedding, item.descriptor);
+            if (!mejor || valorSimilitud > mejor.similitud) {
+                segundo = mejor;
+                mejor = { item, similitud: valorSimilitud };
+            } else if (!segundo || valorSimilitud > segundo.similitud) {
+                segundo = { item, similitud: valorSimilitud };
+            }
+        }
+        const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.03;
 
         if (!mejor || mejor.similitud < UMBRAL_COINCIDENCIA || !margenSeguro) {
             ultimoCandidato = null;
@@ -292,9 +343,9 @@
             estado("Rostro no reconocido. Intenta de nuevo.");
             return;
         }
-        if (ultimoCandidato === mejor.cliente_id) repeticionesCandidato += 1;
+        if (ultimoCandidato === mejor.item.cliente_id) repeticionesCandidato += 1;
         else {
-            ultimoCandidato = mejor.cliente_id;
+            ultimoCandidato = mejor.item.cliente_id;
             repeticionesCandidato = 1;
         }
         if (repeticionesCandidato < 2) {
@@ -302,8 +353,8 @@
             return;
         }
 
-        const clienteId = mejor.cliente_id;
-        const nombre = mejor.nombre_completo;
+        const clienteId = mejor.item.cliente_id;
+        const nombre = mejor.item.nombre_completo;
         if (Date.now() - (ultimoIntentoPorCliente.get(clienteId) || 0) < 15000) return;
         ultimoIntentoPorCliente.set(clienteId, Date.now());
         ultimoCandidato = null;
@@ -317,10 +368,13 @@
                 ? `${nombre}, tu ingreso ya estaba registrado.`
                 : `Ingreso registrado correctamente. Bienvenido, ${nombre}.`;
             avisarMovil(mensaje);
+            publicarIngresoFacial(clienteId, nombre, mensaje);
             estado("Reconocimiento activo en segundo plano", "ok");
             if (!acceso.ya_registrada && typeof window.showSuccess === "function") window.showSuccess(`Ingreso registrado: ${nombre}`);
-            if (typeof window.cargarUltimosIngresos === "function") await window.cargarUltimosIngresos();
-            if (typeof window.cargarDashboard === "function") await window.cargarDashboard();
+            const actualizaciones = [];
+            if (typeof window.cargarUltimosIngresos === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarUltimosIngresos()));
+            if (typeof window.cargarDashboard === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarDashboard()));
+            if (actualizaciones.length) void Promise.allSettled(actualizaciones);
         } catch (error) {
             const mensaje = error.message || "No se pudo autorizar el ingreso";
             avisarMovil(`${nombre}: ${mensaje}`);
@@ -335,7 +389,7 @@
     }
 
     async function procesarRegistro(cara) {
-        if (Date.now() - ultimaCaptura < 650) return;
+        if (Date.now() - ultimaCaptura < 420) return;
         capturas.push(Array.from(cara.embedding));
         actualizarProgresoCaptura(capturas.length);
         ultimaCaptura = Date.now();
@@ -386,14 +440,18 @@
             apagarCamara();
             const denegado = error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
             estado(denegado ? "Permite el acceso a la webcam para continuar" : (error.message || "No se pudo iniciar la webcam"), "error");
+            throw error;
         }
     }
 
     window.alternarReconocimientoFacial = async function () {
         prepararGuiaSegmentada();
+        if (esEstacion()) iniciarActividadEstacion();
         if (stream || elemento("modal-reconocimiento-facial").classList.contains("active")) {
-            window.cerrarReconocimientoFacial();
-            return;
+            if (!esEstacion() || stream) {
+                window.cerrarReconocimientoFacial();
+                return;
+            }
         }
         modo = "reconocer";
         objetivoClienteId = null;
@@ -402,17 +460,27 @@
         try {
             await cargarModoDispositivo();
             exigirModoActivo();
-            descriptores = await window.apiFetch("/biometria-facial/descriptores");
+            estado("Cargando cámara y rostros registrados...");
+            const resultados = await Promise.all([
+                window.apiFetch("/biometria-facial/descriptores"),
+                cargarMotor(),
+                encenderCamara(),
+            ]);
+            descriptores = resultados[0];
             if (!descriptores.length) {
+                apagarCamara();
                 estado("Aún no hay rostros registrados. Busca un cliente y usa Registrar rostro.");
                 elemento("rf-ayuda").style.display = "none";
                 return;
             }
-            await prepararCamara();
-            elemento("modal-reconocimiento-facial").classList.remove("active");
+            estado("Mira al frente y muévete ligeramente");
+            ciclo();
+            if (!esEstacion()) elemento("modal-reconocimiento-facial").classList.remove("active");
             estado("Reconocimiento activo en segundo plano", "ok");
         } catch (error) {
-            estado(error.message, "error");
+            apagarCamara();
+            const denegado = error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
+            estado(denegado ? "Permite el acceso a la webcam para continuar" : (error.message || "No se pudo iniciar la webcam"), "error");
         }
     };
 
@@ -455,6 +523,7 @@
         socketRemoto?.close();
         streamRemoto = null;
         apagarCamara();
+        detenerActividadEstacion();
     });
 
     // Aprovecha el tiempo ocioso después de cargar el panel. No abre la cámara

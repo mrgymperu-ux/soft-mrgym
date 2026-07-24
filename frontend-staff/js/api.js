@@ -458,6 +458,190 @@ function fechaMaximaPagoISO(fechaInicio, fechaFin, costoDiario, montoPagado) {
     return fechaFin && calculada > fechaFin ? fechaFin : calculada;
 }
 
+const _calendariosPago = new WeakMap();
+const _calendariosPagoActivos = new Set();
+
+function fechaPagoDentroDeRango(inputOId) {
+    const input = typeof inputOId === "string" ? document.getElementById(inputOId) : inputOId;
+    if (!input || !input.value) return false;
+    return (!input.min || input.value >= input.min) && (!input.max || input.value <= input.max);
+}
+
+function _fechaPagoUTC(iso) {
+    const partes = String(iso || "").split("-").map(Number);
+    if (partes.length !== 3 || partes.some(n => !Number.isFinite(n))) return null;
+    return new Date(Date.UTC(partes[0], partes[1] - 1, partes[2]));
+}
+
+function _isoPagoUTC(fecha) {
+    return fecha.toISOString().slice(0, 10);
+}
+
+function _cerrarCalendariosPago(excepto = null) {
+    for (const estado of [..._calendariosPagoActivos]) {
+        if (!estado.input.isConnected) {
+            estado.popover.remove();
+            _calendariosPagoActivos.delete(estado);
+            continue;
+        }
+        if (estado !== excepto) {
+            estado.popover.hidden = true;
+            estado.abierto = false;
+        }
+    }
+}
+
+function _posicionarCalendarioPago(estado) {
+    const rect = estado.trigger.getBoundingClientRect();
+    const ancho = Math.min(320, window.innerWidth - 24);
+    const izquierda = Math.max(12, Math.min(rect.left, window.innerWidth - ancho - 12));
+    estado.popover.style.width = `${ancho}px`;
+    estado.popover.style.left = `${izquierda}px`;
+    estado.popover.style.top = `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 370))}px`;
+}
+
+function _renderCalendarioPago(estado) {
+    const { input, popover } = estado;
+    const vista = estado.vistaMes;
+    const anio = vista.getUTCFullYear();
+    const mes = vista.getUTCMonth();
+    const primerDia = new Date(Date.UTC(anio, mes, 1));
+    const ultimoDia = new Date(Date.UTC(anio, mes + 1, 0)).getUTCDate();
+    const desplazamientoLunes = (primerDia.getUTCDay() + 6) % 7;
+
+    popover.innerHTML = "";
+    const cabecera = document.createElement("div");
+    cabecera.className = "calendario-pago-cabecera";
+    const anterior = document.createElement("button");
+    anterior.type = "button";
+    anterior.className = "calendario-pago-nav";
+    anterior.textContent = "‹";
+    anterior.setAttribute("aria-label", "Mes anterior");
+    const titulo = document.createElement("strong");
+    titulo.textContent = primerDia.toLocaleDateString("es-PE", {
+        month: "long", year: "numeric", timeZone: "UTC",
+    });
+    const siguiente = document.createElement("button");
+    siguiente.type = "button";
+    siguiente.className = "calendario-pago-nav";
+    siguiente.textContent = "›";
+    siguiente.setAttribute("aria-label", "Mes siguiente");
+    cabecera.append(anterior, titulo, siguiente);
+    popover.appendChild(cabecera);
+
+    const grilla = document.createElement("div");
+    grilla.className = "calendario-pago-grilla";
+    for (const nombre of ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]) {
+        const diaSemana = document.createElement("span");
+        diaSemana.className = "calendario-pago-semana";
+        diaSemana.textContent = nombre;
+        grilla.appendChild(diaSemana);
+    }
+    for (let i = 0; i < desplazamientoLunes; i += 1) {
+        const vacio = document.createElement("span");
+        grilla.appendChild(vacio);
+    }
+    for (let dia = 1; dia <= ultimoDia; dia += 1) {
+        const fecha = new Date(Date.UTC(anio, mes, dia));
+        const iso = _isoPagoUTC(fecha);
+        const fueraAntes = !!input.min && iso < input.min;
+        const fueraDespues = !!input.max && iso > input.max;
+        const boton = document.createElement("button");
+        boton.type = "button";
+        boton.textContent = String(dia);
+        boton.className = "calendario-pago-dia";
+        if (fueraAntes) boton.classList.add("fuera-antes");
+        if (fueraDespues) boton.classList.add("fuera-despues");
+        if (input.value === iso) boton.classList.add("seleccionado");
+        boton.disabled = fueraAntes || fueraDespues;
+        boton.setAttribute("aria-label", formatFecha(iso));
+        if (!boton.disabled) {
+            boton.addEventListener("click", () => {
+                input.value = iso;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                actualizarCalendarioPago(input);
+                _cerrarCalendariosPago();
+            });
+        }
+        grilla.appendChild(boton);
+    }
+    popover.appendChild(grilla);
+
+    anterior.addEventListener("click", () => {
+        estado.vistaMes = new Date(Date.UTC(anio, mes - 1, 1));
+        _renderCalendarioPago(estado);
+    });
+    siguiente.addEventListener("click", () => {
+        estado.vistaMes = new Date(Date.UTC(anio, mes + 1, 1));
+        _renderCalendarioPago(estado);
+    });
+}
+
+function activarCalendarioPago(inputOId, alCambiar = null) {
+    const input = typeof inputOId === "string" ? document.getElementById(inputOId) : inputOId;
+    if (!input) return null;
+    let estado = _calendariosPago.get(input);
+    if (estado) {
+        estado.alCambiar = alCambiar;
+        actualizarCalendarioPago(input);
+        return estado;
+    }
+
+    _cerrarCalendariosPago();
+    input.classList.add("calendario-pago-input");
+    const contenedor = document.createElement("div");
+    contenedor.className = "calendario-pago";
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "calendario-pago-trigger";
+    const popover = document.createElement("div");
+    popover.className = "calendario-pago-popover";
+    popover.hidden = true;
+    contenedor.appendChild(trigger);
+    input.insertAdjacentElement("afterend", contenedor);
+    document.body.appendChild(popover);
+
+    estado = { input, contenedor, trigger, popover, alCambiar, abierto: false, vistaMes: null };
+    _calendariosPago.set(input, estado);
+    _calendariosPagoActivos.add(estado);
+    input.addEventListener("change", () => {
+        actualizarCalendarioPago(input);
+        if (typeof estado.alCambiar === "function") estado.alCambiar(input.value);
+    });
+    trigger.addEventListener("click", (evento) => {
+        evento.stopPropagation();
+        _cerrarCalendariosPago(estado);
+        const base = _fechaPagoUTC(input.value) || _fechaPagoUTC(fechaLocalISO()) || new Date();
+        estado.vistaMes = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), 1));
+        estado.abierto = !estado.abierto;
+        estado.popover.hidden = !estado.abierto;
+        if (estado.abierto) {
+            _renderCalendarioPago(estado);
+            _posicionarCalendarioPago(estado);
+        }
+    });
+    popover.addEventListener("click", evento => evento.stopPropagation());
+    actualizarCalendarioPago(input);
+    return estado;
+}
+
+function actualizarCalendarioPago(inputOId) {
+    const input = typeof inputOId === "string" ? document.getElementById(inputOId) : inputOId;
+    if (!input) return;
+    const estado = _calendariosPago.get(input);
+    if (!estado) return;
+    const valida = !input.value || fechaPagoDentroDeRango(input);
+    estado.trigger.textContent = input.value ? `📅 ${formatFecha(input.value)}` : "📅 Seleccionar fecha";
+    estado.trigger.classList.toggle("invalida", !valida);
+    estado.trigger.disabled = input.disabled;
+    if (estado.abierto) _renderCalendarioPago(estado);
+}
+
+document.addEventListener("click", () => _cerrarCalendariosPago());
+document.addEventListener("keydown", evento => {
+    if (evento.key === "Escape") _cerrarCalendariosPago();
+});
+
 function formatFecha(fecha) {
     if (!fecha) return "-";
     // Formato pedido: dd-mm-aa (dia-mes-anio de 2 digitos).

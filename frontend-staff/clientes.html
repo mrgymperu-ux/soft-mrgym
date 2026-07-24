@@ -4,8 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clientes - Soft-Gym</title>
-    <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260721-3">
+    <link rel="stylesheet" href="css/styles.css?v=20260723-3">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-1">
+    <link rel="preload" href="vendor/human/human.js" as="script">
+    <link rel="prefetch" href="vendor/human/models/faceres.bin">
+    <link rel="prefetch" href="vendor/human/models/blazeface.bin">
+    <link rel="prefetch" href="vendor/human/models/antispoof.bin">
+    <link rel="prefetch" href="vendor/human/models/liveness.bin">
     <script src="js/tema.js"></script>
     <style>
         .form-row.foto-row label { align-self:flex-start; margin-top:6px; }
@@ -355,7 +360,7 @@
         </div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalPagarSaldo()">Cancelar</button>
-            <button class="btn btn-primary" onclick="confirmarPagarSaldo()">✅ Registrar pago</button>
+            <button class="btn btn-primary" id="ps-confirmar-pago" onclick="confirmarPagarSaldo()">✅ Registrar pago</button>
         </div>
     </div>
 </div>
@@ -403,9 +408,9 @@
     </div>
 </div>
 
-<script src="js/api.js?v=20260723-1"></script>
+<script src="js/api.js?v=20260723-3"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260723-1"></script>
+<script src="js/flujo-cliente.js?v=20260723-3"></script>
 <script src="js/medidas-catalogo.js"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
@@ -438,7 +443,7 @@
             if (!window.abrirRegistroFacial) {
                 if (boton) { boton.disabled = true; boton.textContent = "Preparando cámara..."; }
                 promesaReconocimientoFacial ||= cargarScriptUnaVez("vendor/human/human.js")
-                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260721-5"));
+                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260724-1"));
                 await promesaReconocimientoFacial;
             }
             await window.abrirRegistroFacial(clienteId);
@@ -1247,6 +1252,7 @@
         document.getElementById("cm-metodo").value = cmEditando.metodo_pago || "efectivo";
         document.getElementById("cm-fecha-saldo").value = cmEditando.fecha_pago_saldo || "";
         document.getElementById("cm-activo").value = cmEditando.activo ? "true" : "false";
+        activarCalendarioPago("cm-fecha-saldo");
         _cmActualizarLimiteFechaSaldo();
         document.getElementById("modal-cm").classList.add("active");
     }
@@ -1269,7 +1275,7 @@
         const costoDiario = (Number(plan.monto_mensual || plan.precio || 0) * periodos) / duracion;
         input.min = inicio;
         input.max = fechaMaximaPagoISO(inicio, fin, costoDiario, pagado);
-        if ((input.min && input.value < input.min) || (input.max && input.value > input.max)) input.value = "";
+        actualizarCalendarioPago(input);
     }
 
     function cerrarModalCM() {
@@ -1381,6 +1387,9 @@
         document.getElementById('ps-fecha-prox').min = '';
         document.getElementById('ps-fecha-prox').max = '';
         document.getElementById('ps-fecha-prox-row').style.display = 'none';
+        activarCalendarioPago('ps-fecha-prox', _psCheckParcial);
+        actualizarCalendarioPago('ps-fecha-prox');
+        _psCheckParcial();
         document.getElementById('modal-pagar-saldo').classList.add('active');
     }
 
@@ -1390,21 +1399,21 @@
         const monto = parseFloat(document.getElementById('ps-monto').value) || 0;
         const esParcial = monto > 0 && monto < _psCtx.saldo - 0.01;
         const fechaInput = document.getElementById('ps-fecha-prox');
+        const botonConfirmar = document.getElementById('ps-confirmar-pago');
         document.getElementById('ps-fecha-prox-row').style.display = esParcial ? 'flex' : 'none';
-        if (!esParcial) {
-            fechaInput.value = '';
-            return;
+        if (esParcial) {
+            fechaInput.min = fechaLocalISO();
+            fechaInput.max = fechaMaximaPagoISO(
+                _psCtx.fechaInicio,
+                _psCtx.fechaFin,
+                _psCtx.costoDiario,
+                _psCtx.pagado + monto,
+            );
         }
-        fechaInput.min = fechaLocalISO();
-        fechaInput.max = fechaMaximaPagoISO(
-            _psCtx.fechaInicio,
-            _psCtx.fechaFin,
-            _psCtx.costoDiario,
-            _psCtx.pagado + monto,
-        );
-        if ((fechaInput.min && fechaInput.value < fechaInput.min) || (fechaInput.max && fechaInput.value > fechaInput.max)) {
-            fechaInput.value = '';
-        }
+        actualizarCalendarioPago(fechaInput);
+        const montoValido = monto > 0 && monto <= _psCtx.saldo + 0.01;
+        const fechaValida = !esParcial || fechaPagoDentroDeRango(fechaInput);
+        botonConfirmar.disabled = !(montoValido && fechaValida);
     }
 
     function cerrarModalPagarSaldo() {

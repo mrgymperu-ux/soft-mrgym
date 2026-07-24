@@ -89,6 +89,7 @@ body {
 
 .btn { border:none; border-radius:8px; padding:10px 18px; font-size:var(--fuente-base); cursor:pointer; font-weight:500; transition:opacity 0.15s; }
 .btn:hover { opacity: 0.9; }
+.btn:disabled { background:#C8CDD5 !important; color:#fff !important; cursor:not-allowed; opacity:1; }
 .btn-primary { background: var(--color-primario); color: #fff; }
 .btn-secondary { background: var(--color-borde); color: var(--color-texto); }
 .btn-danger { background: var(--color-error); color: #fff; }
@@ -188,6 +189,22 @@ table thead th,
 .form-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .form-row label { width:170px; flex-shrink:0; font-size:0.85em; font-weight:600; }
 .form-row input, .form-row select, .form-row textarea { flex:1; padding:8px 10px; border:1px solid var(--color-borde); border-radius:8px; background:var(--color-input); color:var(--color-texto); font-size:0.88em; font-family:inherit; }
+.calendario-pago-input { display:none !important; }
+.calendario-pago { position:relative; flex:1; min-width:0; }
+.calendario-pago-trigger { width:100%; min-height:38px; padding:8px 10px; border:1px solid var(--color-borde); border-radius:8px; background:var(--color-input); color:var(--color-texto); font:inherit; font-size:.88em; text-align:left; cursor:pointer; }
+.calendario-pago-trigger.invalida { border-color:var(--color-error); background:#FBE1DC; color:#8F2F20; }
+.calendario-pago-trigger:disabled { cursor:not-allowed; opacity:.65; }
+.calendario-pago-popover { position:fixed; z-index:1000; padding:12px; border:1px solid var(--color-borde); border-radius:12px; background:var(--color-blanco); color:var(--color-texto); box-shadow:0 12px 32px rgba(0,0,0,.2); }
+.calendario-pago-popover[hidden] { display:none; }
+.calendario-pago-cabecera { display:grid; grid-template-columns:36px 1fr 36px; align-items:center; gap:6px; margin-bottom:8px; text-align:center; text-transform:capitalize; }
+.calendario-pago-nav { width:34px; height:34px; border:0; border-radius:8px; background:var(--color-fondo); color:var(--color-texto); font-size:1.4em; cursor:pointer; }
+.calendario-pago-grilla { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.calendario-pago-semana { padding:5px 0; color:var(--color-texto-secundario); font-size:.68em; font-weight:700; text-align:center; }
+.calendario-pago-dia { aspect-ratio:1; min-width:0; border:1px solid transparent; border-radius:7px; background:var(--color-fondo); color:var(--color-texto); font:inherit; font-size:.78em; cursor:pointer; }
+.calendario-pago-dia:hover:not(:disabled) { border-color:var(--color-primario); }
+.calendario-pago-dia.seleccionado { background:var(--color-primario); color:#fff; font-weight:700; }
+.calendario-pago-dia.fuera-antes { background:#ECEFF3; color:#A4A9B0; cursor:not-allowed; }
+.calendario-pago-dia.fuera-despues { background:#D94F3D; border-color:#B93728; color:#fff; font-weight:700; cursor:not-allowed; opacity:1; }
 .form-row.arriba { align-items:flex-start; }
 .form-row.arriba label { margin-top:6px; }
 

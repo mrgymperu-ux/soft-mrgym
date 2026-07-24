@@ -102,7 +102,7 @@ function _fcInyectarModales() {
             <div class="form-row" id="fc-am-fecha-saldo-row" style="display:none;"><label>Fecha de pago del saldo</label><input type="date" id="fc-am-fecha-saldo"></div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="cerrarModalFc('modal-fc-membresia')">Cancelar</button>
-                <button class="btn btn-primary" onclick="_fcAsignarMembresia()">Asignar</button>
+                <button class="btn btn-primary" id="fc-am-asignar" onclick="_fcAsignarMembresia()">Asignar</button>
             </div>
         </div>
     </div>
@@ -127,6 +127,7 @@ function _fcInyectarModales() {
     </div>
     `;
     document.body.appendChild(wrap);
+    activarCalendarioPago("fc-am-fecha-saldo", _fcRecalcularSaldo);
 }
 
 function cerrarModalFc(id) {
@@ -385,8 +386,11 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
     document.getElementById("fc-am-fin").value = "";
     document.getElementById("fc-am-monto-ahora").value = "";
     document.getElementById("fc-am-metodo").value = "efectivo";
+    document.getElementById("fc-am-fecha-saldo").value = "";
     document.getElementById("fc-am-saldo-row").style.display = "none";
     document.getElementById("fc-am-fecha-saldo-row").style.display = "none";
+    document.getElementById("fc-am-asignar").disabled = true;
+    actualizarCalendarioPago("fc-am-fecha-saldo");
 
     document.getElementById("modal-fc-membresia").classList.add("active");
 }
@@ -432,6 +436,7 @@ function _fcActualizarLimiteFechaSaldo() {
     if (!plan || !inicio) {
         inputFecha.removeAttribute("min");
         inputFecha.removeAttribute("max");
+        actualizarCalendarioPago(inputFecha);
         return;
     }
     const duracion = Math.max(Number(plan.duracion_dias || 0), 1);
@@ -449,13 +454,16 @@ function _fcActualizarLimiteFechaSaldo() {
     if (fechaFin && fechaFin < fechaMaxima) fechaMaxima = fechaFin;
     inputFecha.min = inicio;
     inputFecha.max = fechaMaxima;
-    if (inputFecha.value && inputFecha.value > fechaMaxima) inputFecha.value = fechaMaxima;
+    actualizarCalendarioPago(inputFecha);
 }
 
 function _fcRecalcularSaldo() {
     const sel = document.getElementById("fc-am-plan");
     const plan = _fcPlanesCache.find((p) => String(p.id) === sel.value);
-    if (!plan) return;
+    if (!plan) {
+        document.getElementById("fc-am-asignar").disabled = true;
+        return;
+    }
     const montoAhora = parseFloat(document.getElementById("fc-am-monto-ahora").value) || 0;
     const saldo = Math.max(plan.precio - montoAhora, 0);
     const filaSaldo = document.getElementById("fc-am-saldo-row");
@@ -469,9 +477,13 @@ function _fcRecalcularSaldo() {
         filaFecha.style.display = "none";
     }
     _fcActualizarLimiteFechaSaldo();
+    const montoValido = montoAhora >= 0 && montoAhora <= Number(plan.precio || 0) + 0.01;
+    const fechaValida = saldo <= 0.009 || fechaPagoDentroDeRango("fc-am-fecha-saldo");
+    document.getElementById("fc-am-asignar").disabled = !(montoValido && fechaValida);
 }
 
 async function _fcAsignarMembresia() {
+    if (document.getElementById("fc-am-asignar").disabled) return;
     const planId = parseInt(document.getElementById("fc-am-plan").value);
     if (!planId) { showError("Selecciona un plan"); return; }
     const montoAhora = parseFloat(document.getElementById("fc-am-monto-ahora").value);

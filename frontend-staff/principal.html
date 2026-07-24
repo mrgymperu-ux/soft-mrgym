@@ -4,8 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel - Soft-Gym</title>
-    <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260721-3">
+    <link rel="stylesheet" href="css/styles.css?v=20260723-3">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-1">
+    <link rel="preload" href="vendor/human/human.js" as="script">
+    <link rel="prefetch" href="vendor/human/models/faceres.bin">
+    <link rel="prefetch" href="vendor/human/models/blazeface.bin">
+    <link rel="prefetch" href="vendor/human/models/antispoof.bin">
+    <link rel="prefetch" href="vendor/human/models/liveness.bin">
     <script src="js/tema.js"></script>
     <style>
         .stat-card.clickeable { cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s, transform 0.1s; }
@@ -315,7 +320,7 @@
         </div>
         <div class="form-actions">
             <button class="btn btn-secondary" onclick="cerrarModalPagoSaldo()">Cancelar</button>
-            <button class="btn btn-primary" onclick="confirmarPagoSaldo()">✅ Registrar pago</button>
+            <button class="btn btn-primary" id="mps-confirmar-pago" onclick="confirmarPagoSaldo()">✅ Registrar pago</button>
         </div>
     </div>
 </div>
@@ -335,9 +340,9 @@
     </div>
 </div>
 
-<script src="js/api.js?v=20260723-1"></script>
+<script src="js/api.js?v=20260723-3"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260723-1"></script>
+<script src="js/flujo-cliente.js?v=20260723-3"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
 
@@ -355,20 +360,51 @@
         if (window.alternarReconocimientoFacial && window.abrirRegistroFacial) return Promise.resolve();
         if (!cargaReconocimientoFacial) {
             cargaReconocimientoFacial = cargarScriptPrincipal("vendor/human/human.js")
-                .then(() => cargarScriptPrincipal("js/reconocimiento-facial.js?v=20260721-5"))
+                .then(() => cargarScriptPrincipal("js/reconocimiento-facial.js?v=20260724-1"))
                 .catch(error => { cargaReconocimientoFacial = null; throw error; });
         }
         return cargaReconocimientoFacial;
     }
-    async function alternarReconocimientoFacialLazy() {
-        const boton = document.getElementById("btn-reconocimiento-facial");
-        if (boton) boton.disabled = true;
+    function estacionFacialActiva() {
         try {
-            await asegurarReconocimientoFacial();
-            await window.alternarReconocimientoFacial();
-        } catch (error) { showError(error.message); }
-        finally { if (boton) boton.disabled = false; }
+            const estado = JSON.parse(localStorage.getItem("mrgym_rf_estacion_activa") || "null");
+            return Boolean(estado?.activa && Date.now() - Number(estado.actualizada_en || 0) < 7000);
+        } catch (_) { return false; }
     }
+
+    function actualizarBotonEstacionFacial() {
+        const boton = document.getElementById("btn-reconocimiento-facial");
+        if (!boton) return;
+        const activa = estacionFacialActiva();
+        boton.classList.toggle("activo", activa);
+        boton.setAttribute("aria-pressed", String(activa));
+        boton.setAttribute("aria-label", activa ? "Abrir estación de reconocimiento facial" : "Iniciar reconocimiento facial");
+        boton.title = activa ? "Reconocimiento facial activo en segundo plano" : "Iniciar reconocimiento facial";
+    }
+
+    function alternarReconocimientoFacialLazy() {
+        const activa = estacionFacialActiva();
+        if (!activa) {
+            localStorage.setItem("mrgym_rf_estacion_activa", JSON.stringify({
+                activa: true,
+                actualizada_en: Date.now(),
+            }));
+        }
+        const ventana = window.open(
+            activa ? "" : "reconocimiento-facial.html",
+            "mrgym-reconocimiento-facial",
+            "popup=yes,width=520,height=760,resizable=yes,scrollbars=no",
+        );
+        if (!ventana) {
+            if (!activa) localStorage.removeItem("mrgym_rf_estacion_activa");
+            showError("Permite las ventanas emergentes para iniciar la estación facial");
+            return;
+        }
+        ventana.focus();
+        actualizarBotonEstacionFacial();
+    }
+    actualizarBotonEstacionFacial();
+    setInterval(actualizarBotonEstacionFacial, 2500);
     async function abrirRegistroFacialLazy(clienteId) {
         try {
             await asegurarReconocimientoFacial();
@@ -797,6 +833,8 @@
                     ${accionesIngresoHtml}
                 </div>
             `;
+            const inputReprogramar = m ? document.getElementById(`fecha-reprogramar-pago-${m.cm_id}`) : null;
+            if (inputReprogramar) activarCalendarioPago(inputReprogramar);
         } catch (error) {
             showError(error.message);
         }
@@ -1210,6 +1248,9 @@
             document.getElementById("mps-fecha-prox").min = "";
             document.getElementById("mps-fecha-prox").max = "";
             document.getElementById("mps-fecha-prox-row").style.display = "none";
+            activarCalendarioPago("mps-fecha-prox", _mpsCheckParcial);
+            actualizarCalendarioPago("mps-fecha-prox");
+            _mpsCheckParcial();
 
             document.getElementById("modal-pago-saldo").classList.add("active");
         } catch (e) { showError(e.message); }
@@ -1226,21 +1267,21 @@
         const monto = parseFloat(document.getElementById("mps-monto").value) || 0;
         const esParcial = monto > 0 && monto < _pagoSaldoCtx.saldo - 0.01;
         const fechaInput = document.getElementById("mps-fecha-prox");
+        const botonConfirmar = document.getElementById("mps-confirmar-pago");
         document.getElementById("mps-fecha-prox-row").style.display = esParcial ? "flex" : "none";
-        if (!esParcial) {
-            fechaInput.value = "";
-            return;
+        if (esParcial) {
+            fechaInput.min = fechaLocalISO();
+            fechaInput.max = fechaMaximaPagoISO(
+                _pagoSaldoCtx.fechaInicio,
+                _pagoSaldoCtx.fechaFin,
+                _pagoSaldoCtx.costoDiario,
+                _pagoSaldoCtx.pagado + monto,
+            );
         }
-        fechaInput.min = fechaLocalISO();
-        fechaInput.max = fechaMaximaPagoISO(
-            _pagoSaldoCtx.fechaInicio,
-            _pagoSaldoCtx.fechaFin,
-            _pagoSaldoCtx.costoDiario,
-            _pagoSaldoCtx.pagado + monto,
-        );
-        if ((fechaInput.min && fechaInput.value < fechaInput.min) || (fechaInput.max && fechaInput.value > fechaInput.max)) {
-            fechaInput.value = "";
-        }
+        actualizarCalendarioPago(fechaInput);
+        const montoValido = monto > 0 && monto <= _pagoSaldoCtx.saldo + 0.01;
+        const fechaValida = !esParcial || fechaPagoDentroDeRango(fechaInput);
+        botonConfirmar.disabled = !(montoValido && fechaValida);
     }
 
     async function confirmarPagoSaldo() {

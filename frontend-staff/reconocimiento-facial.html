@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estación facial - Mr Gym</title>
+    <link rel="stylesheet" href="css/styles.css?v=20260723-3">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-1">
+    <style>
+        body { margin:0; min-width:320px; background:#080b0a; overflow:hidden; }
+        #modal-reconocimiento-facial { display:block; }
+        .rf-station-note { position:absolute; z-index:6; top:72px; left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); padding:7px 11px; border-radius:999px; background:rgba(0,0,0,.55); color:rgba(255,255,255,.86); font-size:.74rem; text-align:center; backdrop-filter:blur(8px); }
+        #rf-ayuda { pointer-events:none; }
+    </style>
+</head>
+<body data-rf-estacion="true">
+    <div id="modal-reconocimiento-facial" class="modal active">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h1 class="modal-title" id="rf-titulo">Estación facial</h1>
+                <button class="modal-close" type="button" onclick="detenerEstacion()" aria-label="Detener y cerrar">✕</button>
+            </div>
+            <div class="rf-station-note">Puedes seguir usando Mr Gym en la ventana principal</div>
+            <div id="rf-camera" class="rf-camera" style="display:none;">
+                <video id="rf-video" playsinline muted></video>
+                <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 320" aria-hidden="true"></svg></div>
+            </div>
+            <div id="rf-status" class="rf-status">Preparando reconocimiento...</div>
+            <div id="rf-ayuda">Mantén esta ventana abierta. Puede quedar detrás de la ventana principal.</div>
+        </div>
+    </div>
+
+    <script src="js/api.js?v=20260723-3"></script>
+    <script src="vendor/human/human.js"></script>
+    <script src="js/reconocimiento-facial.js?v=20260724-1"></script>
+    <script>
+        function detenerEstacion() {
+            if (typeof window.cerrarReconocimientoFacial === "function") window.cerrarReconocimientoFacial();
+            window.close();
+        }
+
+        window.addEventListener("DOMContentLoaded", async () => {
+            requireAuth();
+            if (!getToken()) return;
+            await window.alternarReconocimientoFacial();
+        });
+    </script>
+</body>
+</html>

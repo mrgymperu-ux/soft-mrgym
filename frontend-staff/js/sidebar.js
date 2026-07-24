@@ -186,3 +186,18 @@ document.addEventListener("DOMContentLoaded", () => {
     requireAuth();
     renderSidebar();
 });
+
+let _ultimoEventoFacialMostrado = null;
+window.addEventListener("storage", (evento) => {
+    if (evento.key !== "mrgym_rf_evento" || !evento.newValue) return;
+    try {
+        const ingreso = JSON.parse(evento.newValue);
+        if (!ingreso.id || ingreso.id === _ultimoEventoFacialMostrado) return;
+        if (Date.now() - Number(ingreso.creado_en || 0) > 15000) return;
+        _ultimoEventoFacialMostrado = ingreso.id;
+        if (typeof showSuccess === "function") showSuccess(ingreso.mensaje || `Ingreso registrado: ${ingreso.nombre}`);
+        window.dispatchEvent(new CustomEvent("mrgym:datos-actualizados", {
+            detail: { origen: "reconocimiento-facial", clienteId: ingreso.cliente_id },
+        }));
+    } catch (_) {}
+});
