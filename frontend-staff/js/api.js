@@ -447,6 +447,17 @@ function fechaLocalISO(fecha = new Date()) {
     return `${anio}-${mes}-${dia}`;
 }
 
+function fechaMaximaPagoISO(fechaInicio, fechaFin, costoDiario, montoPagado) {
+    if (!fechaInicio || !(costoDiario > 0)) return fechaFin || "";
+    const partes = fechaInicio.split("-").map(Number);
+    if (partes.length !== 3 || partes.some(n => !Number.isFinite(n))) return fechaFin || "";
+    const diasCubiertos = Math.max(Math.round(Math.max(Number(montoPagado) || 0, 0) / costoDiario), 0);
+    const limite = new Date(Date.UTC(partes[0], partes[1] - 1, partes[2]));
+    limite.setUTCDate(limite.getUTCDate() + diasCubiertos);
+    const calculada = limite.toISOString().slice(0, 10);
+    return fechaFin && calculada > fechaFin ? fechaFin : calculada;
+}
+
 function formatFecha(fecha) {
     if (!fecha) return "-";
     // Formato pedido: dd-mm-aa (dia-mes-anio de 2 digitos).

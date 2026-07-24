@@ -335,9 +335,9 @@
     </div>
 </div>
 
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20260723-1"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260722-3"></script>
+<script src="js/flujo-cliente.js?v=20260723-1"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }
 
@@ -522,8 +522,10 @@
                         <span onclick="event.stopPropagation();_biPagarSaldo(${c.id})" title="Pagar saldo" style="cursor:pointer;font-size:1.2em;flex-shrink:0;margin-left:6px;">\uD83D\uDCB3</span>`;
                     }
                     const nombreSeguro = escapeAttr(c.nombre_completo);
+                    const hoy = fechaLocalISO();
+                    const pagoDebeReprogramarse = saldo > 0.009 && !!c.fecha_pago_saldo && c.fecha_pago_saldo <= hoy;
                     const accionesHtml = c.tiene_membresia_catalogo
-                        ? `<button type="button" class="bi-accion" onclick="event.stopPropagation();mostrarFichaParaAsistencia(${c.id})" title="Registrar ingreso">✅ Ingreso</button>`
+                        ? `<button type="button" class="bi-accion" style="${pagoDebeReprogramarse ? 'border:2px solid var(--color-error);color:var(--color-error);' : ''}" onclick="event.stopPropagation();${pagoDebeReprogramarse ? `mostrarFichaParaAsistencia(${c.id})` : `confirmarIngreso(${c.id})`}" title="Registrar ingreso">✅ Ingreso</button>`
                         : `<button type="button" class="bi-accion" onclick="event.stopPropagation();actualizarDatosYAsignarMembresia(${c.id})" title="Actualizar datos y asignar membresía">＋ Membresía</button>
                            <button type="button" class="bi-accion" onclick="event.stopPropagation();mostrarFichaClaseDia(${c.id}, '${nombreSeguro}')" title="Cobrar pase por día">☀️ Por día</button>`;
                     return `
@@ -716,7 +718,7 @@
             const moneda = config.moneda;
 
             // ---- badge de plan ----
-            let planBadge, montosHtml = "", proxPagoHtml = "", btnPagoHtml = "";
+            let planBadge, montosHtml = "", proxPagoHtml = "", btnPagoHtml = "", reprogramacionHtml = "";
             if (m) {
                 const precio  = m.precio || 0;
                 const pagado  = m.monto_pagado || 0;
@@ -743,9 +745,22 @@
                     const hoy = fechaLocalISO();
                     const vencido = m.fecha_pago_saldo <= hoy;
                     proxPagoHtml = `<div class="ficha-prox-pago ${vencido ? 'vencido' : ''}">` +
-                        (vencido ? '⚠️ Pago vencío el ' : '📅 Próximo pago: ') +
+                        (vencido ? '⚠️ Pago venció el ' : '📅 Próximo pago: ') +
                         `${formatFecha(m.fecha_pago_saldo)}</div>`;
-                    btnPagoHtml = `<button class="btn ${vencido ? 'btn-danger' : 'btn-warning'}" style="width:100%;margin-bottom:8px;" onclick="abrirModalPagoSaldo(${clienteId})">💳 ${vencido ? 'Pago VENCIDO' : 'Registrar pago de saldo'}</button>`;
+                    if (vencido) {
+                        const fechaMaxima = m.fecha_maxima_proximo_pago || hoy;
+                        const puedeReprogramar = fechaMaxima >= hoy;
+                        reprogramacionHtml = `
+                            <div style="border:1px solid var(--color-borde);border-radius:10px;padding:12px;margin-bottom:8px;">
+                                <div style="font-weight:700;margin-bottom:8px;">Reprogramar tu próxima fecha de pago</div>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <input type="date" id="fecha-reprogramar-pago-${m.cm_id}" min="${hoy}" max="${fechaMaxima}" style="flex:1;" ${puedeReprogramar ? "" : "disabled"}>
+                                    <button class="btn btn-warning" onclick="reprogramarProximoPagoIngreso(${clienteId}, ${m.cm_id})" ${puedeReprogramar ? "" : "disabled"}>Reprogramar</button>
+                                </div>
+                            </div>`;
+                    } else {
+                        btnPagoHtml = `<button class="btn btn-warning" style="width:100%;margin-bottom:8px;" onclick="abrirModalPagoSaldo(${clienteId})">💳 Registrar pago de saldo</button>`;
+                    }
                 } else if (saldo > 0) {
                     btnPagoHtml = `<button class="btn btn-secondary" style="width:100%;margin-bottom:8px;" onclick="abrirModalPagoSaldo(${clienteId})">💳 Cobrar saldo pendiente</button>`;
                 }
@@ -778,6 +793,7 @@
                     <div style="font-size:0.72em;color:var(--color-texto-secundario);text-align:center;margin-bottom:12px;">${ultimoIngreso}</div>
                     ${btnPagoHtml}
                     ${getRol() === "staff" ? `<button class="btn btn-secondary" style="width:100%;margin-bottom:8px;" onclick="abrirRegistroFacialLazy(${clienteId})">👁 ${biometria.registrada ? 'Actualizar rostro' : 'Registrar rostro'}</button>` : ""}
+                    ${reprogramacionHtml}
                     ${accionesIngresoHtml}
                 </div>
             `;
@@ -794,6 +810,21 @@
             document.getElementById("bi-resultados").innerHTML = "";
             await cargarUltimosIngresos();
             await cargarDashboard();
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    async function reprogramarProximoPagoIngreso(clienteId, cmId) {
+        const input = document.getElementById(`fecha-reprogramar-pago-${cmId}`);
+        if (!input || !input.value) return;
+        if ((input.min && input.value < input.min) || (input.max && input.value > input.max)) return;
+        try {
+            await apiFetch(`/cliente-membresias/${cmId}/reprogramar-proximo-pago`, {
+                method: "PUT",
+                body: JSON.stringify({ fecha_proximo_pago: input.value }),
+            });
+            await mostrarFichaParaAsistencia(clienteId);
         } catch (error) {
             showError(error.message);
         }
@@ -1139,7 +1170,7 @@
     // Carga la membresía activa del cliente y permite registrar el
     // pago parcial o total usando PUT /cliente-membresias/{cm_id}.
     // ============================================================
-    let _pagoSaldoCtx = null; // { clienteId, cmId, precio, pagado, saldo }
+    let _pagoSaldoCtx = null; // { clienteId, cmId, precio, pagado, saldo, fechaInicio, fechaFin, costoDiario }
 
     async function abrirModalPagoSaldo(clienteId) {
         try {
@@ -1154,7 +1185,17 @@
             const pagado = m.monto_pagado || 0;
             const saldo  = Math.max(precio - pagado, 0);
 
-            _pagoSaldoCtx = { clienteId, cmId: m.cm_id, precio, pagado, saldo, moneda: config.moneda };
+            _pagoSaldoCtx = {
+                clienteId,
+                cmId: m.cm_id,
+                precio,
+                pagado,
+                saldo,
+                moneda: config.moneda,
+                fechaInicio: m.fecha_inicio,
+                fechaFin: m.fecha_fin,
+                costoDiario: m.costo_diario_programacion || 0,
+            };
 
             document.getElementById("mps-detalle").innerHTML =
                 `<strong>${ficha.nombre_completo}</strong><br>` +
@@ -1166,6 +1207,8 @@
             document.getElementById("mps-monto").max    = saldo;
             document.getElementById("mps-metodo").value = "efectivo";
             document.getElementById("mps-fecha-prox").value = "";
+            document.getElementById("mps-fecha-prox").min = "";
+            document.getElementById("mps-fecha-prox").max = "";
             document.getElementById("mps-fecha-prox-row").style.display = "none";
 
             document.getElementById("modal-pago-saldo").classList.add("active");
@@ -1182,7 +1225,22 @@
         if (!_pagoSaldoCtx) return;
         const monto = parseFloat(document.getElementById("mps-monto").value) || 0;
         const esParcial = monto > 0 && monto < _pagoSaldoCtx.saldo - 0.01;
+        const fechaInput = document.getElementById("mps-fecha-prox");
         document.getElementById("mps-fecha-prox-row").style.display = esParcial ? "flex" : "none";
+        if (!esParcial) {
+            fechaInput.value = "";
+            return;
+        }
+        fechaInput.min = fechaLocalISO();
+        fechaInput.max = fechaMaximaPagoISO(
+            _pagoSaldoCtx.fechaInicio,
+            _pagoSaldoCtx.fechaFin,
+            _pagoSaldoCtx.costoDiario,
+            _pagoSaldoCtx.pagado + monto,
+        );
+        if ((fechaInput.min && fechaInput.value < fechaInput.min) || (fechaInput.max && fechaInput.value > fechaInput.max)) {
+            fechaInput.value = "";
+        }
     }
 
     async function confirmarPagoSaldo() {
@@ -1193,7 +1251,10 @@
             showError(`El monto (${formatCurrency(monto)}) supera el saldo pendiente (${formatCurrency(_pagoSaldoCtx.saldo)})`); return;
         }
         const esParcial = monto < _pagoSaldoCtx.saldo - 0.01;
-        const fechaProx = esParcial ? (document.getElementById("mps-fecha-prox").value || null) : null;
+        const fechaInput = document.getElementById("mps-fecha-prox");
+        const fechaProx = esParcial ? (fechaInput.value || null) : null;
+        if (esParcial && (!fechaProx || (fechaInput.min && fechaProx < fechaInput.min) || (fechaInput.max && fechaProx > fechaInput.max))) return;
+        const clienteId = _pagoSaldoCtx.clienteId;
         try {
             const metodoPago = document.getElementById("mps-metodo").value;
             await apiFetch(`/cliente-membresias/${_pagoSaldoCtx.cmId}/pagar-saldo`, {
@@ -1203,7 +1264,7 @@
             showSuccess(`Pago de ${formatCurrency(monto, _pagoSaldoCtx.moneda)} registrado ✅`);
             cerrarModalPagoSaldo();
             // Refrescar la ficha para que el panel muestre los nuevos datos
-            await mostrarFichaParaAsistencia(_pagoSaldoCtx.clienteId);
+            await mostrarFichaParaAsistencia(clienteId);
             await cargarDashboard();
         } catch (e) { showError(e.message); }
     }

@@ -21,8 +21,10 @@ from backend.main import (
     _cliente_membresia_del_gym,
     _cerrar_asistencias_vencidas,
     _configuracion_del_gym,
+    _costo_diario_para_programar_pago,
     _del_gym,
     _estado_suscripcion,
+    _fecha_maxima_proximo_pago,
     _limitar_gramos_proteina,
     _porcion_cliente_facil,
     _validar_y_optimizar_foto,
@@ -39,6 +41,7 @@ from backend.main import (
     crear_ajuste_caja,
     crear_documento_financiero,
     crear_empleado,
+    crear_invitado_existente_membresia,
     crear_invitado_membresia,
     crear_invitacion_acceso_staff,
     crear_membresia,
@@ -71,7 +74,9 @@ from backend.main import (
     registrar_compra,
     registrar_entrada,
     registrar_salida,
+    pagar_saldo_membresia,
     reprogramar_cliente_membresia,
+    reprogramar_proximo_pago_membresia,
     registrar_otro_ingreso,
     resumen_documentos_financieros,
     resumen_comercial_staff,
@@ -509,6 +514,86 @@ class MultiTenantTest(unittest.TestCase):
         )
         self.assertEqual(cm.vendido_por_id, self.staff1.id)
 
+    def test_proxima_fecha_pago_se_limita_y_recalcula_por_dias_cubiertos(self):
+        inicio = date.today()
+        plan = models.Membresia(
+            gimnasio_id=self.gym1.id,
+            nombre="Plan 60 días",
+            precio=169,
+            monto_mensual=169,
+            duracion_dias=60,
+            duracion_meses=2,
+        )
+        self.db.add(plan)
+        self.db.commit()
+
+        costo_diario = _costo_diario_para_programar_pago(plan)
+        self.assertAlmostEqual(costo_diario, (169 / 60) * 2, places=6)
+
+        with self.assertRaises(HTTPException) as fecha_inicial_excesiva:
+            asignar_membresia_a_cliente(
+                self.cliente1.id,
+                schemas.ClienteMembresiaCreate(
+                    cliente_id=self.cliente1.id,
+                    membresia_id=plan.id,
+                    fecha_inicio=inicio,
+                    monto_pagado=100,
+                    fecha_pago_saldo=inicio + timedelta(days=19),
+                    vendido_por_id=self.admin1.id,
+                ),
+                idempotency_key="matricula-fecha-pago-invalida-0001",
+                db=self.db,
+                usuario_actual=self.admin1,
+            )
+        self.assertEqual(fecha_inicial_excesiva.exception.status_code, 400)
+
+        cm = asignar_membresia_a_cliente(
+            self.cliente1.id,
+            schemas.ClienteMembresiaCreate(
+                cliente_id=self.cliente1.id,
+                membresia_id=plan.id,
+                fecha_inicio=inicio,
+                monto_pagado=100,
+                fecha_pago_saldo=inicio + timedelta(days=18),
+                vendido_por_id=self.admin1.id,
+            ),
+            idempotency_key="matricula-fecha-pago-0001",
+            db=self.db,
+            usuario_actual=self.admin1,
+        )
+        self.assertEqual(_fecha_maxima_proximo_pago(cm, plan, 100), inicio + timedelta(days=18))
+
+        reprogramada = reprogramar_proximo_pago_membresia(
+            cm.id,
+            schemas.ReprogramarProximoPagoRequest(fecha_proximo_pago=inicio + timedelta(days=18)),
+            db=self.db,
+            usuario=self.staff1,
+        )
+        self.assertEqual(reprogramada.fecha_pago_saldo, inicio + timedelta(days=18))
+
+        with self.assertRaises(HTTPException) as fuera_de_cobertura:
+            reprogramar_proximo_pago_membresia(
+                cm.id,
+                schemas.ReprogramarProximoPagoRequest(fecha_proximo_pago=inicio + timedelta(days=19)),
+                db=self.db,
+                usuario=self.staff1,
+            )
+        self.assertEqual(fuera_de_cobertura.exception.status_code, 400)
+
+        pagada = pagar_saldo_membresia(
+            cm.id,
+            schemas.PagoSaldoRequest(
+                monto=20,
+                metodo_pago=models.MetodoPago.EFECTIVO,
+                fecha_proximo_pago=inicio + timedelta(days=21),
+            ),
+            idempotency_key="pago-fecha-recalculada-0001",
+            db=self.db,
+            usuario=self.staff1,
+        )
+        self.assertEqual(pagada.monto_pagado, 120)
+        self.assertEqual(pagada.fecha_maxima_proximo_pago, inicio + timedelta(days=21))
+
     def test_membresia_configura_beneficio_invitado(self):
         with self.assertRaises(ValueError):
             schemas.MembresiaCreate(
@@ -542,7 +627,7 @@ class MultiTenantTest(unittest.TestCase):
         self.assertFalse(actualizada.permite_invitado)
         self.assertEqual(actualizada.dias_invitado, 0)
 
-    def test_invitacion_crea_cliente_con_acceso_sin_deuda_y_solo_una_vez(self):
+    def test_invitacion_permite_tres_ingresos_con_clientes_nuevos_o_existentes(self):
         plan = models.Membresia(
             gimnasio_id=self.gym1.id,
             nombre="Mensual con invitado",
@@ -588,31 +673,76 @@ class MultiTenantTest(unittest.TestCase):
         )
         invitado = respuesta["cliente"]
         acceso = respuesta["membresia"]
+        respuesta_validada = schemas.InvitadoMembresiaResponse.model_validate(respuesta)
+        self.assertEqual(respuesta_validada.ingresos_disponibles, 2)
         self.assertEqual(repetida["cliente"].id, invitado.id)
-        self.assertEqual(respuesta["dias_asignados"], 3)
+        self.assertEqual(respuesta["dias_asignados"], 1)
+        self.assertEqual(respuesta["ingresos_usados"], 1)
+        self.assertEqual(respuesta["ingresos_disponibles"], 2)
         self.assertEqual(acceso.invitado_por_cm_id, titular.id)
-        self.assertEqual((acceso.fecha_fin - acceso.fecha_inicio).days, 3)
+        self.assertEqual(acceso.fecha_fin, acceso.fecha_inicio)
         self.assertEqual(acceso.monto_pagado, 0)
         self.assertEqual(self.db.query(models.PagoMembresia).filter_by(cliente_membresia_id=acceso.id).count(), 0)
         self.assertEqual(self.db.query(models.ClienteMembresia).filter_by(invitado_por_cm_id=titular.id).count(), 1)
 
         self.db.refresh(titular)
-        self.assertTrue(schemas.ClienteMembresia.model_validate(titular).invitacion_usada)
+        detalle_titular = schemas.ClienteMembresia.model_validate(titular)
+        self.assertFalse(detalle_titular.invitacion_usada)
+        self.assertEqual(detalle_titular.invitaciones_usadas, 1)
+        self.assertEqual(detalle_titular.invitaciones_disponibles, 2)
         ficha = ficha_rapida_cliente(invitado.id, db=self.db, usuario=self.admin1)
         self.assertEqual(ficha.membresia_actual.nombre, "Invitado")
         self.assertEqual(ficha.membresia_actual.precio, 0)
         self.assertEqual(ficha.membresia_actual.deuda_pendiente, 0)
         self.assertEqual(invitado.membresia_texto, "Invitado")
 
-        with self.assertRaises(HTTPException) as ya_usada:
-            crear_invitado_membresia(
+        with self.assertRaises(HTTPException) as repetido_mismo_dia:
+            crear_invitado_existente_membresia(
+                titular.id,
+                invitado.id,
+                idempotency_key="reusar-invitado-prueba-0001",
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(repetido_mismo_dia.exception.status_code, 409)
+
+        segundo_dia = titular.fecha_inicio + timedelta(days=1)
+        with patch("backend.main.hoy_lima", return_value=segundo_dia):
+            segundo = crear_invitado_existente_membresia(
+                titular.id,
+                invitado.id,
+                idempotency_key="reusar-invitado-prueba-0002",
+                db=self.db,
+                usuario=self.admin1,
+            )
+            tercero = crear_invitado_membresia(
                 titular.id,
                 schemas.ClienteCreate(nombre="Invitado Dos"),
                 idempotency_key="crear-invitado-prueba-0002",
                 db=self.db,
                 usuario=self.admin1,
             )
-        self.assertEqual(ya_usada.exception.status_code, 409)
+        self.assertEqual(segundo["cliente"].id, invitado.id)
+        self.assertEqual(segundo["membresia"].fecha_inicio, segundo_dia)
+        self.assertEqual(tercero["ingresos_usados"], 3)
+        self.assertEqual(tercero["ingresos_disponibles"], 0)
+        self.assertEqual(self.db.query(models.ClienteMembresia).filter_by(invitado_por_cm_id=titular.id).count(), 3)
+
+        self.db.expire(titular, ["membresias_invitados"])
+        detalle_titular = schemas.ClienteMembresia.model_validate(titular)
+        self.assertTrue(detalle_titular.invitacion_usada)
+        self.assertEqual(detalle_titular.invitaciones_usadas, 3)
+        self.assertEqual(detalle_titular.invitaciones_disponibles, 0)
+
+        with self.assertRaises(HTTPException) as agotada:
+            crear_invitado_membresia(
+                titular.id,
+                schemas.ClienteCreate(nombre="Invitado Cuatro"),
+                idempotency_key="crear-invitado-prueba-0004",
+                db=self.db,
+                usuario=self.admin1,
+            )
+        self.assertEqual(agotada.exception.status_code, 409)
 
         with self.assertRaises(HTTPException) as cadena:
             crear_invitado_membresia(
@@ -630,9 +760,10 @@ class MultiTenantTest(unittest.TestCase):
             db=self.db,
             usuario=self.admin1,
         )
-        self.db.refresh(acceso)
-        self.assertTrue(acceso.anulada)
-        self.assertFalse(acceso.activo)
+        accesos = self.db.query(models.ClienteMembresia).filter_by(invitado_por_cm_id=titular.id).all()
+        self.assertEqual(len(accesos), 3)
+        self.assertTrue(all(item.anulada for item in accesos))
+        self.assertTrue(all(not item.activo for item in accesos))
 
     def test_invitado_no_excede_vigencia_del_titular_ni_registra_asistencia_fuera(self):
         plan = models.Membresia(
@@ -669,22 +800,19 @@ class MultiTenantTest(unittest.TestCase):
         )
         invitado = respuesta["cliente"]
         acceso = respuesta["membresia"]
-        self.assertEqual(acceso.fecha_fin, titular.fecha_fin)
-        self.assertEqual(respuesta["dias_asignados"], 3)
+        self.assertEqual(acceso.fecha_fin, acceso.fecha_inicio)
+        self.assertEqual(respuesta["dias_asignados"], 1)
 
-        # Si luego se acorta la membresía titular, el invitado deja de poder
-        # ingresar aunque su fecha_fin almacenada todavía sea posterior.
-        titular.fecha_fin = titular.fecha_inicio + timedelta(days=1)
+        # Si luego se desactiva la membresía titular, su pase del día
+        # deja de ser válido inmediatamente.
+        titular.activo = False
         self.db.commit()
-        fuera_de_vigencia = titular.fecha_fin + timedelta(days=1)
-        self.assertLessEqual(fuera_de_vigencia, acceso.fecha_fin)
-        with patch("backend.main.hoy_lima", return_value=fuera_de_vigencia):
-            with self.assertRaises(HTTPException) as vencida:
-                registrar_entrada(
-                    schemas.AsistenciaCreate(cliente_id=invitado.id),
-                    db=self.db,
-                    usuario=self.admin1,
-                )
+        with self.assertRaises(HTTPException) as vencida:
+            registrar_entrada(
+                schemas.AsistenciaCreate(cliente_id=invitado.id),
+                db=self.db,
+                usuario=self.admin1,
+            )
         self.assertEqual(vencida.exception.status_code, 403)
 
     def test_reprogramar_matricula_solo_sin_asistencias(self):

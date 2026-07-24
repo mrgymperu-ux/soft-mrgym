@@ -87,10 +87,10 @@
             <h4>Beneficio para invitado</h4>
             <div class="checkbox-linea"><input type="checkbox" id="f-permite-invitado" onchange="actualizarBeneficioInvitado()"> <label for="f-permite-invitado" style="margin:0;">Permite invitar a un amigo o conocido</label></div>
             <div class="form-group" id="f-dias-invitado-wrap" style="margin-top:10px;max-width:220px;display:none;">
-                <label>Días para el invitado *</label>
+                <label>Ingresos para invitados *</label>
                 <input type="number" id="f-dias-invitado" min="1" value="1">
             </div>
-            <p class="tarifa-hint" style="margin-bottom:0;">Cantidad de días de acceso que incluye esta tarifa para un invitado.</p>
+            <p class="tarifa-hint" style="margin-bottom:0;">Cada ingreso equivale a un pase de un día. Puede usarlos la misma persona en días diferentes o personas distintas.</p>
         </div>
 
         <div class="tarifa-seccion">
@@ -173,7 +173,7 @@
         if (!membresiasCache.length) { tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No hay tarifas</td></tr>'; return; }
         tbody.innerHTML = membresiasCache.map(m => `<tr style="${m.activo ? "" : "opacity:0.5;"}">
             <td>#${m.id}</td>
-            <td><strong>${m.nombre}</strong>${m.activo ? "" : ' <span class="badge badge-error" style="font-size:0.62em;">inactiva</span>'}${m.descripcion ? `<div style="font-size:0.78em;color:#636E72;">${m.descripcion}</div>` : ""}${m.permite_invitado ? `<div style="font-size:0.72em;color:var(--color-primario);margin-top:3px;">🎟️ Invitado: ${m.dias_invitado} día${m.dias_invitado === 1 ? "" : "s"}</div>` : ""}</td>
+            <td><strong>${m.nombre}</strong>${m.activo ? "" : ' <span class="badge badge-error" style="font-size:0.62em;">inactiva</span>'}${m.descripcion ? `<div style="font-size:0.78em;color:#636E72;">${m.descripcion}</div>` : ""}${m.permite_invitado ? `<div style="font-size:0.72em;color:var(--color-primario);margin-top:3px;">🎟️ Invitados: ${m.dias_invitado} ingreso${m.dias_invitado === 1 ? "" : "s"}</div>` : ""}</td>
             <td>${formatCurrency(m.precio,moneda)}</td>
             <td>${m.duracion_dias} dias</td>
             <td>${m.monto_mensual ? formatCurrency(m.monto_mensual,moneda) : "—"}</td>
@@ -285,7 +285,7 @@
     async function abrirModalAsignar() {
         const [clientes, membresias] = await Promise.all([apiFetch("/clientes/?limit=200"), apiFetch("/membresias/")]);
         document.getElementById("f-cliente").innerHTML = '<option value="">Seleccionar...</option>' + clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos||""}</option>`).join("");
-        document.getElementById("f-plan").innerHTML = '<option value="">Seleccionar...</option>' + membresias.map(m => `<option value="${m.id}" data-precio="${m.precio}">${m.nombre} — ${formatCurrency(m.precio,moneda)}${m.permite_invitado ? ` · invitado ${m.dias_invitado}d` : ""}</option>`).join("");
+        document.getElementById("f-plan").innerHTML = '<option value="">Seleccionar...</option>' + membresias.map(m => `<option value="${m.id}" data-precio="${m.precio}">${m.nombre} — ${formatCurrency(m.precio,moneda)}${m.permite_invitado ? ` · ${m.dias_invitado} ingresos de invitado` : ""}</option>`).join("");
         document.getElementById("f-inicio").value = fechaLocalISO();
         document.getElementById("f-monto-pagado").value = "";
         document.getElementById("modal-asignar").classList.add("active");
@@ -306,7 +306,7 @@
         if (!nombre || isNaN(precio) || duracionTotal <= 0) { showError("Completa descripcion, monto base y duracion (meses o dias)"); return; }
         const permiteInvitado = document.getElementById("f-permite-invitado").checked;
         const diasInvitado = permiteInvitado ? (parseInt(document.getElementById("f-dias-invitado").value) || 0) : 0;
-        if (permiteInvitado && diasInvitado < 1) { showError("Indica al menos un día para el invitado"); return; }
+        if (permiteInvitado && diasInvitado < 1) { showError("Indica al menos un ingreso para invitados"); return; }
 
         const diasSemana = Array.from(document.querySelectorAll("#dias-semana-chips input:checked")).map(c => c.value).join(",");
 

@@ -598,9 +598,9 @@ class ClienteMembresia(Base):
     # automatiza nada por si solo).
     fecha_pago_saldo = Column(Date, nullable=True)
     vendido_por_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # para comisiones
-    # Si tiene valor, esta matrícula fue concedida como invitación de
-    # otra matrícula. UNIQUE garantiza una sola invitación por titular.
-    invitado_por_cm_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=True, unique=True, index=True)
+    # Si tiene valor, esta matrícula es un pase concedido por otra
+    # matrícula. Cada fila consume un ingreso del cupo del titular.
+    invitado_por_cm_id = Column(Integer, ForeignKey("cliente_membresias.id"), nullable=True, index=True)
     activo = Column(Boolean, default=True)
     # Metodo con el que se cobro monto_pagado (para el balance de caja
     # Efectivo vs Cuenta del Panel). Si el pago se hizo en partes con
@@ -617,13 +617,12 @@ class ClienteMembresia(Base):
         "ClienteMembresia",
         remote_side=[id],
         foreign_keys=[invitado_por_cm_id],
-        back_populates="membresia_invitado",
+        back_populates="membresias_invitados",
     )
-    membresia_invitado = relationship(
+    membresias_invitados = relationship(
         "ClienteMembresia",
         foreign_keys="ClienteMembresia.invitado_por_cm_id",
         back_populates="membresia_titular",
-        uselist=False,
     )
     pagos = relationship(
         "PagoMembresia",
@@ -634,7 +633,18 @@ class ClienteMembresia(Base):
 
     @property
     def invitacion_usada(self):
-        return self.membresia_invitado is not None
+        return self.invitaciones_disponibles == 0
+
+    @property
+    def invitaciones_usadas(self):
+        return sum(1 for acceso in self.membresias_invitados if not acceso.anulada)
+
+    @property
+    def invitaciones_disponibles(self):
+        if self.invitado_por_cm_id is not None:
+            return 0
+        cupo = int(self.membresia.dias_invitado or 0) if self.membresia else 0
+        return max(cupo - self.invitaciones_usadas, 0)
 
 
 class PagoMembresia(Base):

@@ -3143,6 +3143,52 @@ def _precio_aplicable_membresia(cm: Optional[models.ClienteMembresia], membresia
     return float(plan.precio or 0.0) if plan else 0.0
 
 
+def _costo_diario_para_programar_pago(membresia: models.Membresia) -> float:
+    """Valor diario contractual usado exclusivamente para limitar la próxima fecha de pago."""
+    duracion = max(int(membresia.duracion_dias or 0), 1)
+    meses = float(membresia.duracion_meses or 0)
+    periodos = meses if meses > 0 else max(duracion / 30.0, 1.0)
+    monto_periodo = float(membresia.monto_mensual or membresia.precio or 0.0)
+    return (monto_periodo * periodos) / duracion
+
+
+def _fecha_maxima_proximo_pago(
+    cm: models.ClienteMembresia,
+    membresia: Optional[models.Membresia] = None,
+    monto_pagado: Optional[float] = None,
+) -> Optional[date]:
+    """Convierte el pago acumulado en días cubiertos y devuelve la fecha máxima elegible."""
+    plan = membresia or cm.membresia
+    if not plan or not cm.fecha_inicio or cm.invitado_por_cm_id is not None:
+        return None
+    costo_diario = _costo_diario_para_programar_pago(plan)
+    if costo_diario <= 0:
+        return cm.fecha_fin
+    valor_pagado = cm.monto_pagado if monto_pagado is None else monto_pagado
+    pagado = max(float(valor_pagado or 0.0), 0.0)
+    dias_cubiertos = int((pagado / costo_diario) + 0.5)
+    dias_cubiertos = min(max(dias_cubiertos, 0), max(int(plan.duracion_dias or 0), 0))
+    limite = cm.fecha_inicio + timedelta(days=dias_cubiertos)
+    return min(limite, cm.fecha_fin) if cm.fecha_fin else limite
+
+
+def _validar_fecha_proximo_pago(
+    cm: models.ClienteMembresia,
+    membresia: models.Membresia,
+    fecha_programada: Optional[date],
+    monto_pagado: Optional[float] = None,
+    fecha_minima: Optional[date] = None,
+) -> Optional[date]:
+    if not fecha_programada:
+        return _fecha_maxima_proximo_pago(cm, membresia, monto_pagado)
+    limite = _fecha_maxima_proximo_pago(cm, membresia, monto_pagado)
+    if limite and fecha_programada > limite:
+        raise HTTPException(status_code=400, detail="La fecha del próximo pago supera los días cubiertos por el monto pagado")
+    if fecha_minima and fecha_programada < fecha_minima:
+        raise HTTPException(status_code=400, detail="La fecha del próximo pago no puede ser anterior a hoy")
+    return limite
+
+
 def _nombre_visible_membresia(
     cm: Optional[models.ClienteMembresia],
     membresia: Optional[models.Membresia] = None,
@@ -4247,13 +4293,14 @@ def listado_completo_clientes(
             .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
             .first()
         )
-        ultimo_plan_nombre, costo, pagado, saldo, dias_para_vencer = None, None, None, None, None
+        ultimo_plan_nombre, costo, pagado, saldo, dias_para_vencer, fecha_maxima_pago = None, None, None, None, None, None
         if ultimo_plan_cm:
             membresia = db.query(models.Membresia).filter(models.Membresia.id == ultimo_plan_cm.membresia_id).first()
             ultimo_plan_nombre = _nombre_visible_membresia(ultimo_plan_cm, membresia)
             costo = _precio_aplicable_membresia(ultimo_plan_cm, membresia)
             pagado = _total_pagado_membresia(db, ultimo_plan_cm.id)
             saldo = max((costo or 0.0) - pagado, 0.0)
+            fecha_maxima_pago = _fecha_maxima_proximo_pago(ultimo_plan_cm, membresia, pagado)
             if ultimo_plan_cm.fecha_fin:
                 dias_para_vencer = (ultimo_plan_cm.fecha_fin - hoy).days
 
@@ -4265,6 +4312,8 @@ def listado_completo_clientes(
         filas.append(schemas.ClienteListadoRow(
             id=c.id,
             nombre_completo=f"{c.nombre} {c.apellidos or ''}".strip(),
+            dni=c.dni,
+            telefono=c.telefono,
             activo=c.activo,
             fecha_vencimiento=ultimo_plan_cm.fecha_fin if ultimo_plan_cm else c.fecha_vencimiento,
             dias_para_vencer=dias_para_vencer if ultimo_plan_cm else (
@@ -4277,6 +4326,7 @@ def listado_completo_clientes(
             porcentaje_asistencia=_calcular_porcentaje_asistencia(db, c.id),
             tiene_membresia_catalogo=tiene_cm_vigente,
             fecha_pago_saldo=ultimo_plan_cm.fecha_pago_saldo if ultimo_plan_cm else None,
+            fecha_maxima_proximo_pago=fecha_maxima_pago,
             ultimo_cm_id=ultimo_plan_cm.id if ultimo_plan_cm else None,
         ))
 
@@ -4392,6 +4442,7 @@ def _hidratar_filas_clientes_paginadas(
         costo = _precio_aplicable_membresia(ultimo, plan) if ultimo else None
         pagado = float(pagos_por_cm.get(ultimo.id, 0.0)) if ultimo else None
         saldo = max((costo or 0.0) - (pagado or 0.0), 0.0) if ultimo else None
+        fecha_maxima_pago = _fecha_maxima_proximo_pago(ultimo, plan, pagado) if ultimo else None
         fecha_vencimiento = ultimo.fecha_fin if ultimo else cliente.fecha_vencimiento
         dias_para_vencer = (fecha_vencimiento - hoy).days if fecha_vencimiento else None
 
@@ -4416,6 +4467,8 @@ def _hidratar_filas_clientes_paginadas(
         filas[cliente.id] = schemas.ClienteListadoRow(
             id=cliente.id,
             nombre_completo=f"{cliente.nombre} {cliente.apellidos or ''}".strip(),
+            dni=cliente.dni,
+            telefono=cliente.telefono,
             activo=cliente.activo,
             fecha_vencimiento=fecha_vencimiento,
             dias_para_vencer=dias_para_vencer,
@@ -4428,6 +4481,7 @@ def _hidratar_filas_clientes_paginadas(
                 ultimo and ultimo.fecha_fin and ultimo.fecha_fin >= hoy and ultimo.activo and not ultimo.anulada
             ),
             fecha_pago_saldo=ultimo.fecha_pago_saldo if ultimo else None,
+            fecha_maxima_proximo_pago=fecha_maxima_pago,
             ultimo_cm_id=ultimo.id if ultimo else None,
         )
     return filas
@@ -5779,7 +5833,7 @@ def actualizar_membresia(
     for campo, valor in datos.model_dump(exclude_unset=True).items():
         setattr(membresia, campo, valor)
     if membresia.permite_invitado and int(membresia.dias_invitado or 0) < 1:
-        raise HTTPException(status_code=400, detail="Indica al menos un día para el invitado")
+        raise HTTPException(status_code=400, detail="Indica al menos un ingreso para invitados")
     if not membresia.permite_invitado:
         membresia.dias_invitado = 0
     db.commit()
@@ -5882,7 +5936,7 @@ async def importar_membresias(
                 errores.append(f"Fila {indice}: falta nombre, precio o duracion_dias")
                 continue
             if datos.get("permite_invitado") and int(datos.get("dias_invitado") or 0) < 1:
-                errores.append(f"Fila {indice}: indica al menos un día para el invitado")
+                errores.append(f"Fila {indice}: indica al menos un ingreso para invitados")
                 continue
             if not datos.get("permite_invitado"):
                 datos["dias_invitado"] = 0
@@ -5958,6 +6012,14 @@ def asignar_membresia_a_cliente(
         metodo_pago=datos.metodo_pago or "efectivo",
         vendido_por_id=vendedor.id,
     )
+    if monto_inicial < float(membresia.precio or 0.0) - 0.01 and datos.fecha_pago_saldo:
+        _validar_fecha_proximo_pago(
+            db_cm,
+            membresia,
+            datos.fecha_pago_saldo,
+            monto_pagado=monto_inicial,
+            fecha_minima=fecha_inicio,
+        )
     db.add(db_cm)
     db.flush()
 
@@ -5991,6 +6053,7 @@ def asignar_membresia_a_cliente(
     _guardar_idempotencia(db, usuario_actual, "asignar-membresia", idempotency_key, payload, "ClienteMembresia", db_cm.id)
     db.commit()
     db.refresh(db_cm)
+    db_cm.fecha_maxima_proximo_pago = _fecha_maxima_proximo_pago(db_cm, membresia, monto_inicial)
     return db_cm
 
 
@@ -6004,13 +6067,19 @@ def listar_membresias_de_cliente(
     cliente = _del_gym(db, models.Cliente, cliente_id, usuario)
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    return (
+    membresias_cliente = (
         db.query(models.ClienteMembresia)
-        .options(selectinload(models.ClienteMembresia.membresia_invitado))
+        .options(selectinload(models.ClienteMembresia.membresias_invitados))
         .filter(models.ClienteMembresia.cliente_id == cliente_id)
         .order_by(models.ClienteMembresia.fecha_inicio.desc(), models.ClienteMembresia.id.desc())
         .all()
     )
+    for cm in membresias_cliente:
+        cm.fecha_maxima_proximo_pago = _fecha_maxima_proximo_pago(
+            cm, cm.membresia, _total_pagado_membresia(db, cm.id),
+        )
+        cm.costo_diario_programacion = _costo_diario_para_programar_pago(cm.membresia)
+    return membresias_cliente
 
 
 @app.post("/cliente-membresias/{cm_id}/invitado", response_model=schemas.InvitadoMembresiaResponse, tags=["Membresias"])
@@ -6021,11 +6090,11 @@ def crear_invitado_membresia(
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(auth.requiere_staff),
 ):
-    """Crea un cliente invitado y su acceso de cortesía en una sola operación."""
+    """Crea un cliente nuevo y consume un ingreso del cupo de invitados."""
     payload = {"cm_id": cm_id, **datos.model_dump(mode="json")}
     previo = _buscar_idempotente(db, usuario, "crear-invitado", idempotency_key, payload, models.ClienteMembresia)
     if previo:
-        return {"cliente": previo.cliente, "membresia": previo, "dias_asignados": (previo.fecha_fin - previo.fecha_inicio).days}
+        return _respuesta_pase_invitado(db, previo)
 
     gid = get_gid(usuario)
     titular = (
@@ -6044,17 +6113,20 @@ def crear_invitado_membresia(
     if titular.anulada or not titular.activo or titular.fecha_inicio > hoy or (titular.fecha_fin and titular.fecha_fin < hoy):
         raise HTTPException(status_code=409, detail="La membresía titular no está vigente")
     if titular.invitado_por_cm_id is not None:
-        raise HTTPException(status_code=409, detail="Una membresía de invitado no puede generar otra invitación")
+        raise HTTPException(status_code=409, detail="Un pase de invitado no puede generar otra invitación")
 
     plan = db.query(models.Membresia).filter(
         models.Membresia.id == titular.membresia_id,
         models.Membresia.gimnasio_id == gid,
     ).first()
     if not plan or not plan.permite_invitado or int(plan.dias_invitado or 0) < 1:
-        raise HTTPException(status_code=409, detail="Esta membresía no incluye invitación")
-    existente = db.query(models.ClienteMembresia).filter(models.ClienteMembresia.invitado_por_cm_id == titular.id).first()
-    if existente:
-        raise HTTPException(status_code=409, detail="La invitación de esta membresía ya fue utilizada")
+        raise HTTPException(status_code=409, detail="Esta membresía no incluye ingresos para invitados")
+    existente = db.query(func.count(models.ClienteMembresia.id)).filter(
+        models.ClienteMembresia.invitado_por_cm_id == titular.id,
+        models.ClienteMembresia.anulada == False,
+    ).scalar() or 0
+    if existente >= int(plan.dias_invitado):
+        raise HTTPException(status_code=409, detail="Se agotaron los ingresos de invitados de esta membresía")
 
     _validar_limite_plan(db, usuario, "clientes")
     if datos.dni and q(db, models.Cliente, usuario).filter(models.Cliente.dni == datos.dni).first():
@@ -6067,10 +6139,7 @@ def crear_invitado_membresia(
     db.add(invitado)
     db.flush()
 
-    dias = int(plan.dias_invitado)
-    fecha_fin_invitado = hoy + timedelta(days=dias)
-    if titular.fecha_fin:
-        fecha_fin_invitado = min(fecha_fin_invitado, titular.fecha_fin)
+    fecha_fin_invitado = hoy
     acceso = models.ClienteMembresia(
         cliente_id=invitado.id,
         membresia_id=plan.id,
@@ -6092,10 +6161,142 @@ def crear_invitado_membresia(
     db.refresh(invitado)
     db.refresh(acceso)
     invitado.porcentaje_asistencia = None
+    return _respuesta_pase_invitado(db, acceso)
+
+
+@app.post(
+    "/cliente-membresias/{cm_id}/invitado-existente/{cliente_id}",
+    response_model=schemas.InvitadoMembresiaResponse,
+    tags=["Membresias"],
+)
+def crear_invitado_existente_membresia(
+    cm_id: int,
+    cliente_id: int,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """Consume un ingreso de invitado para una persona ya registrada."""
+    operacion = "crear-invitado-existente"
+    payload = {"cm_id": cm_id, "cliente_id": cliente_id}
+    previo = _buscar_idempotente(
+        db, usuario, operacion, idempotency_key, payload, models.ClienteMembresia,
+    )
+    if previo:
+        return _respuesta_pase_invitado(db, previo)
+
+    gid = get_gid(usuario)
+    titular = (
+        db.query(models.ClienteMembresia)
+        .join(models.Cliente, models.Cliente.id == models.ClienteMembresia.cliente_id)
+        .filter(
+            models.ClienteMembresia.id == cm_id,
+            models.Cliente.gimnasio_id == gid,
+        )
+        .with_for_update()
+        .first()
+    )
+    if not titular:
+        raise HTTPException(status_code=404, detail="Matrícula titular no encontrada")
+    hoy = hoy_lima()
+    if titular.anulada or not titular.activo or titular.fecha_inicio > hoy or (titular.fecha_fin and titular.fecha_fin < hoy):
+        raise HTTPException(status_code=409, detail="La membresía titular no está vigente")
+    if titular.invitado_por_cm_id is not None:
+        raise HTTPException(status_code=409, detail="Un pase de invitado no puede generar otra invitación")
+
+    plan = db.query(models.Membresia).filter(
+        models.Membresia.id == titular.membresia_id,
+        models.Membresia.gimnasio_id == gid,
+    ).first()
+    cupo = int(plan.dias_invitado or 0) if plan and plan.permite_invitado else 0
+    if cupo < 1:
+        raise HTTPException(status_code=409, detail="Esta membresía no incluye ingresos para invitados")
+    usados = db.query(func.count(models.ClienteMembresia.id)).filter(
+        models.ClienteMembresia.invitado_por_cm_id == titular.id,
+        models.ClienteMembresia.anulada == False,
+    ).scalar() or 0
+    if usados >= cupo:
+        raise HTTPException(status_code=409, detail="Se agotaron los ingresos de invitados de esta membresía")
+
+    invitado = db.query(models.Cliente).filter(
+        models.Cliente.id == cliente_id,
+        models.Cliente.gimnasio_id == gid,
+    ).first()
+    if not invitado:
+        raise HTTPException(status_code=404, detail="Cliente invitado no encontrado")
+    if invitado.id == titular.cliente_id:
+        raise HTTPException(status_code=409, detail="El titular no puede usar su propio pase de invitado")
+
+    pase_del_dia = db.query(models.ClienteMembresia.id).filter(
+        models.ClienteMembresia.cliente_id == invitado.id,
+        models.ClienteMembresia.invitado_por_cm_id.isnot(None),
+        models.ClienteMembresia.fecha_inicio == hoy,
+        models.ClienteMembresia.anulada == False,
+    ).first()
+    if pase_del_dia:
+        raise HTTPException(status_code=409, detail="Esta persona ya tiene un ingreso de invitado asignado para hoy")
+
+    membresia_propia_vigente = db.query(models.ClienteMembresia.id).filter(
+        models.ClienteMembresia.cliente_id == invitado.id,
+        models.ClienteMembresia.invitado_por_cm_id.is_(None),
+        models.ClienteMembresia.activo == True,
+        models.ClienteMembresia.anulada == False,
+        models.ClienteMembresia.fecha_inicio <= hoy,
+        or_(
+            models.ClienteMembresia.fecha_fin.is_(None),
+            models.ClienteMembresia.fecha_fin >= hoy,
+        ),
+    ).first()
+    if membresia_propia_vigente:
+        raise HTTPException(status_code=409, detail="Esta persona ya tiene una membresía propia vigente")
+
+    acceso = models.ClienteMembresia(
+        cliente_id=invitado.id,
+        membresia_id=plan.id,
+        fecha_inicio=hoy,
+        fecha_fin=hoy,
+        monto_pagado=0,
+        fecha_pago_saldo=None,
+        metodo_pago="efectivo",
+        vendido_por_id=usuario.id,
+        invitado_por_cm_id=titular.id,
+        activo=True,
+    )
+    db.add(acceso)
+    db.flush()
+    invitado.activo = True
+    invitado.membresia_texto = "Invitado"
+    invitado.fecha_renovacion = hoy
+    invitado.fecha_vencimiento = hoy
+    _guardar_idempotencia(
+        db, usuario, operacion, idempotency_key, payload, "ClienteMembresia", acceso.id,
+    )
+    db.commit()
+    db.refresh(invitado)
+    db.refresh(acceso)
+    invitado.porcentaje_asistencia = None
+    return _respuesta_pase_invitado(db, acceso)
+
+
+def _respuesta_pase_invitado(db: Session, acceso: models.ClienteMembresia):
+    """Arma el resultado y el saldo actualizado del cupo del titular."""
+    usados = db.query(func.count(models.ClienteMembresia.id)).filter(
+        models.ClienteMembresia.invitado_por_cm_id == acceso.invitado_por_cm_id,
+        models.ClienteMembresia.anulada == False,
+    ).scalar() or 0
+    titular = db.query(models.ClienteMembresia).filter(
+        models.ClienteMembresia.id == acceso.invitado_por_cm_id,
+    ).first()
+    plan = db.query(models.Membresia).filter(
+        models.Membresia.id == titular.membresia_id,
+    ).first() if titular else None
+    cupo = int(plan.dias_invitado or 0) if plan else 0
     return {
-        "cliente": invitado,
+        "cliente": acceso.cliente,
         "membresia": acceso,
-        "dias_asignados": max((acceso.fecha_fin - acceso.fecha_inicio).days, 0),
+        "dias_asignados": 1,
+        "ingresos_usados": usados,
+        "ingresos_disponibles": max(cupo - usados, 0),
     }
 
 
@@ -6120,19 +6321,20 @@ def _sincronizar_fechas_cliente(db: Session, cliente_id: int):
 
 
 def _anular_invitado_vinculado(db: Session, titular: models.ClienteMembresia, usuario: models.Usuario, motivo: str):
-    invitado = db.query(models.ClienteMembresia).filter(
+    invitados = db.query(models.ClienteMembresia).filter(
         models.ClienteMembresia.invitado_por_cm_id == titular.id,
         models.ClienteMembresia.anulada == False,
-    ).first()
-    if not invitado:
+    ).all()
+    if not invitados:
         return
     momento = ahora_lima()
-    invitado.activo = False
-    invitado.anulada = True
-    invitado.anulada_en = momento
-    invitado.anulada_por_id = usuario.id
-    invitado.motivo_anulacion = f"Invitación anulada con la membresía titular: {motivo}"
-    _sincronizar_fechas_cliente(db, invitado.cliente_id)
+    for invitado in invitados:
+        invitado.activo = False
+        invitado.anulada = True
+        invitado.anulada_en = momento
+        invitado.anulada_por_id = usuario.id
+        invitado.motivo_anulacion = f"Invitación anulada con la membresía titular: {motivo}"
+        _sincronizar_fechas_cliente(db, invitado.cliente_id)
 
 
 @app.get("/cliente-membresias/{cm_id}", response_model=schemas.ClienteMembresia, tags=["Membresias"])
@@ -6185,8 +6387,11 @@ def editar_cliente_membresia(
     plan_actual = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
     if not plan_actual:
         raise HTTPException(status_code=404, detail="Membresia no encontrada")
-    if _total_pagado_membresia(db, cm.id) > plan_actual.precio + 0.01:
+    total_pagado = _total_pagado_membresia(db, cm.id)
+    if total_pagado > plan_actual.precio + 0.01:
         raise HTTPException(status_code=400, detail="El monto pagado no puede superar el precio de la membresia")
+    if cm.fecha_pago_saldo and total_pagado < float(plan_actual.precio or 0.0) - 0.01:
+        _validar_fecha_proximo_pago(cm, plan_actual, cm.fecha_pago_saldo, monto_pagado=total_pagado)
 
     if cm.fecha_fin and cm.fecha_inicio and cm.fecha_fin < cm.fecha_inicio:
         raise HTTPException(status_code=400, detail="La fecha fin no puede ser anterior a la fecha de inicio")
@@ -6194,6 +6399,7 @@ def editar_cliente_membresia(
     _sincronizar_fechas_cliente(db, cm.cliente_id)
     db.commit()
     db.refresh(cm)
+    cm.fecha_maxima_proximo_pago = _fecha_maxima_proximo_pago(cm, plan_actual, total_pagado)
     return cm
 
 
@@ -6231,6 +6437,14 @@ def pagar_saldo_membresia(
     nuevo_pagado = round(min(pagado_actual + datos.monto, precio), 2)
     if nuevo_pagado < precio - 0.01 and not datos.fecha_proximo_pago:
         raise HTTPException(status_code=400, detail="Indica la fecha del proximo pago mientras exista saldo pendiente")
+    if nuevo_pagado < precio - 0.01:
+        _validar_fecha_proximo_pago(
+            cm,
+            membresia,
+            datos.fecha_proximo_pago,
+            monto_pagado=nuevo_pagado,
+            fecha_minima=hoy_lima(),
+        )
     cm.monto_pagado = nuevo_pagado
     metodo_pago = datos.metodo_pago.value if hasattr(datos.metodo_pago, "value") else datos.metodo_pago
     cm.metodo_pago = metodo_pago or cm.metodo_pago
@@ -6256,6 +6470,42 @@ def pagar_saldo_membresia(
     _guardar_idempotencia(db, usuario, "pagar-saldo", idempotency_key, payload, "PagoMembresia", pago.id)
     db.commit()
     db.refresh(cm)
+    cm.fecha_maxima_proximo_pago = _fecha_maxima_proximo_pago(cm, membresia, nuevo_pagado)
+    return cm
+
+
+@app.put(
+    "/cliente-membresias/{cm_id}/reprogramar-proximo-pago",
+    response_model=schemas.ClienteMembresia,
+    tags=["Membresias"],
+)
+def reprogramar_proximo_pago_membresia(
+    cm_id: int,
+    datos: schemas.ReprogramarProximoPagoRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    cm = _cliente_membresia_del_gym(db, cm_id, usuario)
+    if not cm or cm.anulada or not cm.activo:
+        raise HTTPException(status_code=404, detail="Membresía asignada no encontrada")
+    membresia = _del_gym(db, models.Membresia, cm.membresia_id, usuario)
+    if not membresia:
+        raise HTTPException(status_code=404, detail="Membresía no encontrada")
+    pagado = _total_pagado_membresia(db, cm.id)
+    precio = _precio_aplicable_membresia(cm, membresia)
+    if pagado >= precio - 0.01:
+        raise HTTPException(status_code=409, detail="La membresía no tiene saldo pendiente")
+    limite = _validar_fecha_proximo_pago(
+        cm,
+        membresia,
+        datos.fecha_proximo_pago,
+        monto_pagado=pagado,
+        fecha_minima=hoy_lima(),
+    )
+    cm.fecha_pago_saldo = datos.fecha_proximo_pago
+    db.commit()
+    db.refresh(cm)
+    cm.fecha_maxima_proximo_pago = limite
     return cm
 
 
@@ -6463,12 +6713,17 @@ def ficha_rapida_cliente(cliente_id: int, db: Session = Depends(get_db), usuario
         membresia_actual = schemas.FichaMembresiaActual(
             cm_id=cm_activa.id,
             nombre=_nombre_visible_membresia(cm_activa, membresia) or "—",
+            fecha_inicio=cm_activa.fecha_inicio,
             fecha_fin=cm_activa.fecha_fin,
             dias_restantes=dias_restantes,
             precio=precio_aplicable,
             monto_pagado=total_pagado,
             deuda_pendiente=deuda,
             fecha_pago_saldo=cm_activa.fecha_pago_saldo,
+            fecha_maxima_proximo_pago=_fecha_maxima_proximo_pago(
+                cm_activa, membresia, total_pagado,
+            ),
+            costo_diario_programacion=_costo_diario_para_programar_pago(membresia),
         )
 
     desde_30_dias = ahora_lima() - timedelta(days=30)

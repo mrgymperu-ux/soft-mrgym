@@ -15,7 +15,11 @@ let _fcVendedoresCache = [];
 let _fcClienteActivo = null; // {id, nombre}
 let _fcUltimoCm = null; // ClienteMembresia recien creada
 let _fcClienteEditandoId = null; // si no es null, el modal 'Nuevo Cliente' edita este cliente en vez de crear uno
-let _fcInvitacionContexto = null; // {cmId, dias, titularNombre}; crea cliente y asigna cortesía sin pasar por cobro
+let _fcInvitacionContexto = null; // {cmId, dias, disponibles, titularNombre, titularClienteId}
+let _fcInvitadoModo = "nuevo";
+let _fcInvitadoClienteExistente = null;
+let _fcInvitadoBusquedaTimer = null;
+let _fcInvitadosEncontrados = [];
 
 function _fcInyectarModales() {
     if (document.getElementById("modal-fc-cliente")) return;
@@ -29,6 +33,17 @@ function _fcInyectarModales() {
                 <button class="modal-close" onclick="cerrarModalFc('modal-fc-cliente')">✕</button>
             </div>
             <p id="fc-invitado-contexto" style="display:none;margin:-4px 0 14px;padding:9px 11px;border-radius:8px;background:var(--color-fondo);font-size:.78em;color:var(--color-texto-secundario);"></p>
+            <div id="fc-invitado-selector" style="display:none;margin-bottom:14px;">
+                <div style="display:flex;gap:8px;margin-bottom:10px;">
+                    <button type="button" id="fc-invitado-modo-existente" class="btn btn-sm btn-secondary" onclick="_fcCambiarModoInvitado('existente')">Cliente existente</button>
+                    <button type="button" id="fc-invitado-modo-nuevo" class="btn btn-sm btn-secondary" onclick="_fcCambiarModoInvitado('nuevo')">Persona nueva</button>
+                </div>
+                <div id="fc-invitado-busqueda-wrap">
+                    <input type="search" id="fc-invitado-buscar" placeholder="Buscar por nombre, DNI o celular" oninput="_fcProgramarBusquedaInvitado()">
+                    <div id="fc-invitado-resultados" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;"></div>
+                </div>
+            </div>
+            <div id="fc-datos-cliente">
             <div class="form-row"><label>Nombre *</label><input type="text" id="fc-nombre" placeholder="Juan"></div>
             <div class="form-row"><label>Apellidos</label><input type="text" id="fc-apellidos" placeholder="Perez Garcia"></div>
             <div class="form-row"><label>DNI</label><input type="text" id="fc-dni" placeholder="12345678"></div>
@@ -52,6 +67,7 @@ function _fcInyectarModales() {
                     <span id="fc-foto-nombre" style="font-size:0.78em;color:var(--color-texto-secundario);"></span>
                     <input type="file" id="fc-foto" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="_fcPrevisualizarFoto(this)">
                 </div>
+            </div>
             </div>
             <div class="form-actions">
                 <button class="btn btn-secondary" onclick="cerrarModalFc('modal-fc-cliente')">Cancelar</button>
@@ -142,6 +158,9 @@ function abrirModalClienteNuevo(onTerminar) {
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = null;
     _fcInvitacionContexto = null;
+    _fcInvitadoClienteExistente = null;
+    document.getElementById("fc-invitado-selector").style.display = "none";
+    document.getElementById("fc-datos-cliente").style.display = "block";
     document.getElementById("fc-invitado-contexto").style.display = "none";
     document.querySelector("#modal-fc-cliente .modal-title").textContent = "Nuevo Cliente";
     document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y Membresia";
@@ -168,6 +187,9 @@ function abrirModalClienteCompletar(cliente, onTerminar) {
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = cliente.id;
     _fcInvitacionContexto = null;
+    _fcInvitadoClienteExistente = null;
+    document.getElementById("fc-invitado-selector").style.display = "none";
+    document.getElementById("fc-datos-cliente").style.display = "block";
     document.getElementById("fc-invitado-contexto").style.display = "none";
     document.querySelector("#modal-fc-cliente .modal-title").textContent = "Actualizar Datos";
     document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar y asignar membresía";
@@ -193,8 +215,9 @@ function abrirModalClienteInvitado(contexto, onTerminar) {
     _fcFotoSeleccionada = null;
     _fcClienteEditandoId = null;
     _fcInvitacionContexto = contexto;
-    document.querySelector("#modal-fc-cliente .modal-title").textContent = "Nuevo Invitado";
-    document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Guardar";
+    _fcInvitadoClienteExistente = null;
+    document.querySelector("#modal-fc-cliente .modal-title").textContent = "Registrar ingreso de invitado";
+    document.querySelector('#modal-fc-cliente button[onclick="_fcGuardarClienteYMembresia()"]').textContent = "Registrar ingreso";
     ["nombre", "apellidos", "dni", "telefono", "email", "nacimiento", "direccion", "genero"].forEach((f) => {
         const el = document.getElementById(`fc-${f}`);
         if (el) el.value = "";
@@ -202,10 +225,73 @@ function abrirModalClienteInvitado(contexto, onTerminar) {
     document.getElementById("fc-foto").value = "";
     document.getElementById("fc-foto-preview").innerHTML = "";
     document.getElementById("fc-foto-nombre").textContent = "";
+    document.getElementById("fc-invitado-selector").style.display = "block";
+    document.getElementById("fc-invitado-buscar").value = "";
+    document.getElementById("fc-invitado-resultados").innerHTML = "";
     const aviso = document.getElementById("fc-invitado-contexto");
-    aviso.textContent = `${contexto.titularNombre} invita a esta persona por ${contexto.dias} día${contexto.dias === 1 ? "" : "s"}. No se generará cobro.`;
+    aviso.textContent = `${contexto.titularNombre} tiene ${contexto.disponibles} de ${contexto.dias} ingreso${contexto.dias === 1 ? "" : "s"} disponible${contexto.disponibles === 1 ? "" : "s"}. Este pase será válido solo hoy y no generará cobro.`;
     aviso.style.display = "block";
+    _fcCambiarModoInvitado("existente");
     document.getElementById("modal-fc-cliente").classList.add("active");
+}
+
+function _fcCambiarModoInvitado(modo) {
+    _fcInvitadoModo = modo;
+    _fcInvitadoClienteExistente = null;
+    const esExistente = modo === "existente";
+    document.getElementById("fc-invitado-busqueda-wrap").style.display = esExistente ? "block" : "none";
+    document.getElementById("fc-datos-cliente").style.display = esExistente ? "none" : "block";
+    document.getElementById("fc-invitado-modo-existente").className = `btn btn-sm ${esExistente ? "btn-primary" : "btn-secondary"}`;
+    document.getElementById("fc-invitado-modo-nuevo").className = `btn btn-sm ${esExistente ? "btn-secondary" : "btn-primary"}`;
+    if (esExistente) {
+        document.getElementById("fc-invitado-resultados").innerHTML = '<small style="color:var(--color-texto-secundario);">Escribe al menos 2 caracteres para buscar.</small>';
+        document.getElementById("fc-invitado-buscar").focus();
+    }
+}
+
+function _fcProgramarBusquedaInvitado() {
+    clearTimeout(_fcInvitadoBusquedaTimer);
+    _fcInvitadoClienteExistente = null;
+    _fcInvitadoBusquedaTimer = setTimeout(_fcBuscarInvitadoExistente, 250);
+}
+
+async function _fcBuscarInvitadoExistente() {
+    const termino = document.getElementById("fc-invitado-buscar").value.trim();
+    const resultados = document.getElementById("fc-invitado-resultados");
+    if (termino.length < 2) {
+        resultados.innerHTML = '<small style="color:var(--color-texto-secundario);">Escribe al menos 2 caracteres para buscar.</small>';
+        return;
+    }
+    resultados.innerHTML = '<small style="color:var(--color-texto-secundario);">Buscando...</small>';
+    try {
+        const pagina = await apiFetch(`/clientes/listado-paginado?filtro=todos&buscar=${encodeURIComponent(termino)}&limit=8`);
+        const clientes = (pagina.items || []).filter((item) =>
+            !item.es_historico && item.id > 0 && item.id !== _fcInvitacionContexto?.titularClienteId
+        );
+        _fcInvitadosEncontrados = clientes;
+        if (!clientes.length) {
+            resultados.innerHTML = '<small style="color:var(--color-texto-secundario);">No se encontraron clientes. Puedes registrar una persona nueva.</small>';
+            return;
+        }
+        resultados.innerHTML = clientes.map((cliente) => `
+            <button type="button" class="btn btn-secondary btn-sm" style="text-align:left;justify-content:flex-start;" onclick="_fcSeleccionarInvitadoExistente(${cliente.id})">
+                <strong>${escapeHTML(cliente.nombre_completo)}</strong>
+                ${cliente.dni ? ` · DNI ${escapeHTML(cliente.dni)}` : ""}
+                ${cliente.telefono ? ` · ${escapeHTML(cliente.telefono)}` : ""}
+                ${cliente.ultimo_plan ? ` · ${escapeHTML(cliente.ultimo_plan)}` : ""}
+            </button>
+        `).join("");
+    } catch (error) {
+        resultados.innerHTML = `<small style="color:var(--color-error);">${escapeHTML(error.message)}</small>`;
+    }
+}
+
+function _fcSeleccionarInvitadoExistente(clienteId) {
+    _fcInvitadoClienteExistente = _fcInvitadosEncontrados.find((cliente) => cliente.id === clienteId) || null;
+    if (!_fcInvitadoClienteExistente) return;
+    document.getElementById("fc-invitado-buscar").value = _fcInvitadoClienteExistente.nombre_completo;
+    document.getElementById("fc-invitado-resultados").innerHTML =
+        `<div class="badge badge-success" style="padding:8px 10px;">Seleccionado: ${escapeHTML(_fcInvitadoClienteExistente.nombre_completo)}</div>`;
 }
 
 async function _fcGuardarClienteYMembresia() {
@@ -219,21 +305,32 @@ async function _fcGuardarClienteYMembresia() {
         direccion: document.getElementById("fc-direccion").value.trim() || null,
         genero: document.getElementById("fc-genero").value || null,
     };
-    if (!datos.nombre) { showError("El nombre es obligatorio"); return; }
     const editandoId = _fcClienteEditandoId;
     const invitacion = _fcInvitacionContexto;
+    const usaInvitadoExistente = !!(invitacion && _fcInvitadoModo === "existente");
+    if (usaInvitadoExistente && !_fcInvitadoClienteExistente) {
+        showError("Selecciona un cliente existente o elige Persona nueva");
+        return;
+    }
+    if (!usaInvitadoExistente && !datos.nombre) { showError("El nombre es obligatorio"); return; }
     try {
         let respuestaInvitado = null;
         let cliente;
         if (invitacion) {
-            respuestaInvitado = await apiFetch(`/cliente-membresias/${invitacion.cmId}/invitado`, { method: "POST", body: JSON.stringify(datos) });
+            const ruta = usaInvitadoExistente
+                ? `/cliente-membresias/${invitacion.cmId}/invitado-existente/${_fcInvitadoClienteExistente.id}`
+                : `/cliente-membresias/${invitacion.cmId}/invitado`;
+            respuestaInvitado = await apiFetch(ruta, {
+                method: "POST",
+                body: usaInvitadoExistente ? "{}" : JSON.stringify(datos),
+            });
             cliente = respuestaInvitado.cliente;
         } else {
             cliente = editandoId
                 ? await apiFetch(`/clientes/${editandoId}`, { method: "PUT", body: JSON.stringify(datos) })
                 : await apiFetch("/clientes/", { method: "POST", body: JSON.stringify(datos) });
         }
-        if (_fcFotoSeleccionada) {
+        if (_fcFotoSeleccionada && !usaInvitadoExistente) {
             try {
                 cliente = await apiUploadFile(`/clientes/${cliente.id}/foto`, _fcFotoSeleccionada);
             } catch (errorFoto) {
@@ -244,7 +341,9 @@ async function _fcGuardarClienteYMembresia() {
         _fcClienteCreado = cliente;
         _fcClienteEditandoId = null;
         _fcInvitacionContexto = null;
-        showSuccess(invitacion ? `Invitado creado con ${respuestaInvitado.dias_asignados} días de acceso` : (editandoId ? "Datos del cliente actualizados" : "Cliente creado"));
+        showSuccess(invitacion
+            ? `Ingreso de invitado registrado. Quedan ${respuestaInvitado.ingresos_disponibles} disponible${respuestaInvitado.ingresos_disponibles === 1 ? "" : "s"}`
+            : (editandoId ? "Datos del cliente actualizados" : "Cliente creado"));
         cerrarModalFc("modal-fc-cliente");
         if (invitacion) {
             const terminado = _fcOnTerminar;
@@ -275,7 +374,7 @@ async function abrirAsignarMembresiaPara(clienteId, nombreCliente, onTerminar) {
 
     document.getElementById("fc-am-cliente-nombre").textContent = nombreCliente;
     document.getElementById("fc-am-plan").innerHTML = '<option value="">Seleccionar...</option>' +
-        _fcPlanesCache.map((p) => `<option value="${p.id}">${p.nombre} — ${formatCurrency(p.precio, config.moneda)}${p.permite_invitado ? ` · invitado ${p.dias_invitado}d` : ""}</option>`).join("");
+        _fcPlanesCache.map((p) => `<option value="${p.id}">${p.nombre} — ${formatCurrency(p.precio, config.moneda)}${p.permite_invitado ? ` · ${p.dias_invitado} ingresos de invitado` : ""}</option>`).join("");
     const vendedorActual = getNombreUsuario();
     document.getElementById("fc-am-vendedor").innerHTML = _fcVendedoresCache
         .map((v) => `<option value="${v.id}"${v.nombre === vendedorActual ? " selected" : ""}>${escapeHTML(v.nombre)}</option>`).join("");
@@ -322,6 +421,35 @@ function _fcRecalcularFin() {
     const fecha = new Date(inicio + "T00:00:00");
     fecha.setDate(fecha.getDate() + (plan.duracion_dias || 0));
     document.getElementById("fc-am-fin").value = fechaLocalISO(fecha);
+    _fcActualizarLimiteFechaSaldo();
+}
+
+function _fcActualizarLimiteFechaSaldo() {
+    const plan = _fcPlanesCache.find((p) => String(p.id) === document.getElementById("fc-am-plan").value);
+    const inicio = document.getElementById("fc-am-inicio").value;
+    const montoPagado = parseFloat(document.getElementById("fc-am-monto-ahora").value) || 0;
+    const inputFecha = document.getElementById("fc-am-fecha-saldo");
+    if (!plan || !inicio) {
+        inputFecha.removeAttribute("min");
+        inputFecha.removeAttribute("max");
+        return;
+    }
+    const duracion = Math.max(Number(plan.duracion_dias || 0), 1);
+    const meses = Number(plan.duracion_meses || 0);
+    const periodos = meses > 0 ? meses : Math.max(duracion / 30, 1);
+    const montoPeriodo = Number(plan.monto_mensual || plan.precio || 0);
+    const costoDiario = (montoPeriodo * periodos) / duracion;
+    const diasCubiertos = costoDiario > 0
+        ? Math.min(Math.max(Math.floor((montoPagado / costoDiario) + 0.5), 0), duracion)
+        : duracion;
+    const limite = new Date(inicio + "T00:00:00");
+    limite.setDate(limite.getDate() + diasCubiertos);
+    let fechaMaxima = fechaLocalISO(limite);
+    const fechaFin = document.getElementById("fc-am-fin").value;
+    if (fechaFin && fechaFin < fechaMaxima) fechaMaxima = fechaFin;
+    inputFecha.min = inicio;
+    inputFecha.max = fechaMaxima;
+    if (inputFecha.value && inputFecha.value > fechaMaxima) inputFecha.value = fechaMaxima;
 }
 
 function _fcRecalcularSaldo() {
@@ -340,6 +468,7 @@ function _fcRecalcularSaldo() {
         filaSaldo.style.display = "none";
         filaFecha.style.display = "none";
     }
+    _fcActualizarLimiteFechaSaldo();
 }
 
 async function _fcAsignarMembresia() {

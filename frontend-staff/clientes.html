@@ -367,10 +367,10 @@
             <h3 class="modal-title">Editar Membresía Asignada</h3>
             <button class="modal-close" onclick="cerrarModalCM()">✕</button>
         </div>
-        <div class="form-row"><label>Plan</label><select id="cm-membresia"></select></div>
-        <div class="form-row"><label>Fecha inicio</label><input type="date" id="cm-inicio"></div>
-        <div class="form-row"><label>Fecha fin</label><input type="date" id="cm-fin"></div>
-        <div class="form-row"><label>Monto pagado</label><input type="number" id="cm-pagado" min="0" step="0.01"></div>
+        <div class="form-row"><label>Plan</label><select id="cm-membresia" onchange="_cmActualizarLimiteFechaSaldo()"></select></div>
+        <div class="form-row"><label>Fecha inicio</label><input type="date" id="cm-inicio" onchange="_cmActualizarLimiteFechaSaldo()"></div>
+        <div class="form-row"><label>Fecha fin</label><input type="date" id="cm-fin" onchange="_cmActualizarLimiteFechaSaldo()"></div>
+        <div class="form-row"><label>Monto pagado</label><input type="number" id="cm-pagado" min="0" step="0.01" oninput="_cmActualizarLimiteFechaSaldo()"></div>
         <div class="form-row"><label>Forma de pago</label>
             <select id="cm-metodo">
                 <option value="efectivo">Efectivo</option>
@@ -403,9 +403,9 @@
     </div>
 </div>
 
-<script src="js/api.js"></script>
+<script src="js/api.js?v=20260723-1"></script>
 <script src="js/sidebar.js"></script>
-<script src="js/flujo-cliente.js?v=20260722-3"></script>
+<script src="js/flujo-cliente.js?v=20260723-1"></script>
 <script src="js/medidas-catalogo.js"></script>
 <script>
     let busquedaActual = "", clienteActual = null, modoEdicion = false, debounceTimer = null, filtroActual = "activos";
@@ -718,9 +718,11 @@
             if (esInvitado) {
                 accionInvitado = '<span class="badge badge-info">Acceso por invitación</span>';
             } else if (plan && plan.permite_invitado && plan.dias_invitado > 0) {
-                accionInvitado = activa.invitacion_usada
-                    ? '<span class="badge badge-success">Invitado asignado</span>'
-                    : `<button type="button" class="btn btn-primary btn-sm" onclick="abrirInvitadoDesdeFicha(${activa.id}, ${plan.dias_invitado})">Invitado</button>`;
+                const usados = Number(activa.invitaciones_usadas || 0);
+                const disponibles = Math.max(Number(activa.invitaciones_disponibles ?? (plan.dias_invitado - usados)), 0);
+                accionInvitado = disponibles <= 0
+                    ? `<span class="badge badge-success">${usados}/${plan.dias_invitado} ingresos usados</span>`
+                    : `<button type="button" class="btn btn-primary btn-sm" onclick="abrirInvitadoDesdeFicha(${activa.id}, ${plan.dias_invitado}, ${disponibles})">Registrar invitado · ${disponibles} restante${disponibles === 1 ? "" : "s"}</button>`;
             }
             wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
                 <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82em;align-items:center;">
@@ -739,12 +741,12 @@
         abrirModalClienteCompletar(clienteActual, _clientesFcTerminado);
     }
 
-    function abrirInvitadoDesdeFicha(clienteMembresiaId, dias) {
+    function abrirInvitadoDesdeFicha(clienteMembresiaId, dias, disponibles) {
         if (!clienteActual) return;
         const titularId = clienteActual.id;
         const titularNombre = `${clienteActual.nombre} ${clienteActual.apellidos || ""}`.trim();
         abrirModalClienteInvitado(
-            { cmId: clienteMembresiaId, dias, titularNombre },
+            { cmId: clienteMembresiaId, dias, disponibles, titularNombre, titularClienteId: titularId },
             () => {
                 cargarClientes();
                 if (clienteActual && clienteActual.id === titularId) verCliente(titularId);
@@ -1245,7 +1247,29 @@
         document.getElementById("cm-metodo").value = cmEditando.metodo_pago || "efectivo";
         document.getElementById("cm-fecha-saldo").value = cmEditando.fecha_pago_saldo || "";
         document.getElementById("cm-activo").value = cmEditando.activo ? "true" : "false";
+        _cmActualizarLimiteFechaSaldo();
         document.getElementById("modal-cm").classList.add("active");
+    }
+
+    function _cmActualizarLimiteFechaSaldo() {
+        const input = document.getElementById("cm-fecha-saldo");
+        const plan = (catalogoMembresias || []).find(m => String(m.id) === document.getElementById("cm-membresia").value);
+        const inicio = document.getElementById("cm-inicio").value;
+        const fin = document.getElementById("cm-fin").value;
+        const pagado = parseFloat(document.getElementById("cm-pagado").value) || 0;
+        if (!plan || !inicio) {
+            input.min = "";
+            input.max = "";
+            return;
+        }
+        const duracion = Math.max(Number(plan.duracion_dias || 0), 1);
+        const periodos = Number(plan.duracion_meses || 0) > 0
+            ? Number(plan.duracion_meses)
+            : Math.max(duracion / 30, 1);
+        const costoDiario = (Number(plan.monto_mensual || plan.precio || 0) * periodos) / duracion;
+        input.min = inicio;
+        input.max = fechaMaximaPagoISO(inicio, fin, costoDiario, pagado);
+        if ((input.min && input.value < input.min) || (input.max && input.value > input.max)) input.value = "";
     }
 
     function cerrarModalCM() {
@@ -1325,12 +1349,23 @@
     // ==============================================================
     // Pago rapido de saldo pendiente (modal en pestaña Membresias)
     // ==============================================================
-    let _psCtx = null; // { cmId, precio, pagado, saldo }
+    let _psCtx = null; // { cmId, precio, pagado, saldo, fechaInicio, fechaFin, costoDiario }
 
     async function abrirModalPagarSaldo(cmId, planNombre, precio, pagado) {
         const cfg = await getConfiguracionClientes();
         const saldo = Math.max(precio - pagado, 0);
-        _psCtx = { cmId, precio, pagado, saldo, moneda: cfg.moneda };
+        const historial = JSON.parse(document.getElementById("contenido-membresias").dataset.historial || "[]");
+        const cm = historial.find(item => item.id === cmId) || {};
+        _psCtx = {
+            cmId,
+            precio,
+            pagado,
+            saldo,
+            moneda: cfg.moneda,
+            fechaInicio: cm.fecha_inicio,
+            fechaFin: cm.fecha_fin,
+            costoDiario: cm.costo_diario_programacion || 0,
+        };
 
         const nombre = `${clienteActual.nombre} ${clienteActual.apellidos || ''}`.trim();
         document.getElementById('ps-detalle').innerHTML =
@@ -1343,6 +1378,8 @@
         document.getElementById('ps-monto').max   = saldo;
         document.getElementById('ps-metodo').value = 'efectivo';
         document.getElementById('ps-fecha-prox').value = '';
+        document.getElementById('ps-fecha-prox').min = '';
+        document.getElementById('ps-fecha-prox').max = '';
         document.getElementById('ps-fecha-prox-row').style.display = 'none';
         document.getElementById('modal-pagar-saldo').classList.add('active');
     }
@@ -1352,7 +1389,22 @@
         if (!_psCtx) return;
         const monto = parseFloat(document.getElementById('ps-monto').value) || 0;
         const esParcial = monto > 0 && monto < _psCtx.saldo - 0.01;
+        const fechaInput = document.getElementById('ps-fecha-prox');
         document.getElementById('ps-fecha-prox-row').style.display = esParcial ? 'flex' : 'none';
+        if (!esParcial) {
+            fechaInput.value = '';
+            return;
+        }
+        fechaInput.min = fechaLocalISO();
+        fechaInput.max = fechaMaximaPagoISO(
+            _psCtx.fechaInicio,
+            _psCtx.fechaFin,
+            _psCtx.costoDiario,
+            _psCtx.pagado + monto,
+        );
+        if ((fechaInput.min && fechaInput.value < fechaInput.min) || (fechaInput.max && fechaInput.value > fechaInput.max)) {
+            fechaInput.value = '';
+        }
     }
 
     function cerrarModalPagarSaldo() {
@@ -1368,8 +1420,10 @@
             showError(`El monto supera el saldo pendiente (${formatCurrency(_psCtx.saldo)})`); return;
         }
         const esParcial = monto < _psCtx.saldo - 0.01;
-        const fechaProx = esParcial ? (document.getElementById('ps-fecha-prox').value || null) : null;
+        const fechaInput = document.getElementById('ps-fecha-prox');
+        const fechaProx = esParcial ? (fechaInput.value || null) : null;
         if (esParcial && !fechaProx) { showError('Indica la fecha del próximo pago'); return; }
+        if (esParcial && ((fechaInput.min && fechaProx < fechaInput.min) || (fechaInput.max && fechaProx > fechaInput.max))) return;
         try {
             await apiFetch(`/cliente-membresias/${_psCtx.cmId}/pagar-saldo`, {
                 method: 'PUT',

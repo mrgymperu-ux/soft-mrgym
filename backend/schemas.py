@@ -490,7 +490,7 @@ class MembresiaBase(BaseModel):
     @model_validator(mode="after")
     def validar_beneficio_invitado(self):
         if self.permite_invitado and self.dias_invitado < 1:
-            raise ValueError("Indica al menos un día para el invitado")
+            raise ValueError("Indica al menos un ingreso para invitados")
         if not self.permite_invitado:
             self.dias_invitado = 0
         return self
@@ -549,6 +549,10 @@ class ReprogramarMembresiaRequest(BaseModel):
     fecha_inicio: date
 
 
+class ReprogramarProximoPagoRequest(BaseModel):
+    fecha_proximo_pago: date
+
+
 class ClienteMembresiaUpdate(BaseModel):
     """Correccion administrativa de una membresia ya asignada (solo admin)."""
     membresia_id: Optional[int] = None
@@ -590,6 +594,10 @@ class ClienteMembresia(BaseModel):
     vendido_por_id: Optional[int] = None
     invitado_por_cm_id: Optional[int] = None
     invitacion_usada: bool = False
+    invitaciones_usadas: int = 0
+    invitaciones_disponibles: int = 0
+    fecha_maxima_proximo_pago: Optional[date] = None
+    costo_diario_programacion: Optional[float] = None
     activo: bool
     anulada: bool = False
     anulada_en: Optional[datetime] = None
@@ -602,6 +610,8 @@ class InvitadoMembresiaResponse(BaseModel):
     cliente: Cliente
     membresia: ClienteMembresia
     dias_asignados: int
+    ingresos_usados: int
+    ingresos_disponibles: int
 
 
 class MembresiaPorVencer(BaseModel):
@@ -1801,6 +1811,8 @@ class ClienteListadoRow(BaseModel):
     """
     id: int
     nombre_completo: str
+    dni: Optional[str] = None
+    telefono: Optional[str] = None
     activo: bool
     fecha_vencimiento: Optional[date] = None
     dias_para_vencer: Optional[int] = None
@@ -1811,6 +1823,7 @@ class ClienteListadoRow(BaseModel):
     porcentaje_asistencia: Optional[float] = None
     tiene_membresia_catalogo: bool = False
     fecha_pago_saldo: Optional[date] = None
+    fecha_maxima_proximo_pago: Optional[date] = None
     ultimo_cm_id: Optional[int] = None
     es_historico: bool = False
     historico_id: Optional[int] = None
@@ -1832,12 +1845,15 @@ class ClienteListadoPagina(BaseModel):
 class FichaMembresiaActual(BaseModel):
     cm_id: int
     nombre: str
+    fecha_inicio: Optional[date] = None
     fecha_fin: Optional[date] = None
     dias_restantes: Optional[int] = None
     precio: float = 0.0
     monto_pagado: float = 0.0
     deuda_pendiente: float = 0.0
     fecha_pago_saldo: Optional[date] = None
+    fecha_maxima_proximo_pago: Optional[date] = None
+    costo_diario_programacion: Optional[float] = None
 
 
 class ClienteFicha(BaseModel):
