@@ -54,7 +54,7 @@ _CAMARAS_REMOTAS = {}
 
 def _respuesta_enlace_camara(request: Request, token: str):
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/camara-remota.html?token={token}&v=20260724-2"
+    url = f"{base}/camara-remota.html?token={token}&v=20260724-3"
     import qrcode
     import qrcode.image.svg
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)

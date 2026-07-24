@@ -159,6 +159,7 @@
             video: videoConfig,
         });
         const video = elemento("rf-video");
+        elemento("rf-camera").classList.remove("rf-remota");
         video.srcObject = stream;
         await video.play();
         elemento("rf-camera").style.display = "block";
@@ -189,6 +190,7 @@
 
     async function encenderCamaraRemota() {
         const video = elemento("rf-video");
+        elemento("rf-camera").classList.add("rf-remota");
         if (streamRemoto && conexionRemota?.connectionState === "connected") {
             stream = streamRemoto;
             video.srcObject = stream;
@@ -305,7 +307,8 @@
         if (caras.length === 0) return { mensaje: "Coloca tu rostro dentro del óvalo" };
         const cara = caras[0];
         if (!cara.embedding || cara.embedding.length !== 1024) return { mensaje: "Acércate un poco a la cámara" };
-        if ((cara.faceScore || 0) < umbralRostro || !cara.box || cara.box[2] < anchoRostroMinimo) return { mensaje: "Acércate y mantén el rostro al frente" };
+        const confianza = Number(cara.faceScore || cara.score || cara.boxScore || 0);
+        if (confianza < umbralRostro || !cara.box || cara.box[2] < anchoRostroMinimo) return { mensaje: "Acércate y mantén el rostro al frente" };
         return { cara };
     }
 
