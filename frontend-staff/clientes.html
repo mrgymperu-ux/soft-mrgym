@@ -5,12 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clientes - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css?v=20260723-3">
-    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-1">
+    <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-2">
     <link rel="preload" href="vendor/human/human.js" as="script">
     <link rel="prefetch" href="vendor/human/models/faceres.bin">
     <link rel="prefetch" href="vendor/human/models/blazeface.bin">
-    <link rel="prefetch" href="vendor/human/models/antispoof.bin">
-    <link rel="prefetch" href="vendor/human/models/liveness.bin">
     <script src="js/tema.js"></script>
     <style>
         .form-row.foto-row label { align-self:flex-start; margin-top:6px; }
@@ -401,10 +399,10 @@
         </div>
         <div id="rf-camera" class="rf-camera" style="display:none;">
             <video id="rf-video" playsinline muted></video>
-            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 320" aria-hidden="true"></svg></div>
+            <div class="rf-guide"><svg class="rf-guide-progress" viewBox="0 0 320 420" aria-hidden="true"></svg></div>
         </div>
         <div id="rf-status" class="rf-status">Preparando...</div>
-        <div id="rf-ayuda" style="font-size:.75em;color:var(--color-texto-secundario);text-align:center;margin-top:8px;">Mira al frente y parpadea. Usa buena iluminación.</div>
+        <div id="rf-ayuda" style="font-size:.75em;color:var(--color-texto-secundario);text-align:center;margin-top:8px;">Acomoda el rostro dentro del óvalo. Usa buena iluminación.</div>
     </div>
 </div>
 
@@ -443,7 +441,7 @@
             if (!window.abrirRegistroFacial) {
                 if (boton) { boton.disabled = true; boton.textContent = "Preparando cámara..."; }
                 promesaReconocimientoFacial ||= cargarScriptUnaVez("vendor/human/human.js")
-                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260724-1"));
+                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260724-2"));
                 await promesaReconocimientoFacial;
             }
             await window.abrirRegistroFacial(clienteId);

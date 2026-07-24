@@ -5,31 +5,28 @@
 
     const MODELO_VERSION = "human-3.3.6-faceres";
     const UMBRAL_COINCIDENCIA = 0.55;
-    const CAPTURAS_REGISTRO = 4;
+    const CAPTURAS_REGISTRO = 3;
     const CLAVE_ESTACION_ACTIVA = "mrgym_rf_estacion_activa";
     const CLAVE_EVENTO_RECONOCIDO = "mrgym_rf_evento";
     let modoDispositivo = "desactivado";
-    let umbralReal = 0.60;
-    let umbralVivo = 0.60;
     let umbralRostro = 0.65;
     let anchoRostroMinimo = 120;
-    let requiereParpadeo = false;
     let intervaloMs = 120;
     const CONFIG = {
         backend: "webgl",
         modelBasePath: "vendor/human/models/",
         cacheSensitivity: 0.01,
-        filter: { enabled: true, equalization: false },
+        filter: { enabled: false },
         face: {
             enabled: true,
             // La webcam del counter permanece vertical; evitar buscar rotaciones
             // reduce trabajo sin afectar el uso normal de frente.
-            detector: { rotation: false, maxDetected: 2, minConfidence: 0.55 },
+            detector: { rotation: false, maxDetected: 1, minConfidence: 0.55 },
             mesh: { enabled: false },
             iris: { enabled: false },
             description: { enabled: true },
-            antispoof: { enabled: true },
-            liveness: { enabled: true },
+            antispoof: { enabled: false },
+            liveness: { enabled: false },
             emotion: { enabled: false },
         },
         body: { enabled: false },
@@ -46,7 +43,6 @@
     let modo = null;
     let objetivoClienteId = null;
     let descriptores = [];
-    let parpadeoDetectado = false;
     let capturas = [];
     let ultimaCaptura = 0;
     let ultimoCandidato = null;
@@ -97,19 +93,13 @@
     async function cargarModoDispositivo() {
         const config = await window.getConfiguracion();
         modoDispositivo = config.reconocimiento_facial_modo || "desactivado";
-        umbralReal = 0.60;
-        umbralVivo = 0.60;
         umbralRostro = 0.65;
         anchoRostroMinimo = 120;
-        requiereParpadeo = false;
         intervaloMs = 120;
         CONFIG.face.detector.minConfidence = 0.55;
         if (modoDispositivo === "movil") {
-            umbralReal = 0.45;
-            umbralVivo = 0.45;
             umbralRostro = 0.55;
             anchoRostroMinimo = 85;
-            requiereParpadeo = false;
             intervaloMs = 240;
             CONFIG.face.detector.minConfidence = 0.45;
         }
@@ -249,6 +239,17 @@
         if (socketRemoto?.readyState === WebSocket.OPEN) socketRemoto.send(JSON.stringify({ tipo: "resultado", mensaje }));
     }
 
+    function guiarMovil(mensaje, progreso = 0, tipo = "") {
+        if (socketRemoto?.readyState !== WebSocket.OPEN) return;
+        socketRemoto.send(JSON.stringify({
+            tipo: "guia",
+            mensaje,
+            progreso: Math.max(0, Math.min(100, Math.round(progreso))),
+            estado: tipo,
+            modo,
+        }));
+    }
+
     function apagarCamara() {
         if (temporizador) window.clearTimeout(temporizador);
         temporizador = null;
@@ -269,11 +270,11 @@
         estado("Preparando...");
     }
 
-    function reiniciarPruebaDeVida() {
-        parpadeoDetectado = false;
+    function reiniciarFlujoFacial() {
         ultimoCandidato = null;
         repeticionesCandidato = 0;
         actualizarProgresoCaptura(0);
+        guiarMovil("Acomoda tu rostro dentro del óvalo", 0, "buscando");
     }
 
     function actualizarProgresoCaptura(cantidad) {
@@ -281,41 +282,30 @@
         if (!guia) return;
         const porcentaje = Math.min(100, Math.round((cantidad / CAPTURAS_REGISTRO) * 100));
         guia.style.setProperty("--rf-progreso", porcentaje);
-        const segmentos = guia.querySelectorAll(".rf-guide-progress line");
-        const activos = Math.round(segmentos.length * porcentaje / 100);
-        segmentos.forEach((segmento, indice) => segmento.classList.toggle("activo", indice < activos));
+        const trazo = guia.querySelector(".rf-guide-progress ellipse");
+        if (trazo) trazo.style.strokeDashoffset = String(100 - porcentaje);
         guia.classList.toggle("completo", porcentaje === 100);
     }
 
     function prepararGuiaSegmentada() {
         document.querySelectorAll(".rf-guide-progress").forEach((svg) => {
             if (svg.childElementCount) return;
-            const total = 188;
-            for (let indice = 0; indice < total; indice += 1) {
-                const linea = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                linea.setAttribute("x1", "160");
-                linea.setAttribute("y1", "7");
-                linea.setAttribute("x2", "160");
-                linea.setAttribute("y2", "13");
-                linea.setAttribute("transform", `rotate(${indice * 360 / total} 160 160)`);
-                svg.appendChild(linea);
-            }
+            const ovalo = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+            ovalo.setAttribute("cx", "160");
+            ovalo.setAttribute("cy", "210");
+            ovalo.setAttribute("rx", "151");
+            ovalo.setAttribute("ry", "200");
+            ovalo.setAttribute("pathLength", "100");
+            svg.appendChild(ovalo);
         });
-    }
-
-    function huboParpadeo(resultado) {
-        return (resultado.gesture || []).some((item) => String(item.gesture || "").toLowerCase().includes("blink"));
     }
 
     function validarRostro(resultado) {
         const caras = resultado.face || [];
         if (caras.length === 0) return { mensaje: "Coloca tu rostro dentro del óvalo" };
-        if (caras.length > 1) return { mensaje: "Debe aparecer una sola persona" };
         const cara = caras[0];
         if (!cara.embedding || cara.embedding.length !== 1024) return { mensaje: "Acércate un poco a la cámara" };
         if ((cara.faceScore || 0) < umbralRostro || !cara.box || cara.box[2] < anchoRostroMinimo) return { mensaje: "Acércate y mantén el rostro al frente" };
-        if (typeof cara.real === "number" && cara.real < umbralReal) return { mensaje: "No se detecta un rostro real" };
-        if (typeof cara.live === "number" && cara.live < umbralVivo) return { mensaje: "Muévete ligeramente y parpadea" };
         return { cara };
     }
 
@@ -341,6 +331,7 @@
             ultimoCandidato = null;
             repeticionesCandidato = 0;
             estado("Rostro no reconocido. Intenta de nuevo.");
+            guiarMovil("Rostro no reconocido. Intenta nuevamente.", 0, "error");
             return;
         }
         if (ultimoCandidato === mejor.item.cliente_id) repeticionesCandidato += 1;
@@ -350,6 +341,7 @@
         }
         if (repeticionesCandidato < 2) {
             estado("Verificando identidad...");
+            guiarMovil("Rostro alineado. Mantente quieto.", 60, "alineado");
             return;
         }
 
@@ -368,6 +360,7 @@
                 ? `${nombre}, tu ingreso ya estaba registrado.`
                 : `Ingreso registrado correctamente. Bienvenido, ${nombre}.`;
             avisarMovil(mensaje);
+            guiarMovil("Identidad confirmada", 100, "completo");
             publicarIngresoFacial(clienteId, nombre, mensaje);
             estado("Reconocimiento activo en segundo plano", "ok");
             if (!acceso.ya_registrada && typeof window.showSuccess === "function") window.showSuccess(`Ingreso registrado: ${nombre}`);
@@ -389,9 +382,17 @@
     }
 
     async function procesarRegistro(cara) {
-        if (Date.now() - ultimaCaptura < 420) return;
+        if (Date.now() - ultimaCaptura < 250) return;
         capturas.push(Array.from(cara.embedding));
         actualizarProgresoCaptura(capturas.length);
+        const progreso = Math.round((capturas.length / CAPTURAS_REGISTRO) * 100);
+        guiarMovil(
+            capturas.length < CAPTURAS_REGISTRO
+                ? `Capturando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}`
+                : "Rostro capturado correctamente",
+            progreso,
+            progreso === 100 ? "completo" : "capturando",
+        );
         ultimaCaptura = Date.now();
         if (capturas.length < CAPTURAS_REGISTRO) {
             estado(`Registrando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}. Muévete ligeramente.`);
@@ -415,11 +416,11 @@
         ejecutando = true;
         try {
             const resultado = await human.detect(elemento("rf-video"));
-            if (huboParpadeo(resultado)) parpadeoDetectado = true;
             const validacion = validarRostro(resultado);
-            if (!validacion.cara) estado(validacion.mensaje);
-            else if (requiereParpadeo && !parpadeoDetectado) estado("Parpadea una vez para comprobar que eres una persona");
-            else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
+            if (!validacion.cara) {
+                estado(validacion.mensaje);
+                guiarMovil(validacion.mensaje, 0, "buscando");
+            } else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
             else if (modo === "registrar") await procesarRegistro(validacion.cara);
         } catch (error) {
             estado(error.message || "No se pudo analizar la imagen", "error");
@@ -432,9 +433,10 @@
     async function prepararCamara() {
         try {
             exigirModoActivo();
-            estado(modoDispositivo === "movil" ? "Preparando enlace QR para el móvil..." : "Iniciando webcam 1080p...");
+            estado(modoDispositivo === "movil" ? "Preparando enlace con el móvil..." : "Iniciando cámara...");
             await Promise.all([cargarMotor(), encenderCamara()]);
-            estado(requiereParpadeo ? "Mira al frente y parpadea una vez" : "Mira al frente y muévete ligeramente");
+            estado("Acomoda el rostro dentro del óvalo");
+            guiarMovil("Acomoda tu rostro dentro del óvalo", 0, "buscando");
             ciclo();
         } catch (error) {
             apagarCamara();
@@ -455,7 +457,7 @@
         }
         modo = "reconocer";
         objetivoClienteId = null;
-        reiniciarPruebaDeVida();
+        reiniciarFlujoFacial();
         abrirModal("Reconocimiento facial");
         try {
             await cargarModoDispositivo();
@@ -498,7 +500,7 @@
         objetivoClienteId = clienteId;
         capturas = [];
         ultimaCaptura = 0;
-        reiniciarPruebaDeVida();
+        reiniciarFlujoFacial();
         abrirModal("Registrar rostro del cliente");
         elemento("rf-ayuda").style.display = "block";
         await prepararCamara();

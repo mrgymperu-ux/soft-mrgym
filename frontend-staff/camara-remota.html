@@ -3,41 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <title>Cámara remota Soft-Gym</title>
+    <title>Guía facial - Mr Gym</title>
     <style>
         *{box-sizing:border-box}body{margin:0;background:#080b0a;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
         video{width:100vw;height:100dvh;object-fit:cover;transform:scaleX(-1)}
-        #estado{position:fixed;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));padding:14px;border-radius:12px;background:rgba(0,0,0,.66);text-align:center;font-weight:650;backdrop-filter:blur(8px)}
-        #resultado{display:none;position:fixed;inset:0;background:rgba(13,155,86,.9);align-items:center;justify-content:center;text-align:center;font-size:clamp(1.6rem,8vw,3rem);font-weight:800;padding:30px}
+        #guia{--progreso:0;display:none;position:fixed;z-index:2;left:50%;top:47%;width:min(68vw,42vh,360px);aspect-ratio:.72;transform:translate(-50%,-50%);border-radius:48% 48% 44% 44%/42% 42% 58% 58%;box-shadow:0 0 0 999px rgba(0,0,0,.27);pointer-events:none}
+        #guia svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+        #guia ellipse{fill:none;stroke:#d2d7d4;stroke-width:7;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:100;filter:drop-shadow(0 0 3px rgba(0,0,0,.7));transition:stroke-dashoffset .2s ease,stroke .2s ease,filter .2s ease}
+        #guia.en-progreso ellipse,#guia.completo ellipse{stroke:#23c875;filter:drop-shadow(0 0 6px rgba(35,200,117,.95))}
+        #guia.completo{box-shadow:0 0 0 999px rgba(0,0,0,.2),0 0 28px rgba(35,200,117,.85)}
+        #estado{position:fixed;z-index:4;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));padding:14px;border-radius:12px;background:rgba(0,0,0,.7);text-align:center;font-weight:700;backdrop-filter:blur(8px)}
+        #porcentaje{display:block;margin-top:4px;color:#7cf0ae;font-size:.82rem}
+        #resultado{display:none;position:fixed;z-index:8;inset:0;background:rgba(13,155,86,.92);align-items:center;justify-content:center;text-align:center;font-size:clamp(1.6rem,8vw,3rem);font-weight:800;padding:30px}
         #iniciar{position:fixed;inset:0;margin:auto;width:min(86vw,360px);height:58px;border:0;border-radius:14px;background:#23c875;color:#062d1b;font-size:1.05rem;font-weight:800}
     </style>
 </head>
 <body>
 <video id="video" playsinline muted></video>
+<div id="guia" aria-hidden="true"><svg viewBox="0 0 320 420"><ellipse cx="160" cy="210" rx="151" ry="200" pathLength="100"></ellipse></svg></div>
 <button id="iniciar">Activar cámara frontal</button>
-<div id="estado">Pulsa para conectar esta cámara al counter</div>
-<div id="resultado"></div>
+<div id="estado" aria-live="polite"><span id="mensaje">Pulsa para conectar esta cámara al counter</span><span id="porcentaje"></span></div>
+<div id="resultado" aria-live="assertive"></div>
 <script>
 const token=new URLSearchParams(location.search).get('token');
-const video=document.getElementById('video'),estado=document.getElementById('estado'),boton=document.getElementById('iniciar'),resultado=document.getElementById('resultado');
+const video=document.getElementById('video'),estado=document.getElementById('estado'),mensaje=document.getElementById('mensaje'),porcentaje=document.getElementById('porcentaje'),boton=document.getElementById('iniciar'),resultado=document.getElementById('resultado'),guia=document.getElementById('guia'),trazo=guia.querySelector('ellipse');
 let ws,pc,stream,candidatosPendientes=[];
 const enviar=(dato)=>ws&&ws.readyState===1&&ws.send(JSON.stringify(dato));
+function actualizarGuia(valor,texto,tipo=''){
+ const progreso=Math.max(0,Math.min(100,Number(valor)||0));
+ guia.style.display='block';trazo.style.strokeDashoffset=String(100-progreso);
+ guia.classList.toggle('en-progreso',progreso>0&&progreso<100);
+ guia.classList.toggle('completo',progreso===100);
+ mensaje.textContent=texto||'Acomoda tu rostro dentro del óvalo';
+ porcentaje.textContent=progreso>0?`${Math.round(progreso)}%`:'';
+}
 function conectarSocket(){
  ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/api/ws/camara-remota/${encodeURIComponent(token)}/movil`);
- ws.onopen=()=>{estado.textContent='Esperando al counter…';enviar({tipo:'movil-listo'})};
- ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);for(const candidato of candidatosPendientes)await pc.addIceCandidate(candidato);candidatosPendientes=[];const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){if(pc.remoteDescription)await pc.addIceCandidate(m.candidate);else candidatosPendientes.push(m.candidate)}else if(m.tipo==='resultado'){resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>resultado.style.display='none',3000)}};
- ws.onclose=()=>{estado.textContent='Reconectando con el counter…';if(stream)setTimeout(conectarSocket,2000)};
+ ws.onopen=()=>{actualizarGuia(0,'Esperando al counter…');enviar({tipo:'movil-listo'})};
+ ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);for(const candidato of candidatosPendientes)await pc.addIceCandidate(candidato);candidatosPendientes=[];const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){if(pc.remoteDescription)await pc.addIceCandidate(m.candidate);else candidatosPendientes.push(m.candidate)}else if(m.tipo==='guia'){actualizarGuia(m.progreso,m.mensaje,m.estado)}else if(m.tipo==='resultado'){actualizarGuia(100,'Identidad confirmada','completo');resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>{resultado.style.display='none';actualizarGuia(0,'Listo para el siguiente alumno')},3000)}};
+ ws.onclose=()=>{actualizarGuia(0,'Reconectando con el counter…');if(stream)setTimeout(conectarSocket,2000)};
 }
 async function conectar(){
- if(!token){estado.textContent='Enlace inválido o vencido';return}
+ if(!token){mensaje.textContent='Enlace inválido o vencido';return}
  boton.style.display='none';
  try{
   stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'user'},width:{ideal:1280},height:{ideal:720}}});video.srcObject=stream;await video.play();
+  actualizarGuia(0,'Acomoda tu rostro dentro del óvalo');
   pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});stream.getTracks().forEach(t=>pc.addTrack(t,stream));
   pc.onicecandidate=e=>e.candidate&&enviar({tipo:'candidate',candidate:e.candidate});
-  pc.onconnectionstatechange=()=>{estado.textContent=pc.connectionState==='connected'?'Cámara conectada · mira al frente':'Conectando con el counter…'};
+  pc.onconnectionstatechange=()=>actualizarGuia(0,pc.connectionState==='connected'?'Acomoda tu rostro dentro del óvalo':'Conectando con el counter…');
   conectarSocket();
- }catch(e){boton.style.display='block';estado.textContent=e.name==='NotAllowedError'?'Debes permitir el uso de la cámara frontal':'No se pudo iniciar la cámara';}
+ }catch(e){boton.style.display='block';guia.style.display='none';mensaje.textContent=e.name==='NotAllowedError'?'Debes permitir el uso de la cámara frontal':'No se pudo iniciar la cámara';}
 }
 boton.addEventListener('click',conectar);
 </script>
