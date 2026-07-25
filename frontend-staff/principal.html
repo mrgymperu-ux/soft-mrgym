@@ -30,6 +30,9 @@
         .bi-item-nombre { font-size: 0.85em; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .bi-item-sub { font-size: 0.72em; color: var(--color-texto-secundario); }
         .bi-item-acciones { display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0; }
+        /* Personal/profesor: Asistencia arriba, Vender+Pagar juntos abajo, a 3px de cada borde de la fila. */
+        .bi-item-acciones-personal { display:flex;flex-direction:column;align-items:flex-end;align-self:stretch;gap:5px;margin:-7px 0;flex-shrink:0; }
+        .bi-item-acciones-fila { display:flex;gap:5px;margin-top:auto; }
         .bi-accion { border:1px solid var(--color-borde);background:var(--color-blanco);color:var(--color-texto);border-radius:8px;padding:5px 8px;font-size:.68em;font-weight:600;cursor:pointer;white-space:nowrap; }
         .bi-accion:hover { border-color:var(--color-primario);color:var(--color-primario); }
 
@@ -92,10 +95,10 @@
 
         /* ---- Reconocimiento facial ---- */
         .rf-header-actions { display:flex; align-items:center; gap:8px; }
-        .rf-eye-button { position:relative; width:28px; height:28px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--color-borde); border-radius:8px; background:var(--color-fondo); color:#98A0A6; cursor:pointer; transition:color .18s, border-color .18s, background .18s, box-shadow .18s; }
+        .rf-eye-button { position:relative; width:22px; height:22px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--color-borde); border-radius:6px; background:var(--color-fondo); color:#98A0A6; cursor:pointer; transition:color .18s, border-color .18s, background .18s, box-shadow .18s; }
         .rf-eye-button:hover { border-color:#7D868D; color:#697178; }
-        .rf-eye-button svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-        .rf-eye-button .rf-dot { position:absolute; right:2px; bottom:2px; width:6px; height:6px; border-radius:50%; background:#98A0A6; border:2px solid var(--color-blanco); }
+        .rf-eye-button svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+        .rf-eye-button .rf-dot { position:absolute; right:1px; bottom:1px; width:5px; height:5px; border-radius:50%; background:#98A0A6; border:1.5px solid var(--color-blanco); }
         .rf-eye-button.activo { color:#19A463; border-color:#19A463; background:#EAF9F1; box-shadow:0 0 0 3px rgba(25,164,99,.12); }
         .rf-eye-button.activo .rf-dot { background:#19A463; }
     </style>
@@ -180,7 +183,7 @@
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>
                             <span class="rf-dot"></span>
                         </button>
-                        <button class="btn btn-primary btn-sm" onclick="abrirModalClienteNuevo(_panelFcTerminado)">+ Cliente</button>
+                        <button class="btn btn-primary btn-sm" style="padding:4px 8px;font-size:0.78em;line-height:1.2;" onclick="abrirModalClienteNuevo(_panelFcTerminado)">+ Cliente</button>
                     </span>
                 </div>
                 <div class="panel-card-body">
@@ -208,7 +211,7 @@
                 <div class="panel-card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <span>⚡ Venta rapida</span>
                     <span style="display:flex;align-items:center;gap:6px;">
-                        <button id="btn-otros-ingresos" class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.78em;line-height:1.2;" onclick="abrirOtroIngreso()">Otros</button>
+                        <button id="btn-otros-ingresos" class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.78em;line-height:1.2;" onclick="abrirOtroIngreso()">Otras Ventas</button>
                         <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:0.85em;line-height:1;" title="Abrir Venta Rápida completa (con el cliente seleccionado, si hay uno)" onclick="irAVentaRapidaCompleta()">🔗</button>
                     </span>
                 </div>
@@ -603,16 +606,16 @@
                 const esProfesor = empleado.tipo === "profesor_de_sala";
                 const tipoTexto = esProfesor ? "Profesor" : "Staff";
                 const detalle = empleado.puesto ? ` · ${escapeHTML(empleado.puesto)}` : "";
-                const acciones = esProfesor
-                    ? `<div class="bi-item-acciones">
-                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirAsistenciaProfesor(${Number(empleado.id)})" title="Ver asistencia del profesor">✅ Asistencia</button>
-                           <button type="button" class="bi-accion" onclick="event.stopPropagation();seleccionarPersonalParaVenta(${Number(empleado.id)}, '${escapeAttr(empleado.nombre_completo)}', 'profesor_de_sala')" title="Vender un producto al profesor">🛒 Vender</button>
-                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'profesor_de_sala')" title="Registrar pago al profesor">💵 Pagar</button>
-                       </div>`
-                    : `<div class="bi-item-acciones">
-                           <button type="button" class="bi-accion" onclick="event.stopPropagation();seleccionarPersonalParaVenta(${Number(empleado.id)}, '${escapeAttr(empleado.nombre_completo)}', 'staff_fijo')" title="Vender un producto al trabajador">🛒 Vender</button>
-                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, 'staff_fijo')" title="Registrar pago al trabajador">💵 Pagar</button>
+                const filaVenderPagar = `<div class="bi-item-acciones-fila">
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();seleccionarPersonalParaVenta(${Number(empleado.id)}, '${escapeAttr(empleado.nombre_completo)}', '${esProfesor ? "profesor_de_sala" : "staff_fijo"}')" title="Vender un producto al ${esProfesor ? "profesor" : "trabajador"}">🛒 Vender</button>
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirPagoPersonal(${Number(empleado.id)}, '${esProfesor ? "profesor_de_sala" : "staff_fijo"}')" title="Registrar pago al ${esProfesor ? "profesor" : "trabajador"}">💵 Pagar</button>
                        </div>`;
+                const acciones = esProfesor
+                    ? `<div class="bi-item-acciones-personal">
+                           <button type="button" class="bi-accion" onclick="event.stopPropagation();abrirAsistenciaProfesor(${Number(empleado.id)})" title="Ver asistencia del profesor">✅ Asistencia</button>
+                           ${filaVenderPagar}
+                       </div>`
+                    : `<div class="bi-item-acciones-personal">${filaVenderPagar}</div>`;
                 return `<div class="bi-item">
                     ${avatarHtml(empleado.nombre_completo, null)}
                     <div class="bi-item-info">
