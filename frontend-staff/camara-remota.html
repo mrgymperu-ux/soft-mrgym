@@ -6,7 +6,7 @@
     <title>Estación facial - Mr Gym</title>
     <style>
         *{box-sizing:border-box}body{margin:0;background:#080b0a;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
-        video{width:100vw;height:100dvh;object-fit:cover;transform:scaleX(-1) scale(1.25)}
+        video{width:100vw;height:100dvh;object-fit:cover;transform:scaleX(-1)}
         #guia{display:none;position:fixed;z-index:2;left:50%;top:50%;width:min(81.6vw,50.4vh,432px);aspect-ratio:.72;transform:translate(-50%,-50%);box-shadow:0 0 0 999px rgba(0,0,0,.27);pointer-events:none;border-radius:48% 48% 44% 44%/42% 42% 58% 58%}
         #guia svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
         #guia svg line{stroke:#7a8079;stroke-width:5;stroke-linecap:round;transition:stroke .25s ease,filter .25s ease}
@@ -320,6 +320,22 @@ async function ciclo() {
     }
 }
 
+async function aplicarZoomCamara(mediaStream) {
+    // Zoom real del sensor (no CSS): solo funciona si el celular/navegador lo
+    // expone. Si no esta disponible, se deja el encuadre normal sin agrandar
+    // nada mas en pantalla.
+    try {
+        const track = mediaStream.getVideoTracks()[0];
+        const capacidades = track.getCapabilities ? track.getCapabilities() : null;
+        if (!capacidades || !capacidades.zoom) return;
+        const base = track.getSettings ? (track.getSettings().zoom || capacidades.zoom.min) : capacidades.zoom.min;
+        const objetivo = Math.min(capacidades.zoom.max, base * 1.25);
+        await track.applyConstraints({ advanced: [{ zoom: objetivo }] });
+    } catch (_) {
+        // El dispositivo no soporta zoom por API; se deja el encuadre normal.
+    }
+}
+
 async function conectar() {
     if (!token) { mensaje.textContent = "Enlace inválido o vencido"; return; }
     boton.style.display = "none";
@@ -330,6 +346,7 @@ async function conectar() {
             audio: false,
             video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
         });
+        await aplicarZoomCamara(stream);
         video.srcObject = stream;
         await video.play();
         conectarSocket();
