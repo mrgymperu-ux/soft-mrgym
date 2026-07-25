@@ -49,13 +49,53 @@ logger = logging.getLogger("soft-mrgym")
 
 app = FastAPI(title="Soft-Gym API")
 
-# Salas de senalizacion WebRTC. No almacenan ni retransmiten video:
-# solo intercambian offer/answer/candidates entre counter y movil.
+# Canal de senalizacion entre el counter (rol "pc") y el movil vinculado
+# (rol "movil"): solo relayea mensajes de control/resultado en JSON, nunca
+# video (el movil procesa su propia camara localmente con Human.js).
 _CAMARAS_REMOTAS = {}
+
+# Registro facial "armado" desde el counter: habilita por un tiempo corto
+# que el movil vinculado guarde la plantilla de UN cliente puntual, para
+# que el token de camara (conocido tambien por el movil) no alcance por si
+# solo para sobrescribir la biometria de cualquier cliente en cualquier
+# momento. gimnasio_id -> {"cliente_id": int, "expira": datetime}
+_REGISTROS_ARMADOS = {}
+_MINUTOS_ARMADO_REGISTRO = 3
+
+
+async def _enviar_a_movil(gimnasio_id: int, mensaje: dict) -> bool:
+    """Empuja un mensaje de control al movil vinculado de este gimnasio, si esta conectado."""
+    for sesion in _CAMARAS_REMOTAS.values():
+        if sesion.get("gimnasio_id") != gimnasio_id:
+            continue
+        socket_movil = sesion["pares"].get("movil")
+        if not socket_movil:
+            continue
+        try:
+            await socket_movil.send_json(mensaje)
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _gimnasio_por_token_camara(db: Session, token: Optional[str]) -> models.Gimnasio:
+    """Autentica al movil vinculado por el hash del token (sin sesion de staff)."""
+    token_hash = hashlib.sha256((token or "").encode()).hexdigest()
+    gimnasio = db.query(models.Gimnasio).filter(
+        models.Gimnasio.camara_remota_token_hash == token_hash,
+        models.Gimnasio.activo == True,
+    ).first()
+    if not token or not gimnasio:
+        raise HTTPException(status_code=401, detail="Dispositivo facial no autorizado")
+    if (gimnasio.reconocimiento_facial_modo or "desactivado") != "movil":
+        raise HTTPException(status_code=409, detail="El reconocimiento facial por movil no esta activo")
+    return gimnasio
+
 
 def _respuesta_enlace_camara(request: Request, token: str):
     base = str(request.base_url).rstrip("/")
-    url = f"{base}/camara-remota.html?token={token}&v=20260724-3"
+    url = f"{base}/camara-remota.html?token={token}&v=20260724-4"
     import qrcode
     import qrcode.image.svg
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
@@ -91,7 +131,39 @@ def desvincular_camara_remota(db: Session = Depends(get_db), usuario=Depends(aut
     gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
     gimnasio.camara_remota_token_hash = None
     db.commit()
+    _REGISTROS_ARMADOS.pop(gimnasio.id, None)
     return {"message": "Movil desvinculado"}
+
+
+@app.post("/camara-remota/armar-registro")
+async def armar_registro_facial_remoto(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario=Depends(auth.requiere_staff)):
+    """El counter autoriza al movil vinculado a capturar el rostro de UN cliente puntual."""
+    _exigir_reconocimiento_facial_activo(db, usuario)
+    gimnasio_id = get_gid(usuario)
+    cliente = db.query(models.Cliente).filter(
+        models.Cliente.id == datos.cliente_id,
+        models.Cliente.gimnasio_id == gimnasio_id,
+        models.Cliente.activo == True,
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio.camara_remota_token_hash:
+        raise HTTPException(status_code=409, detail="No hay un movil de confianza enlazado en este counter")
+    nombre_completo = f"{cliente.nombre} {cliente.apellidos or ''}".strip()
+    _REGISTROS_ARMADOS[gimnasio_id] = {
+        "cliente_id": cliente.id,
+        "expira": ahora_lima() + timedelta(minutes=_MINUTOS_ARMADO_REGISTRO),
+    }
+    enviado = await _enviar_a_movil(gimnasio_id, {
+        "tipo": "iniciar_registro",
+        "cliente_id": cliente.id,
+        "cliente_nombre": nombre_completo,
+    })
+    if not enviado:
+        _REGISTROS_ARMADOS.pop(gimnasio_id, None)
+        raise HTTPException(status_code=409, detail="El móvil vinculado no está conectado ahora mismo")
+    return {"cliente_id": cliente.id, "cliente_nombre": nombre_completo}
 
 
 @app.websocket("/ws/camara-remota/{token}/{rol}")
@@ -118,7 +190,10 @@ async def websocket_camara_remota(websocket: WebSocket, token: str, rol: str):
     otro = sesion["pares"].get(otro_rol)
     if otro:
         try:
+            # Avisa a ambos lados: al que ya estaba conectado, que llego el
+            # nuevo par; y al que recien llega, que el otro ya estaba ahi.
             await otro.send_json({"tipo": f"{rol}-conectado"})
+            await websocket.send_json({"tipo": f"{otro_rol}-conectado"})
         except Exception:
             pass
     try:
@@ -4724,18 +4799,13 @@ def _exigir_reconocimiento_facial_activo(db: Session, usuario: models.Usuario):
     return modo
 
 
-@app.get("/biometria-facial/descriptores", response_model=List[schemas.BiometriaFacialDescriptor], tags=["Asistencias"])
-def listar_descriptores_faciales(
-    db: Session = Depends(get_db),
-    usuario: models.Usuario = Depends(auth.requiere_staff),
-):
-    _exigir_reconocimiento_facial_activo(db, usuario)
+def _descriptores_faciales_gimnasio(db: Session, gimnasio_id: int) -> list:
     registros = (
         db.query(models.BiometriaFacial, models.Cliente)
         .join(models.Cliente, models.Cliente.id == models.BiometriaFacial.cliente_id)
         .filter(
-            models.BiometriaFacial.gimnasio_id == get_gid(usuario),
-            models.Cliente.gimnasio_id == get_gid(usuario),
+            models.BiometriaFacial.gimnasio_id == gimnasio_id,
+            models.Cliente.gimnasio_id == gimnasio_id,
             models.Cliente.activo == True,
         )
         .all()
@@ -4754,6 +4824,25 @@ def listar_descriptores_faciales(
             "descriptor": descriptor,
         })
     return respuesta
+
+
+@app.get("/biometria-facial/descriptores", response_model=List[schemas.BiometriaFacialDescriptor], tags=["Asistencias"])
+def listar_descriptores_faciales(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    _exigir_reconocimiento_facial_activo(db, usuario)
+    return _descriptores_faciales_gimnasio(db, get_gid(usuario))
+
+
+@app.get("/dispositivo-facial/descriptores", response_model=List[schemas.BiometriaFacialDescriptor], tags=["Asistencias"])
+def listar_descriptores_faciales_dispositivo(
+    x_camera_token: Optional[str] = Header(None, alias="X-Camera-Token"),
+    db: Session = Depends(get_db),
+):
+    """Permiso limitado del movil vinculado: leer plantillas activas de su propio gimnasio."""
+    gimnasio = _gimnasio_por_token_camara(db, x_camera_token)
+    return _descriptores_faciales_gimnasio(db, gimnasio.id)
 
 
 @app.get("/clientes/{cliente_id}/biometria-facial", response_model=schemas.BiometriaFacialEstado, tags=["Clientes"])
@@ -4780,6 +4869,49 @@ def estado_biometria_facial(
     }
 
 
+def _guardar_biometria_facial_gimnasio(
+    db: Session,
+    gimnasio_id: int,
+    cliente_id: int,
+    descriptor: List[float],
+    version_modelo: str,
+    actualizado_por_id: Optional[int],
+) -> models.BiometriaFacial:
+    _validar_descriptor_facial(descriptor)
+    cliente = db.query(models.Cliente).filter(
+        models.Cliente.id == cliente_id,
+        models.Cliente.gimnasio_id == gimnasio_id,
+        models.Cliente.activo == True,
+    ).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    registro = db.query(models.BiometriaFacial).filter(
+        models.BiometriaFacial.cliente_id == cliente_id,
+        models.BiometriaFacial.gimnasio_id == gimnasio_id,
+    ).first()
+    ahora = ahora_lima()
+    if not registro:
+        registro = models.BiometriaFacial(
+            gimnasio_id=gimnasio_id,
+            cliente_id=cliente_id,
+            descriptor_cifrado=_cifrar_descriptor_facial(descriptor),
+            version_modelo=version_modelo,
+            consentimiento_en=ahora,
+            actualizado_en=ahora,
+            actualizado_por_id=actualizado_por_id,
+        )
+        db.add(registro)
+    else:
+        registro.descriptor_cifrado = _cifrar_descriptor_facial(descriptor)
+        registro.version_modelo = version_modelo
+        registro.consentimiento_en = ahora
+        registro.actualizado_en = ahora
+        registro.actualizado_por_id = actualizado_por_id
+    db.commit()
+    db.refresh(registro)
+    return registro
+
+
 @app.put("/clientes/{cliente_id}/biometria-facial", response_model=schemas.BiometriaFacialEstado, tags=["Clientes"])
 def guardar_biometria_facial(
     cliente_id: int,
@@ -4790,38 +4922,39 @@ def guardar_biometria_facial(
     if not datos.consentimiento:
         raise HTTPException(status_code=400, detail="Se requiere el consentimiento expreso del cliente")
     _exigir_reconocimiento_facial_activo(db, usuario)
-    _validar_descriptor_facial(datos.descriptor)
-    cliente = db.query(models.Cliente).filter(
-        models.Cliente.id == cliente_id,
-        models.Cliente.gimnasio_id == get_gid(usuario),
-        models.Cliente.activo == True,
-    ).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    registro = db.query(models.BiometriaFacial).filter(
-        models.BiometriaFacial.cliente_id == cliente_id,
-        models.BiometriaFacial.gimnasio_id == get_gid(usuario),
-    ).first()
-    ahora = ahora_lima()
-    if not registro:
-        registro = models.BiometriaFacial(
-            gimnasio_id=get_gid(usuario),
-            cliente_id=cliente_id,
-            descriptor_cifrado=_cifrar_descriptor_facial(datos.descriptor),
-            version_modelo=datos.version_modelo,
-            consentimiento_en=ahora,
-            actualizado_en=ahora,
-            actualizado_por_id=usuario.id,
-        )
-        db.add(registro)
-    else:
-        registro.descriptor_cifrado = _cifrar_descriptor_facial(datos.descriptor)
-        registro.version_modelo = datos.version_modelo
-        registro.consentimiento_en = ahora
-        registro.actualizado_en = ahora
-        registro.actualizado_por_id = usuario.id
-    db.commit()
-    db.refresh(registro)
+    registro = _guardar_biometria_facial_gimnasio(
+        db, get_gid(usuario), cliente_id, datos.descriptor, datos.version_modelo, usuario.id,
+    )
+    return {
+        "registrada": True,
+        "consentimiento_en": registro.consentimiento_en,
+        "actualizado_en": registro.actualizado_en,
+        "version_modelo": registro.version_modelo,
+    }
+
+
+@app.put("/dispositivo-facial/biometria/{cliente_id}", response_model=schemas.BiometriaFacialEstado, tags=["Clientes"])
+def guardar_biometria_facial_dispositivo(
+    cliente_id: int,
+    datos: schemas.BiometriaFacialGuardar,
+    x_camera_token: Optional[str] = Header(None, alias="X-Camera-Token"),
+    db: Session = Depends(get_db),
+):
+    """
+    Permiso limitado del movil vinculado: solo puede guardar la plantilla del
+    cliente que el counter armo explicitamente con POST /camara-remota/armar-registro
+    (ventana corta de un solo uso), nunca un cliente arbitrario.
+    """
+    if not datos.consentimiento:
+        raise HTTPException(status_code=400, detail="Se requiere el consentimiento expreso del cliente")
+    gimnasio = _gimnasio_por_token_camara(db, x_camera_token)
+    armado = _REGISTROS_ARMADOS.get(gimnasio.id)
+    if not armado or armado["cliente_id"] != cliente_id or armado["expira"] < ahora_lima():
+        raise HTTPException(status_code=403, detail="No hay un registro facial autorizado para este cliente")
+    _REGISTROS_ARMADOS.pop(gimnasio.id, None)
+    registro = _guardar_biometria_facial_gimnasio(
+        db, gimnasio.id, cliente_id, datos.descriptor, datos.version_modelo, None,
+    )
     return {
         "registrada": True,
         "consentimiento_en": registro.consentimiento_en,
@@ -7513,14 +7646,11 @@ def registrar_entrada(datos: schemas.AsistenciaCreate, db: Session = Depends(get
     return db_asistencia
 
 
-@app.post("/asistencias/reconocimiento-facial", tags=["Asistencias"])
-def registrar_entrada_facial(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    """Registra el acceso automático solo si la membresía permite el ingreso."""
-    _exigir_reconocimiento_facial_activo(db, usuario)
-    _cerrar_asistencias_vencidas(db, get_gid(usuario))
+def _registrar_entrada_facial_gimnasio(db: Session, gimnasio_id: int, cliente_id: int) -> dict:
+    _cerrar_asistencias_vencidas(db, gimnasio_id)
     cliente = db.query(models.Cliente).filter(
-        models.Cliente.id == datos.cliente_id,
-        models.Cliente.gimnasio_id == get_gid(usuario),
+        models.Cliente.id == cliente_id,
+        models.Cliente.gimnasio_id == gimnasio_id,
         models.Cliente.activo == True,
     ).first()
     if not cliente:
@@ -7541,15 +7671,33 @@ def registrar_entrada_facial(datos: schemas.AsistenciaCreate, db: Session = Depe
         raise HTTPException(status_code=403, detail="Tienes un pago vencido. Acércate al counter")
     abierta = db.query(models.Asistencia).filter(
         models.Asistencia.cliente_id == cliente.id,
-        models.Asistencia.gimnasio_id == get_gid(usuario),
+        models.Asistencia.gimnasio_id == gimnasio_id,
         models.Asistencia.fecha_hora_salida.is_(None),
     ).first()
     if abierta:
         return {"registrada": False, "ya_registrada": True, "mensaje": "Tu ingreso ya estaba registrado"}
-    asistencia = models.Asistencia(cliente_id=cliente.id, gimnasio_id=get_gid(usuario), fecha_hora_entrada=ahora_lima())
+    asistencia = models.Asistencia(cliente_id=cliente.id, gimnasio_id=gimnasio_id, fecha_hora_entrada=ahora_lima())
     db.add(asistencia)
     db.commit()
     return {"registrada": True, "ya_registrada": False, "mensaje": "Ingreso registrado correctamente"}
+
+
+@app.post("/asistencias/reconocimiento-facial", tags=["Asistencias"])
+def registrar_entrada_facial(datos: schemas.AsistenciaCreate, db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
+    """Registra el acceso automático solo si la membresía permite el ingreso."""
+    _exigir_reconocimiento_facial_activo(db, usuario)
+    return _registrar_entrada_facial_gimnasio(db, get_gid(usuario), datos.cliente_id)
+
+
+@app.post("/dispositivo-facial/asistencia", tags=["Asistencias"])
+def registrar_entrada_facial_dispositivo(
+    datos: schemas.AsistenciaCreate,
+    x_camera_token: Optional[str] = Header(None, alias="X-Camera-Token"),
+    db: Session = Depends(get_db),
+):
+    """Permiso limitado del movil vinculado: marcar asistencia facial en su propio gimnasio."""
+    gimnasio = _gimnasio_por_token_camara(db, x_camera_token)
+    return _registrar_entrada_facial_gimnasio(db, gimnasio.id, datos.cliente_id)
 
 
 @app.put("/asistencias/registrar-salida", response_model=schemas.Asistencia, tags=["Asistencias"])

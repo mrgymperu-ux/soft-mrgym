@@ -1,5 +1,9 @@
 /* Reconocimiento facial local para el panel de staff.
-   La webcam nunca se transmite: Human calcula el descriptor en este navegador. */
+   Modo "webcam_1080p": la webcam del counter nunca se transmite, Human calcula
+   el descriptor en este navegador. Modo "movil": el celular vinculado hace su
+   propio reconocimiento (ver camara-remota.html); esta PC solo escucha los
+   resultados por WebSocket para poder avisar al staff (p. ej. deuda vencida)
+   y puede pedirle al celular que capture el rostro de un cliente puntual. */
 (function () {
     "use strict";
 
@@ -8,6 +12,7 @@
     const CAPTURAS_REGISTRO = 3;
     const CLAVE_ESTACION_ACTIVA = "mrgym_rf_estacion_activa";
     const CLAVE_EVENTO_RECONOCIDO = "mrgym_rf_evento";
+    const MINUTOS_ESPERA_REGISTRO_MOVIL = 3;
     let modoDispositivo = "desactivado";
     let umbralRostro = 0.65;
     let anchoRostroMinimo = 120;
@@ -47,12 +52,10 @@
     let ultimaCaptura = 0;
     let ultimoCandidato = null;
     let repeticionesCandidato = 0;
-    let streamRemoto = null;
-    let conexionRemota = null;
-    let socketRemoto = null;
-    let ofertaRemotaEnCurso = false;
-    let candidatosRemotosPendientes = [];
     let intervaloActividadEstacion = null;
+    let socketEscucha = null;
+    let escuchandoMovil = false;
+    let sondeoRegistroMovil = null;
     const ultimoIntentoPorCliente = new Map();
 
     const elemento = (id) => document.getElementById(id);
@@ -97,12 +100,6 @@
         anchoRostroMinimo = 120;
         intervaloMs = 120;
         CONFIG.face.detector.minConfidence = 0.55;
-        if (modoDispositivo === "movil") {
-            umbralRostro = 0.55;
-            anchoRostroMinimo = 85;
-            intervaloMs = 240;
-            CONFIG.face.detector.minConfidence = 0.45;
-        }
         return modoDispositivo;
     }
 
@@ -148,18 +145,12 @@
     }
 
     async function encenderCamara() {
-        if (modoDispositivo === "movil") return encenderCamaraRemota();
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Este navegador no permite usar la cámara");
-        if (!window.isSecureContext) throw new Error("En el móvil abre el sistema con HTTPS para permitir la cámara");
-        const videoConfig = modoDispositivo === "webcam_1080p"
-            ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } };
         stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: videoConfig,
+            video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         });
         const video = elemento("rf-video");
-        elemento("rf-camera").classList.remove("rf-remota");
         video.srcObject = stream;
         await video.play();
         elemento("rf-camera").style.display = "block";
@@ -167,96 +158,11 @@
         iniciarActividadEstacion();
     }
 
-    function panelQrRemoto() {
-        let panel = elemento("rf-qr-remoto");
-        if (panel) return panel;
-        panel = document.createElement("div");
-        panel.id = "rf-qr-remoto";
-        panel.style.cssText = "position:absolute;z-index:7;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#080b0a;color:#fff;text-align:center;padding:24px";
-        panel.innerHTML = '<h3 style="margin:0">Conecta la cámara frontal</h3><img id="rf-qr-imagen" alt="QR para cámara remota" style="width:min(72vw,300px);background:#fff;padding:10px;border-radius:14px"><p style="margin:0;max-width:420px">Escanea el QR con el móvil. No necesitas iniciar sesión.</p>';
-        elemento("modal-reconocimiento-facial").querySelector(".modal-content").appendChild(panel);
-        return panel;
-    }
-
-    async function crearOfertaRemota() {
-        if (!conexionRemota || !socketRemoto || socketRemoto.readyState !== WebSocket.OPEN || ofertaRemotaEnCurso) return;
-        ofertaRemotaEnCurso = true;
-        try {
-            const oferta = await conexionRemota.createOffer();
-            await conexionRemota.setLocalDescription(oferta);
-            socketRemoto.send(JSON.stringify({ tipo: "offer", sdp: conexionRemota.localDescription }));
-        } finally { ofertaRemotaEnCurso = false; }
-    }
-
-    async function encenderCamaraRemota() {
-        const video = elemento("rf-video");
-        elemento("rf-camera").classList.add("rf-remota");
-        if (streamRemoto && conexionRemota?.connectionState === "connected") {
-            stream = streamRemoto;
-            video.srcObject = stream;
-            await video.play();
-            elemento("rf-camera").style.display = "block";
-            marcarBoton(true);
-            iniciarActividadEstacion();
-            return;
-        }
-        const tokenRemoto = localStorage.getItem("mrgym_camara_remota_token");
-        if (!tokenRemoto) throw new Error("Enlaza primero el móvil de confianza desde Configuración");
-        estado("Conectando con el móvil de confianza...");
-        conexionRemota = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-        conexionRemota.addTransceiver("video", { direction: "recvonly" });
-        conexionRemota.onicecandidate = (evento) => evento.candidate && socketRemoto?.send(JSON.stringify({ tipo: "candidate", candidate: evento.candidate }));
-        const llegada = new Promise((resolve, reject) => {
-            const limite = window.setTimeout(() => reject(new Error("El QR venció o el móvil no se conectó")), 180000);
-            conexionRemota.ontrack = async (evento) => {
-                window.clearTimeout(limite);
-                streamRemoto = evento.streams[0];
-                stream = streamRemoto;
-                video.srcObject = stream;
-                await video.play();
-                elemento("rf-camera").style.display = "block";
-                marcarBoton(true);
-                iniciarActividadEstacion();
-                resolve();
-            };
-        });
-        const protocolo = location.protocol === "https:" ? "wss" : "ws";
-        socketRemoto = new WebSocket(`${protocolo}://${location.host}/api/ws/camara-remota/${encodeURIComponent(tokenRemoto)}/pc`);
-        socketRemoto.onmessage = async (evento) => {
-            const mensaje = JSON.parse(evento.data);
-            if (mensaje.tipo === "movil-conectado" || mensaje.tipo === "movil-listo") await crearOfertaRemota();
-            else if (mensaje.tipo === "answer") {
-                await conexionRemota.setRemoteDescription(mensaje.sdp);
-                for (const candidato of candidatosRemotosPendientes) await conexionRemota.addIceCandidate(candidato);
-                candidatosRemotosPendientes = [];
-            } else if (mensaje.tipo === "candidate" && mensaje.candidate) {
-                if (conexionRemota.remoteDescription) await conexionRemota.addIceCandidate(mensaje.candidate);
-                else candidatosRemotosPendientes.push(mensaje.candidate);
-            }
-        };
-        await llegada;
-    }
-
-    function avisarMovil(mensaje) {
-        if (socketRemoto?.readyState === WebSocket.OPEN) socketRemoto.send(JSON.stringify({ tipo: "resultado", mensaje }));
-    }
-
-    function guiarMovil(mensaje, progreso = 0, tipo = "") {
-        if (socketRemoto?.readyState !== WebSocket.OPEN) return;
-        socketRemoto.send(JSON.stringify({
-            tipo: "guia",
-            mensaje,
-            progreso: Math.max(0, Math.min(100, Math.round(progreso))),
-            estado: tipo,
-            modo,
-        }));
-    }
-
     function apagarCamara() {
         if (temporizador) window.clearTimeout(temporizador);
         temporizador = null;
         ejecutando = false;
-        if (stream && stream !== streamRemoto) stream.getTracks().forEach((track) => track.stop());
+        if (stream) stream.getTracks().forEach((track) => track.stop());
         stream = null;
         const video = elemento("rf-video");
         if (video) video.srcObject = null;
@@ -264,19 +170,119 @@
         detenerActividadEstacion();
     }
 
+    // ---- Modo movil: la PC solo escucha resultados y puede pedir capturas ----
+
+    function tokenMovilVinculado() {
+        return localStorage.getItem("mrgym_camara_remota_token");
+    }
+
+    function conectarEscuchaMovil() {
+        if (socketEscucha && (socketEscucha.readyState === WebSocket.OPEN || socketEscucha.readyState === WebSocket.CONNECTING)) return;
+        const token = tokenMovilVinculado();
+        if (!token) { estado("Enlaza primero el móvil de confianza desde Configuración", "error"); return; }
+        const wsBase = API_BASE_URL.replace(/^http/, "ws");
+        socketEscucha = new WebSocket(`${wsBase}/ws/camara-remota/${encodeURIComponent(token)}/pc`);
+        socketEscucha.onopen = () => estado("Escuchando el celular vinculado...", "ok");
+        socketEscucha.onclose = () => { if (escuchandoMovil) window.setTimeout(conectarEscuchaMovil, 2000); };
+        socketEscucha.onmessage = (evento) => {
+            let mensaje;
+            try { mensaje = JSON.parse(evento.data); } catch (_) { return; }
+            if (mensaje.tipo === "movil-conectado") estado("Celular conectado. Reconocimiento activo.", "ok");
+            else if (mensaje.tipo === "movil-desconectado") estado("El celular vinculado se desconectó. Reconectando...", "error");
+            else if (mensaje.tipo === "asistencia_resultado") {
+                publicarIngresoFacial(mensaje.cliente_id, mensaje.nombre, mensaje.mensaje);
+                if (mensaje.ok) { if (typeof window.showSuccess === "function") window.showSuccess(mensaje.mensaje); }
+                else if (typeof window.showError === "function") window.showError(mensaje.mensaje);
+                const actualizaciones = [];
+                if (typeof window.cargarUltimosIngresos === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarUltimosIngresos()));
+                if (typeof window.cargarDashboard === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarDashboard()));
+                if (actualizaciones.length) void Promise.allSettled(actualizaciones);
+            } else if (mensaje.tipo === "registro_completo" || mensaje.tipo === "registro_error") {
+                // El registro se confirma por sondeo (ver abrirRegistroFacialMovil);
+                // esto solo sirve de aviso adicional si la estación queda abierta.
+                if (mensaje.tipo === "registro_error" && typeof window.showError === "function") window.showError(mensaje.mensaje);
+            }
+        };
+    }
+
+    function desconectarEscuchaMovil() {
+        escuchandoMovil = false;
+        if (socketEscucha) { socketEscucha.onclose = null; socketEscucha.close(); }
+        socketEscucha = null;
+    }
+
+    window.alternarReconocimientoFacial = async function () {
+        if (esEstacion()) iniciarActividadEstacion();
+        try {
+            await cargarModoDispositivo();
+            exigirModoActivo();
+        } catch (error) {
+            estado(error.message, "error");
+            return;
+        }
+
+        if (modoDispositivo === "movil") {
+            if (escuchandoMovil) {
+                desconectarEscuchaMovil();
+                apagarCamara();
+                if (!esEstacion()) elemento("modal-reconocimiento-facial").classList.remove("active");
+                return;
+            }
+            abrirModal("Reconocimiento facial (celular vinculado)");
+            elemento("rf-camera").style.display = "none";
+            estado("Conectando con el celular vinculado...");
+            escuchandoMovil = true;
+            marcarBoton(true);
+            iniciarActividadEstacion();
+            conectarEscuchaMovil();
+            if (!esEstacion()) elemento("modal-reconocimiento-facial").classList.remove("active");
+            return;
+        }
+
+        prepararGuiaSegmentada();
+        if (stream || elemento("modal-reconocimiento-facial").classList.contains("active")) {
+            if (!esEstacion() || stream) {
+                window.cerrarReconocimientoFacial();
+                return;
+            }
+        }
+        modo = "reconocer";
+        objetivoClienteId = null;
+        ultimoCandidato = null;
+        repeticionesCandidato = 0;
+        actualizarProgresoCaptura(0);
+        abrirModal("Reconocimiento facial");
+        try {
+            estado("Cargando cámara y rostros registrados...");
+            const resultados = await Promise.all([
+                window.apiFetch("/biometria-facial/descriptores"),
+                cargarMotor(),
+                encenderCamara(),
+            ]);
+            descriptores = resultados[0];
+            if (!descriptores.length) {
+                apagarCamara();
+                estado("Aún no hay rostros registrados. Busca un cliente y usa Registrar rostro.");
+                elemento("rf-ayuda").style.display = "none";
+                return;
+            }
+            estado("Mira al frente y muévete ligeramente");
+            ciclo();
+            if (!esEstacion()) elemento("modal-reconocimiento-facial").classList.remove("active");
+            estado("Reconocimiento activo en segundo plano", "ok");
+        } catch (error) {
+            apagarCamara();
+            const denegado = error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
+            estado(denegado ? "Permite el acceso a la webcam para continuar" : (error.message || "No se pudo iniciar la webcam"), "error");
+        }
+    };
+
     function abrirModal(titulo) {
         elemento("rf-titulo").textContent = titulo;
         elemento("modal-reconocimiento-facial").classList.add("active");
         elemento("rf-camera").style.display = "none";
         elemento("rf-ayuda").style.display = "block";
         estado("Preparando...");
-    }
-
-    function reiniciarFlujoFacial() {
-        ultimoCandidato = null;
-        repeticionesCandidato = 0;
-        actualizarProgresoCaptura(0);
-        guiarMovil("Acomoda tu rostro dentro del óvalo", 0, "buscando");
     }
 
     function actualizarProgresoCaptura(cantidad) {
@@ -334,7 +340,6 @@
             ultimoCandidato = null;
             repeticionesCandidato = 0;
             estado("Rostro no reconocido. Intenta de nuevo.");
-            guiarMovil("Rostro no reconocido. Intenta nuevamente.", 0, "error");
             return;
         }
         if (ultimoCandidato === mejor.item.cliente_id) repeticionesCandidato += 1;
@@ -344,7 +349,6 @@
         }
         if (repeticionesCandidato < 2) {
             estado("Verificando identidad...");
-            guiarMovil("Rostro alineado. Mantente quieto.", 60, "alineado");
             return;
         }
 
@@ -362,8 +366,6 @@
             const mensaje = acceso.ya_registrada
                 ? `${nombre}, tu ingreso ya estaba registrado.`
                 : `Ingreso registrado correctamente. Bienvenido, ${nombre}.`;
-            avisarMovil(mensaje);
-            guiarMovil("Identidad confirmada", 100, "completo");
             publicarIngresoFacial(clienteId, nombre, mensaje);
             estado("Reconocimiento activo en segundo plano", "ok");
             if (!acceso.ya_registrada && typeof window.showSuccess === "function") window.showSuccess(`Ingreso registrado: ${nombre}`);
@@ -373,7 +375,6 @@
             if (actualizaciones.length) void Promise.allSettled(actualizaciones);
         } catch (error) {
             const mensaje = error.message || "No se pudo autorizar el ingreso";
-            avisarMovil(`${nombre}: ${mensaje}`);
             if (typeof window.showError === "function") window.showError(`${nombre}: ${mensaje}`);
         }
     }
@@ -388,14 +389,6 @@
         if (Date.now() - ultimaCaptura < 250) return;
         capturas.push(Array.from(cara.embedding));
         actualizarProgresoCaptura(capturas.length);
-        const progreso = Math.round((capturas.length / CAPTURAS_REGISTRO) * 100);
-        guiarMovil(
-            capturas.length < CAPTURAS_REGISTRO
-                ? `Capturando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}`
-                : "Rostro capturado correctamente",
-            progreso,
-            progreso === 100 ? "completo" : "capturando",
-        );
         ultimaCaptura = Date.now();
         if (capturas.length < CAPTURAS_REGISTRO) {
             estado(`Registrando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}. Muévete ligeramente.`);
@@ -420,10 +413,8 @@
         try {
             const resultado = await human.detect(elemento("rf-video"));
             const validacion = validarRostro(resultado);
-            if (!validacion.cara) {
-                estado(validacion.mensaje);
-                guiarMovil(validacion.mensaje, 0, "buscando");
-            } else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
+            if (!validacion.cara) estado(validacion.mensaje);
+            else if (modo === "reconocer") await procesarReconocimiento(validacion.cara);
             else if (modo === "registrar") await procesarRegistro(validacion.cara);
         } catch (error) {
             estado(error.message || "No se pudo analizar la imagen", "error");
@@ -436,10 +427,9 @@
     async function prepararCamara() {
         try {
             exigirModoActivo();
-            estado(modoDispositivo === "movil" ? "Preparando enlace con el móvil..." : "Iniciando cámara...");
+            estado("Iniciando cámara...");
             await Promise.all([cargarMotor(), encenderCamara()]);
             estado("Acomoda el rostro dentro del óvalo");
-            guiarMovil("Acomoda tu rostro dentro del óvalo", 0, "buscando");
             ciclo();
         } catch (error) {
             apagarCamara();
@@ -449,48 +439,61 @@
         }
     }
 
-    window.alternarReconocimientoFacial = async function () {
-        prepararGuiaSegmentada();
-        if (esEstacion()) iniciarActividadEstacion();
-        if (stream || elemento("modal-reconocimiento-facial").classList.contains("active")) {
-            if (!esEstacion() || stream) {
-                window.cerrarReconocimientoFacial();
-                return;
-            }
-        }
-        modo = "reconocer";
-        objetivoClienteId = null;
-        reiniciarFlujoFacial();
-        abrirModal("Reconocimiento facial");
+    // ---- Registrar rostro de un cliente puntual desde el celular vinculado ----
+    function detenerSondeoRegistroMovil() {
+        if (sondeoRegistroMovil) { window.clearTimeout(sondeoRegistroMovil.temporizador); sondeoRegistroMovil = null; }
+    }
+
+    async function abrirRegistroFacialMovil(clienteId) {
+        abrirModal("Registrar rostro del cliente");
+        elemento("rf-camera").style.display = "none";
+        estado("Enviando orden de captura al celular...");
+        let antes;
         try {
-            await cargarModoDispositivo();
-            exigirModoActivo();
-            estado("Cargando cámara y rostros registrados...");
-            const resultados = await Promise.all([
-                window.apiFetch("/biometria-facial/descriptores"),
-                cargarMotor(),
-                encenderCamara(),
-            ]);
-            descriptores = resultados[0];
-            if (!descriptores.length) {
-                apagarCamara();
-                estado("Aún no hay rostros registrados. Busca un cliente y usa Registrar rostro.");
-                elemento("rf-ayuda").style.display = "none";
+            antes = await window.apiFetch(`/clientes/${clienteId}/biometria-facial`);
+        } catch (error) {
+            estado(error.message || "No se pudo consultar el estado facial del cliente", "error");
+            return;
+        }
+        let armado;
+        try {
+            armado = await window.apiFetch("/camara-remota/armar-registro", {
+                method: "POST",
+                body: JSON.stringify({ cliente_id: clienteId }),
+            });
+        } catch (error) {
+            estado(error.message || "El celular vinculado no está conectado ahora mismo", "error");
+            return;
+        }
+        estado(`Muéstrale "CAPTURA FACIAL" en el celular a ${armado.cliente_nombre}. Esperando...`);
+        const limite = Date.now() + MINUTOS_ESPERA_REGISTRO_MOVIL * 60 * 1000;
+        const idSondeo = {};
+        sondeoRegistroMovil = idSondeo;
+        const revisar = async () => {
+            if (sondeoRegistroMovil !== idSondeo) return; // se canceló (se cerró el modal)
+            if (Date.now() > limite) {
+                estado("No se detectó la captura a tiempo. Verifica el celular e inténtalo de nuevo.", "error");
+                sondeoRegistroMovil = null;
                 return;
             }
-            estado("Mira al frente y muévete ligeramente");
-            ciclo();
-            if (!esEstacion()) elemento("modal-reconocimiento-facial").classList.remove("active");
-            estado("Reconocimiento activo en segundo plano", "ok");
-        } catch (error) {
-            apagarCamara();
-            const denegado = error && (error.name === "NotAllowedError" || error.name === "PermissionDeniedError");
-            estado(denegado ? "Permite el acceso a la webcam para continuar" : (error.message || "No se pudo iniciar la webcam"), "error");
-        }
-    };
+            try {
+                const ahora = await window.apiFetch(`/clientes/${clienteId}/biometria-facial`);
+                const cambio = ahora.registrada && (!antes.actualizado_en || ahora.actualizado_en !== antes.actualizado_en);
+                if (cambio) {
+                    sondeoRegistroMovil = null;
+                    window.cerrarReconocimientoFacial();
+                    if (typeof window.showSuccess === "function") window.showSuccess("Rostro registrado correctamente");
+                    window.dispatchEvent(new CustomEvent("mrgym:biometria-actualizada", { detail: { clienteId } }));
+                    if (typeof window.mostrarFichaParaAsistencia === "function") await window.mostrarFichaParaAsistencia(clienteId);
+                    return;
+                }
+            } catch (_) { /* se reintenta en el siguiente sondeo */ }
+            if (sondeoRegistroMovil === idSondeo) idSondeo.temporizador = window.setTimeout(revisar, 2000);
+        };
+        idSondeo.temporizador = window.setTimeout(revisar, 2000);
+    }
 
     window.abrirRegistroFacial = async function (clienteId) {
-        prepararGuiaSegmentada();
         try {
             await cargarModoDispositivo();
             exigirModoActivo();
@@ -498,12 +501,18 @@
             if (typeof window.showError === "function") window.showError(error.message);
             return;
         }
+        if (modoDispositivo === "movil") {
+            await abrirRegistroFacialMovil(clienteId);
+            return;
+        }
+        prepararGuiaSegmentada();
         apagarCamara();
         modo = "registrar";
         objetivoClienteId = clienteId;
         capturas = [];
         ultimaCaptura = 0;
-        reiniciarFlujoFacial();
+        ultimoCandidato = null;
+        repeticionesCandidato = 0;
         abrirModal("Registrar rostro del cliente");
         elemento("rf-ayuda").style.display = "block";
         await prepararCamara();
@@ -514,6 +523,7 @@
     };
 
     window.cerrarReconocimientoFacial = function () {
+        detenerSondeoRegistroMovil();
         apagarCamara();
         const modal = elemento("modal-reconocimiento-facial");
         if (modal) modal.classList.remove("active");
@@ -523,16 +533,14 @@
     };
 
     window.addEventListener("pagehide", () => {
-        if (streamRemoto) streamRemoto.getTracks().forEach((track) => track.stop());
-        conexionRemota?.close();
-        socketRemoto?.close();
-        streamRemoto = null;
+        desconectarEscuchaMovil();
         apagarCamara();
         detenerActividadEstacion();
     });
 
     // Aprovecha el tiempo ocioso después de cargar el panel. No abre la cámara
     // ni pide permisos; solo deja modelos y shaders listos para el primer clic.
+    // En modo movil no hay nada que precargar (Human corre en el celular).
     const precargar = async () => {
         try {
             await cargarModoDispositivo();
@@ -541,7 +549,7 @@
             if (botonPrincipal && !activo) botonPrincipal.style.display = "none";
             const botonRegistro = elemento("btn-registro-facial-cliente");
             if (botonRegistro && !activo) botonRegistro.style.display = "none";
-            if (activo) await cargarMotor();
+            if (activo && modoDispositivo !== "movil") await cargarMotor();
         } catch (_) {}
     };
     if ("requestIdleCallback" in window) window.requestIdleCallback(precargar, { timeout: 4000 });

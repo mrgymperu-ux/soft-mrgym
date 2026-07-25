@@ -3,59 +3,344 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <title>Guía facial - Mr Gym</title>
+    <title>Estación facial - Mr Gym</title>
     <style>
         *{box-sizing:border-box}body{margin:0;background:#080b0a;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
-        video{width:100vw;height:100dvh;object-fit:contain;transform:scaleX(-1)}
-        #guia{--progreso:0;display:none;position:fixed;z-index:2;left:50%;top:50%;width:min(68vw,42vh,360px);aspect-ratio:.72;transform:translate(-50%,-50%);border-radius:48% 48% 44% 44%/42% 42% 58% 58%;box-shadow:0 0 0 999px rgba(0,0,0,.27);pointer-events:none}
+        video{width:100vw;height:100dvh;object-fit:cover;transform:scaleX(-1)}
+        #guia{display:none;position:fixed;z-index:2;left:50%;top:50%;width:min(68vw,42vh,360px);aspect-ratio:.72;transform:translate(-50%,-50%);box-shadow:0 0 0 999px rgba(0,0,0,.27);pointer-events:none;border-radius:48% 48% 44% 44%/42% 42% 58% 58%}
         #guia svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
-        #guia ellipse{fill:none;stroke:#d2d7d4;stroke-width:7;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:100;filter:drop-shadow(0 0 3px rgba(0,0,0,.7));transition:stroke-dashoffset .2s ease,stroke .2s ease,filter .2s ease}
-        #guia.en-progreso ellipse,#guia.completo ellipse{stroke:#23c875;filter:drop-shadow(0 0 6px rgba(35,200,117,.95))}
+        #guia svg line{stroke:#7a8079;stroke-width:5;stroke-linecap:round;transition:stroke .25s ease,filter .25s ease}
+        #guia svg line.lleno{stroke:#23c875;filter:drop-shadow(0 0 4px rgba(35,200,117,.95))}
         #guia.completo{box-shadow:0 0 0 999px rgba(0,0,0,.2),0 0 28px rgba(35,200,117,.85)}
+        #banner-captura{display:none;position:fixed;z-index:5;left:50%;top:max(18px,env(safe-area-inset-top));transform:translateX(-50%);padding:10px 22px;border-radius:999px;background:#e8b400;color:#241c00;font-weight:800;letter-spacing:.04em;font-size:1rem;box-shadow:0 4px 18px rgba(0,0,0,.4)}
+        #nombre-captura{display:none;position:fixed;z-index:5;left:50%;top:calc(max(18px,env(safe-area-inset-top)) + 48px);transform:translateX(-50%);padding:5px 16px;border-radius:999px;background:rgba(0,0,0,.55);font-size:.85rem;backdrop-filter:blur(6px)}
         #estado{position:fixed;z-index:4;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));padding:14px;border-radius:12px;background:rgba(0,0,0,.7);text-align:center;font-weight:700;backdrop-filter:blur(8px)}
         #porcentaje{display:block;margin-top:4px;color:#7cf0ae;font-size:.82rem}
-        #resultado{display:none;position:fixed;z-index:8;inset:0;background:rgba(13,155,86,.92);align-items:center;justify-content:center;text-align:center;font-size:clamp(1.6rem,8vw,3rem);font-weight:800;padding:30px}
+        #resultado{display:none;position:fixed;z-index:8;inset:0;align-items:center;justify-content:center;text-align:center;font-size:clamp(1.6rem,8vw,3rem);font-weight:800;padding:30px}
+        #resultado.ok{background:rgba(13,155,86,.92)}
+        #resultado.aviso{background:rgba(179,58,20,.92)}
         #iniciar{position:fixed;inset:0;margin:auto;width:min(86vw,360px);height:58px;border:0;border-radius:14px;background:#23c875;color:#062d1b;font-size:1.05rem;font-weight:800}
+        #conexion{position:fixed;z-index:4;left:16px;top:max(16px,env(safe-area-inset-top));padding:5px 12px;border-radius:999px;background:rgba(0,0,0,.5);font-size:.72rem;font-weight:700}
+        #conexion.activa{color:#7cf0ae}
+        #conexion.caida{color:#ffb3a0}
     </style>
 </head>
 <body>
 <video id="video" playsinline muted></video>
-<div id="guia" aria-hidden="true"><svg viewBox="0 0 320 420"><ellipse cx="160" cy="210" rx="151" ry="200" pathLength="100"></ellipse></svg></div>
+<div id="conexion">Conectando…</div>
+<div id="banner-captura">CAPTURA FACIAL</div>
+<div id="nombre-captura"></div>
+<div id="guia" aria-hidden="true"><svg viewBox="0 0 320 420"></svg></div>
 <button id="iniciar">Activar cámara frontal</button>
 <div id="estado" aria-live="polite"><span id="mensaje">Pulsa para conectar esta cámara al counter</span><span id="porcentaje"></span></div>
 <div id="resultado" aria-live="assertive"></div>
+<script src="vendor/human/human.js"></script>
 <script>
-const token=new URLSearchParams(location.search).get('token');
-const video=document.getElementById('video'),estado=document.getElementById('estado'),mensaje=document.getElementById('mensaje'),porcentaje=document.getElementById('porcentaje'),boton=document.getElementById('iniciar'),resultado=document.getElementById('resultado'),guia=document.getElementById('guia'),trazo=guia.querySelector('ellipse');
-let ws,pc,stream,candidatosPendientes=[];
-const enviar=(dato)=>ws&&ws.readyState===1&&ws.send(JSON.stringify(dato));
-function actualizarGuia(valor,texto,tipo=''){
- const progreso=Math.max(0,Math.min(100,Number(valor)||0));
- guia.style.display='block';trazo.style.strokeDashoffset=String(100-progreso);
- guia.classList.toggle('en-progreso',progreso>0&&progreso<100);
- guia.classList.toggle('completo',progreso===100);
- mensaje.textContent=texto||'Acomoda tu rostro dentro del óvalo';
- porcentaje.textContent=progreso>0?`${Math.round(progreso)}%`:'';
+(function () {
+"use strict";
+
+const token = new URLSearchParams(location.search).get("token");
+const esLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
+const API_BASE = esLocal ? "http://localhost:8000" : `${location.origin}/api`;
+const WS_BASE = (esLocal ? "ws" : "wss") + "://" + (esLocal ? "localhost:8000" : `${location.host}/api`);
+
+const MODELO_VERSION = "human-3.3.6-faceres";
+const UMBRAL_COINCIDENCIA = 0.55;
+const CAPTURAS_REGISTRO = 3;
+const UMBRAL_ROSTRO = 0.55;
+const ANCHO_ROSTRO_MINIMO = 85;
+const INTERVALO_MS = 240;
+const NUM_TICKS = 40;
+
+const CONFIG = {
+    backend: "webgl",
+    modelBasePath: "vendor/human/models/",
+    cacheSensitivity: 0.01,
+    filter: { enabled: false },
+    face: {
+        enabled: true,
+        detector: { rotation: false, maxDetected: 1, minConfidence: 0.45 },
+        mesh: { enabled: false },
+        iris: { enabled: false },
+        description: { enabled: true },
+        antispoof: { enabled: false },
+        liveness: { enabled: false },
+        emotion: { enabled: false },
+    },
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+    gesture: { enabled: false },
+};
+
+const video = document.getElementById("video");
+const estadoNodo = document.getElementById("estado");
+const mensaje = document.getElementById("mensaje");
+const porcentaje = document.getElementById("porcentaje");
+const boton = document.getElementById("iniciar");
+const resultado = document.getElementById("resultado");
+const guia = document.getElementById("guia");
+const svgGuia = guia.querySelector("svg");
+const bannerCaptura = document.getElementById("banner-captura");
+const nombreCaptura = document.getElementById("nombre-captura");
+const conexionNodo = document.getElementById("conexion");
+
+let human = null, promesaMotor = null, stream = null, temporizador = null, ejecutando = false;
+let ws = null;
+let modo = "reconocer";
+let objetivoClienteId = null, objetivoNombre = "";
+let descriptores = [];
+let capturas = [];
+let ultimaCaptura = 0;
+let ultimoCandidato = null, repeticionesCandidato = 0;
+const ultimoIntentoPorCliente = new Map();
+
+function crearTicks() {
+    const cx = 160, cy = 210, rx = 151, ry = 200, largo = 22;
+    for (let i = 0; i < NUM_TICKS; i++) {
+        const angulo = (i / NUM_TICKS) * Math.PI * 2 - Math.PI / 2;
+        const bx = cx + rx * Math.cos(angulo), by = cy + ry * Math.sin(angulo);
+        const nx = Math.cos(angulo), ny = ry / rx * Math.sin(angulo);
+        const mag = Math.hypot(nx, ny) || 1;
+        const ix = bx - (nx / mag) * largo, iy = by - (ny / mag) * largo;
+        const linea = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        linea.setAttribute("x1", bx.toFixed(1));
+        linea.setAttribute("y1", by.toFixed(1));
+        linea.setAttribute("x2", ix.toFixed(1));
+        linea.setAttribute("y2", iy.toFixed(1));
+        svgGuia.appendChild(linea);
+    }
 }
-function conectarSocket(){
- ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/api/ws/camara-remota/${encodeURIComponent(token)}/movil`);
- ws.onopen=()=>{actualizarGuia(0,'Esperando al counter…');enviar({tipo:'movil-listo'})};
- ws.onmessage=async e=>{const m=JSON.parse(e.data);if(m.tipo==='pc-conectado'){enviar({tipo:'movil-listo'})}else if(m.tipo==='offer'){await pc.setRemoteDescription(m.sdp);for(const candidato of candidatosPendientes)await pc.addIceCandidate(candidato);candidatosPendientes=[];const a=await pc.createAnswer();await pc.setLocalDescription(a);enviar({tipo:'answer',sdp:pc.localDescription})}else if(m.tipo==='candidate'&&m.candidate){if(pc.remoteDescription)await pc.addIceCandidate(m.candidate);else candidatosPendientes.push(m.candidate)}else if(m.tipo==='guia'){actualizarGuia(m.progreso,m.mensaje,m.estado)}else if(m.tipo==='resultado'){actualizarGuia(100,'Identidad confirmada','completo');resultado.textContent=m.mensaje||'Ingreso registrado correctamente';resultado.style.display='flex';setTimeout(()=>{resultado.style.display='none';actualizarGuia(0,'Listo para el siguiente alumno')},3000)}};
- ws.onclose=()=>{actualizarGuia(0,'Reconectando con el counter…');if(stream)setTimeout(conectarSocket,2000)};
+crearTicks();
+const ticks = Array.from(svgGuia.querySelectorAll("line"));
+
+function actualizarGuia(valorProgreso, texto, tipo = "") {
+    const progreso = Math.max(0, Math.min(100, Number(valorProgreso) || 0));
+    guia.style.display = "block";
+    const llenos = Math.round((progreso / 100) * NUM_TICKS);
+    ticks.forEach((linea, i) => linea.classList.toggle("lleno", i < llenos));
+    guia.classList.toggle("completo", progreso === 100 && tipo !== "buscando");
+    mensaje.textContent = texto || "Acomoda tu rostro dentro del óvalo";
+    porcentaje.textContent = progreso > 0 ? `${Math.round(progreso)}%` : "";
 }
-async function conectar(){
- if(!token){mensaje.textContent='Enlace inválido o vencido';return}
- boton.style.display='none';
- try{
-  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'user'},width:{ideal:1280},height:{ideal:720}}});video.srcObject=stream;await video.play();
-  actualizarGuia(0,'Acomoda tu rostro dentro del óvalo');
-  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});stream.getTracks().forEach(t=>pc.addTrack(t,stream));
-  pc.onicecandidate=e=>e.candidate&&enviar({tipo:'candidate',candidate:e.candidate});
-  pc.onconnectionstatechange=()=>actualizarGuia(0,pc.connectionState==='connected'?'Acomoda tu rostro dentro del óvalo':'Conectando con el counter…');
-  conectarSocket();
- }catch(e){boton.style.display='block';guia.style.display='none';mensaje.textContent=e.name==='NotAllowedError'?'Debes permitir el uso de la cámara frontal':'No se pudo iniciar la cámara';}
+
+function marcarConexion(activa) {
+    conexionNodo.textContent = activa ? "Counter conectado" : "Esperando al counter…";
+    conexionNodo.className = activa ? "activa" : "caida";
 }
-boton.addEventListener('click',conectar);
+
+function enviar(dato) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(dato));
+}
+
+function mostrarResultado(texto, tipoAviso, duracionMs = 3000) {
+    resultado.textContent = texto;
+    resultado.className = tipoAviso;
+    resultado.style.display = "flex";
+    window.setTimeout(() => {
+        resultado.style.display = "none";
+        actualizarGuia(0, modo === "registrar" ? "Acomoda tu rostro dentro del óvalo" : "Listo para el siguiente alumno");
+    }, duracionMs);
+}
+
+function volverAReconocer() {
+    modo = "reconocer";
+    objetivoClienteId = null;
+    objetivoNombre = "";
+    capturas = [];
+    bannerCaptura.style.display = "none";
+    nombreCaptura.style.display = "none";
+    ultimoCandidato = null;
+    repeticionesCandidato = 0;
+    actualizarGuia(0, "Acomoda tu rostro dentro del óvalo");
+}
+
+function iniciarModoRegistro(clienteId, clienteNombre) {
+    modo = "registrar";
+    objetivoClienteId = clienteId;
+    objetivoNombre = clienteNombre || "";
+    capturas = [];
+    ultimaCaptura = 0;
+    bannerCaptura.style.display = "block";
+    nombreCaptura.textContent = objetivoNombre;
+    nombreCaptura.style.display = objetivoNombre ? "block" : "none";
+    actualizarGuia(0, "Acomoda tu rostro dentro del óvalo");
+}
+
+function conectarSocket() {
+    ws = new WebSocket(`${WS_BASE}/ws/camara-remota/${encodeURIComponent(token)}/movil`);
+    ws.onopen = () => marcarConexion(true);
+    ws.onclose = () => { marcarConexion(false); window.setTimeout(conectarSocket, 2000); };
+    ws.onmessage = (evento) => {
+        let m;
+        try { m = JSON.parse(evento.data); } catch (_) { return; }
+        if (m.tipo === "pc-conectado") marcarConexion(true);
+        else if (m.tipo === "pc-desconectado") marcarConexion(false);
+        else if (m.tipo === "iniciar_registro" && m.cliente_id) iniciarModoRegistro(m.cliente_id, m.cliente_nombre);
+        else if (m.tipo === "cancelar_registro") volverAReconocer();
+    };
+}
+
+async function cargarMotor() {
+    if (human) return human;
+    if (promesaMotor) return promesaMotor;
+    promesaMotor = (async () => {
+        const instancia = new window.Human.Human(CONFIG);
+        await instancia.load();
+        await instancia.warmup({ warmup: "face" });
+        human = instancia;
+        return human;
+    })().catch((error) => { human = null; promesaMotor = null; throw error; });
+    return promesaMotor;
+}
+
+async function cargarDescriptores() {
+    const respuesta = await fetch(`${API_BASE}/dispositivo-facial/descriptores`, {
+        headers: { "X-Camera-Token": token },
+    });
+    if (!respuesta.ok) throw new Error("No se pudieron cargar los rostros registrados");
+    descriptores = await respuesta.json();
+}
+
+function validarRostro(deteccion) {
+    const caras = deteccion.face || [];
+    if (caras.length === 0) return { mensaje: "Coloca tu rostro dentro del óvalo" };
+    const cara = caras[0];
+    if (!cara.embedding || cara.embedding.length !== 1024) return { mensaje: "Acércate un poco a la cámara" };
+    const confianza = Number(cara.faceScore || cara.score || cara.boxScore || 0);
+    if (confianza < UMBRAL_ROSTRO || !cara.box || cara.box[2] < ANCHO_ROSTRO_MINIMO) return { mensaje: "Acércate y mantén el rostro al frente" };
+    return { cara };
+}
+
+function similitud(a, b) {
+    return human.match.similarity(a, b, { order: 2, multiplier: 25, min: 0.2, max: 0.8 });
+}
+
+function promedio(vectores) {
+    const salida = new Array(1024).fill(0);
+    vectores.forEach((vector) => vector.forEach((valor, i) => { salida[i] += valor; }));
+    return salida.map((valor) => valor / vectores.length);
+}
+
+async function procesarReconocimiento(cara) {
+    let mejor = null, segundo = null;
+    for (const item of descriptores) {
+        const s = similitud(cara.embedding, item.descriptor);
+        if (!mejor || s > mejor.similitud) { segundo = mejor; mejor = { item, similitud: s }; }
+        else if (!segundo || s > segundo.similitud) segundo = { item, similitud: s };
+    }
+    const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.03;
+    if (!mejor || mejor.similitud < UMBRAL_COINCIDENCIA || !margenSeguro) {
+        ultimoCandidato = null;
+        repeticionesCandidato = 0;
+        actualizarGuia(0, "Rostro no reconocido. Intenta de nuevo.", "buscando");
+        return;
+    }
+    if (ultimoCandidato === mejor.item.cliente_id) repeticionesCandidato += 1;
+    else { ultimoCandidato = mejor.item.cliente_id; repeticionesCandidato = 1; }
+    if (repeticionesCandidato < 2) {
+        actualizarGuia(60, "Rostro alineado. Mantente quieto.", "alineado");
+        return;
+    }
+    const clienteId = mejor.item.cliente_id, nombre = mejor.item.nombre_completo;
+    if (Date.now() - (ultimoIntentoPorCliente.get(clienteId) || 0) < 15000) return;
+    ultimoIntentoPorCliente.set(clienteId, Date.now());
+    ultimoCandidato = null;
+    repeticionesCandidato = 0;
+    actualizarGuia(100, "Identidad confirmada", "completo");
+    try {
+        const respuesta = await fetch(`${API_BASE}/dispositivo-facial/asistencia`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Camera-Token": token },
+            body: JSON.stringify({ cliente_id: clienteId }),
+        });
+        const datos = await respuesta.json().catch(() => ({}));
+        if (!respuesta.ok) throw new Error(datos.detail || "No se pudo autorizar el ingreso");
+        const texto = datos.ya_registrada ? `${nombre}, tu ingreso ya estaba registrado.` : `Bienvenido, ${nombre}`;
+        mostrarResultado(texto, "ok");
+        enviar({ tipo: "asistencia_resultado", ok: true, mensaje: texto, cliente_id: clienteId, nombre });
+    } catch (error) {
+        const texto = `${nombre}: ${error.message || "No se pudo autorizar el ingreso"}`;
+        mostrarResultado(texto, "aviso", 4000);
+        enviar({ tipo: "asistencia_resultado", ok: false, mensaje: texto, cliente_id: clienteId, nombre });
+    }
+}
+
+async function procesarRegistro(cara) {
+    if (Date.now() - ultimaCaptura < 250) return;
+    capturas.push(Array.from(cara.embedding));
+    const progreso = Math.round((capturas.length / CAPTURAS_REGISTRO) * 100);
+    actualizarGuia(
+        progreso,
+        capturas.length < CAPTURAS_REGISTRO ? `Capturando rostro ${capturas.length} de ${CAPTURAS_REGISTRO}` : "Rostro capturado correctamente",
+        progreso === 100 ? "completo" : "capturando",
+    );
+    ultimaCaptura = Date.now();
+    if (capturas.length < CAPTURAS_REGISTRO) return;
+    const clienteId = objetivoClienteId, nombre = objetivoNombre;
+    try {
+        const respuesta = await fetch(`${API_BASE}/dispositivo-facial/biometria/${clienteId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "X-Camera-Token": token },
+            body: JSON.stringify({ descriptor: promedio(capturas), consentimiento: true, version_modelo: MODELO_VERSION }),
+        });
+        const datos = await respuesta.json().catch(() => ({}));
+        if (!respuesta.ok) throw new Error(datos.detail || "No se pudo guardar el registro facial");
+        mostrarResultado(`Rostro registrado: ${nombre}`, "ok");
+        enviar({ tipo: "registro_completo", cliente_id: clienteId, mensaje: "Rostro registrado correctamente" });
+        await cargarDescriptores().catch(() => {});
+    } catch (error) {
+        mostrarResultado(error.message || "No se pudo guardar el registro facial", "aviso", 4000);
+        enviar({ tipo: "registro_error", cliente_id: clienteId, mensaje: error.message || "No se pudo guardar el registro facial" });
+    }
+    volverAReconocer();
+}
+
+async function ciclo() {
+    if (!stream || ejecutando) return;
+    ejecutando = true;
+    try {
+        const deteccion = await human.detect(video);
+        const validacion = validarRostro(deteccion);
+        if (!validacion.cara) actualizarGuia(0, validacion.mensaje, "buscando");
+        else if (modo === "registrar") await procesarRegistro(validacion.cara);
+        else await procesarReconocimiento(validacion.cara);
+    } catch (_) {
+        // Se reintenta en el siguiente ciclo; un error puntual de un frame no debe detener la estacion.
+    } finally {
+        ejecutando = false;
+        if (stream) temporizador = window.setTimeout(ciclo, INTERVALO_MS);
+    }
+}
+
+async function conectar() {
+    if (!token) { mensaje.textContent = "Enlace inválido o vencido"; return; }
+    boton.style.display = "none";
+    estadoNodo.style.display = "block";
+    mensaje.textContent = "Preparando reconocimiento facial…";
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+        video.srcObject = stream;
+        await video.play();
+        conectarSocket();
+        await Promise.all([cargarMotor(), cargarDescriptores()]);
+        actualizarGuia(0, "Acomoda tu rostro dentro del óvalo");
+        ciclo();
+    } catch (error) {
+        boton.style.display = "block";
+        guia.style.display = "none";
+        if (temporizador) window.clearTimeout(temporizador);
+        if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+        mensaje.textContent = error.name === "NotAllowedError"
+            ? "Debes permitir el uso de la cámara frontal"
+            : (error.message || "No se pudo iniciar la cámara");
+    }
+}
+boton.addEventListener("click", conectar);
+})();
 </script>
 </body>
 </html>

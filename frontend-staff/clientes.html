@@ -440,8 +440,13 @@
         try {
             if (!window.abrirRegistroFacial) {
                 if (boton) { boton.disabled = true; boton.textContent = "Preparando cámara..."; }
-                promesaReconocimientoFacial ||= cargarScriptUnaVez("vendor/human/human.js")
-                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260724-3"));
+                // En modo "movil" el reconocimiento corre en el celular vinculado:
+                // esta PC no necesita descargar los modelos de Human.
+                promesaReconocimientoFacial ||= getConfiguracionClientes()
+                    .then(config => config.reconocimiento_facial_modo === "movil"
+                        ? Promise.resolve()
+                        : cargarScriptUnaVez("vendor/human/human.js"))
+                    .then(() => cargarScriptUnaVez("js/reconocimiento-facial.js?v=20260724-4"));
                 await promesaReconocimientoFacial;
             }
             await window.abrirRegistroFacial(clienteId);

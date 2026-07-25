@@ -17,7 +17,16 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-07-24 (fix mimetype .webp + regla de sincronización git multi-sesión)
+> Última actualización: 2026-07-24 (celular vinculado procesa reconocimiento facial localmente, ya no la PC del counter)
+
+## Reconocimiento facial por móvil — arquitectura standalone (2026-07-24)
+El modo "movil" ya NO transmite video por WebRTC a la PC (eso se eliminó). Ahora el celular vinculado corre Human.js localmente y hace su propio reconocimiento, dejando la PC del counter libre:
+- `camara-remota.html`: pagina que abre el celular via QR. Carga `vendor/human/human.js`, detecta/matchea el rostro localmente y llama directo a `/dispositivo-facial/*` (autenticado por header `X-Camera-Token`, sin login). Muestra banner "CAPTURA FACIAL" + aro de marcas radiales cuando el counter le pide registrar un cliente puntual.
+- Backend (`main.py`): `_gimnasio_por_token_camara` autentica al dispositivo por el hash del token. Endpoints nuevos: `GET /dispositivo-facial/descriptores`, `POST /dispositivo-facial/asistencia`, `PUT /dispositivo-facial/biometria/{cliente_id}` (este último solo si el counter "armó" ese cliente puntual con `POST /camara-remota/armar-registro`, ventana de 3 min de un solo uso — evita que el token por sí solo permita sobrescribir la biometría de cualquier cliente). `armar-registro` empuja `{"tipo":"iniciar_registro",...}` al socket del móvil vía `_enviar_a_movil`.
+- `reconocimiento-facial.js` (PC): en modo "movil" ya no abre cámara ni carga Human — solo abre un WebSocket rol `pc` para escuchar `asistencia_resultado` (incluye casos de deuda/membresía vencida, para que el staff se entere aunque el celular esté desatendido) y confirma el registro de un cliente por *sondeo* de `GET /clientes/{id}/biometria-facial` (no por WS, para no pelear por el único socket `pc` con la "estación" que pueda estar abierta en otra ventana).
+- `principal.html`/`clientes.html`/`reconocimiento-facial.html`: cargan `vendor/human/human.js` (~15MB) solo si el modo es `webcam_1080p`; en modo `movil` se saltan esa descarga.
+- Pendiente conocido: `antispoof`/`liveness` de Human siguen vendorizados pero **desactivados** (igual que antes) — sin nadie supervisando el celular en la entrada, esto es más importante que antes si se quiere endurecer contra fotos/video de suplantación.
+
 > main.py: ~296KB, ~6530 líneas | models.py: ~1225 líneas | schemas.py: ~1470 líneas | auth.py: ~490 líneas
 
 ## Qué es

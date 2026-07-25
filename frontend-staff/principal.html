@@ -357,8 +357,13 @@
     function asegurarReconocimientoFacial() {
         if (window.alternarReconocimientoFacial && window.abrirRegistroFacial) return Promise.resolve();
         if (!cargaReconocimientoFacial) {
-            cargaReconocimientoFacial = cargarScriptPrincipal("vendor/human/human.js")
-                .then(() => cargarScriptPrincipal("js/reconocimiento-facial.js?v=20260724-3"))
+            // En modo "movil" el reconocimiento corre en el celular vinculado:
+            // esta PC no necesita descargar los modelos de Human (~15MB).
+            cargaReconocimientoFacial = getConfiguracion()
+                .then(config => config.reconocimiento_facial_modo === "movil"
+                    ? Promise.resolve()
+                    : cargarScriptPrincipal("vendor/human/human.js"))
+                .then(() => cargarScriptPrincipal("js/reconocimiento-facial.js?v=20260724-4"))
                 .catch(error => { cargaReconocimientoFacial = null; throw error; });
         }
         return cargaReconocimientoFacial;

@@ -31,17 +31,30 @@
     </div>
 
     <script src="js/api.js?v=20260723-3"></script>
-    <script src="vendor/human/human.js"></script>
-    <script src="js/reconocimiento-facial.js?v=20260724-3"></script>
     <script>
         function detenerEstacion() {
             if (typeof window.cerrarReconocimientoFacial === "function") window.cerrarReconocimientoFacial();
             window.close();
         }
 
+        function cargarScript(src) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = () => reject(new Error("No se pudo cargar el reconocimiento facial"));
+                document.head.appendChild(script);
+            });
+        }
+
         window.addEventListener("DOMContentLoaded", async () => {
             requireAuth();
             if (!getToken()) return;
+            // En modo "movil" el reconocimiento corre en el celular vinculado:
+            // esta PC solo escucha resultados, sin descargar los modelos de Human.
+            const config = await getConfiguracion();
+            if (config.reconocimiento_facial_modo !== "movil") await cargarScript("vendor/human/human.js");
+            await cargarScript("js/reconocimiento-facial.js?v=20260724-4");
             await window.alternarReconocimientoFacial();
         });
     </script>
