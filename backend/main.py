@@ -17,6 +17,7 @@ from typing import List, Optional
 import base64
 import calendar
 import math
+import mimetypes
 import os
 import uuid
 import csv
@@ -579,6 +580,11 @@ FOTOS_CLIENTES_DIR = os.path.join(UPLOADS_DIR, "clientes")
 FOTOS_PRODUCTOS_DIR = os.path.join(UPLOADS_DIR, "productos")
 os.makedirs(FOTOS_CLIENTES_DIR, exist_ok=True)
 os.makedirs(FOTOS_PRODUCTOS_DIR, exist_ok=True)
+# El modulo mimetypes no trae ".webp" registrado en todos los sistemas
+# (depende del registro de Windows / /etc/mime.types en Linux), lo que
+# hace que StaticFiles sirva estas imagenes como text/plain y el
+# navegador las bloquee (ORB). Se registra explicitamente.
+mimetypes.add_type("image/webp", ".webp")
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 EXTENSIONES_IMAGEN_PERMITIDAS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}

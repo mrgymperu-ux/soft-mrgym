@@ -21,4 +21,5 @@ _obsoletos/
 backups/
 *.swp
 *.swo
+.codex-*.log
 d
