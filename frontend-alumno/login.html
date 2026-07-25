@@ -12,7 +12,7 @@
 <body class="login-page">
     <div class="login-card">
         <div class="login-logo">
-            <div class="icono">🏋️</div>
+            <div class="icono" id="logo-icono">🏋️</div>
             <h1>Soft-Gym</h1>
             <p>Portal del alumno</p>
         </div>
@@ -26,6 +26,10 @@
                 <label>Contraseña</label>
                 <input type="password" id="codigo" placeholder="••••••" inputmode="numeric" maxlength="12">
             </div>
+            <label class="form-check" style="display:flex;align-items:center;gap:8px;font-weight:400;margin:2px 0 14px;">
+                <input type="checkbox" id="recordar" style="width:auto;">
+                Recordarme en este celular
+            </label>
             <button type="submit" class="btn-login" id="btn">Continuar</button>
         </form>
     </div>
@@ -45,7 +49,7 @@
             <button type="button" class="btn-login" id="btn-cambiar-password" onclick="confirmarCambioPassword()">Guardar e ingresar</button>
         </div>
     </div>
-    <script src="js/api.js"></script>
+    <script src="js/api.js?v=20260725-1"></script>
     <script>
         function mostrarCambioPassword() {
             document.getElementById("modal-cambiar-password").classList.add("active");
@@ -77,12 +81,19 @@
             }
         }
 
+        /* Enlace unico de instalacion (?setup=token): salta directo a
+           crear contraseña, sin pedir el DNI. */
+        const _tokenInstalacion = new URLSearchParams(window.location.search).get("setup");
+        if (_tokenInstalacion && !getToken()) {
+            guardarSesion(_tokenInstalacion, "", null, true);
+        }
+
         if (getToken()) {
             if (debeCambiarPassword()) mostrarCambioPassword();
             else window.location.href = "mi-perfil.html";
         }
 
-        /* Personalizar login con nombre del gym si viene ?gym=slug */
+        /* Personalizar login con nombre y logo del gym si viene ?gym=slug */
         (async () => {
             const info = await fetchInfoGym();
             if (info && info.nombre) {
@@ -90,21 +101,25 @@
                 document.querySelector(".login-logo p").textContent = "Portal del Socio";
                 document.title = `${info.nombre} - Acceso Socio`;
             }
+            if (info && info.logo_url) {
+                const contenedorLogo = document.getElementById("logo-icono");
+                contenedorLogo.outerHTML = `<img id="logo-icono" src="${urlFoto(info.logo_url)}" alt="${escapeHTML(info.nombre || "Logo")}" style="max-width:100%;max-height:64px;object-fit:contain;">`;
+            }
             /* PWA: inyectar manifest y registrar service worker */
             const slug = getSlug();
             if (slug) {
+                const iconoUrl = (info && (info.icono_url || info.logo_url)) ? urlFoto(info.icono_url || info.logo_url) : `${API_BASE}/gym/${slug}/icon.svg`;
                 const link = document.createElement("link");
                 link.rel = "manifest";
                 link.href = `${API_BASE}/gym/${slug}/manifest.json?portal=alumno`;
                 document.head.appendChild(link);
                 const iconLink = document.createElement("link");
                 iconLink.rel = "icon";
-                iconLink.href = `${API_BASE}/gym/${slug}/icon.svg`;
-                iconLink.type = "image/svg+xml";
+                iconLink.href = iconoUrl;
                 document.head.appendChild(iconLink);
                 const appleIcon = document.createElement("link");
                 appleIcon.rel = "apple-touch-icon";
-                appleIcon.href = `${API_BASE}/gym/${slug}/icon.svg`;
+                appleIcon.href = iconoUrl;
                 document.head.appendChild(appleIcon);
                 if ("serviceWorker" in navigator) {
                     navigator.serviceWorker.register(`${API_BASE}/gym/${slug}/sw.js`).catch(() => {});
@@ -136,7 +151,8 @@
                     document.getElementById("codigo").focus();
                     return;
                 }
-                const sesion = await loginAlumno(dni, document.getElementById("codigo").value.trim());
+                const recordar = document.getElementById("recordar").checked;
+                const sesion = await loginAlumno(dni, document.getElementById("codigo").value.trim(), recordar);
                 if (sesion.debe_cambiar_password) {
                     btn.disabled = false;
                     btn.textContent = "Continuar";

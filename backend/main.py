@@ -2037,6 +2037,8 @@ def info_publica_gimnasio(slug: str, db: Session = Depends(get_db)):
         "logo_oscuro_url": gimnasio.logo_oscuro_url,
         "logo_version": _version_contenido_imagen(gimnasio.logo_datos),
         "logo_oscuro_version": _version_contenido_imagen(gimnasio.logo_oscuro_datos),
+        "icono_url": gimnasio.icono_url,
+        "icono_version": _version_contenido_imagen(gimnasio.icono_datos),
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -2081,6 +2083,34 @@ def obtener_logo_gimnasio(slug: str, modo: str, db: Session = Depends(get_db)):
     return Response(content=contenido, media_type=tipo or "image/webp", headers={"Cache-Control": "public, no-cache"})
 
 
+@app.post("/gym-actual/icono", tags=["Auth"])
+async def subir_icono_gimnasio(
+    icono: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Sube o reemplaza el icono cuadrado del gimnasio (instalar como app en el celular). Solo admin."""
+    gid = get_gid(usuario)
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gid).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    contenido, tipo = _validar_y_optimizar_foto(await icono.read(), icono.content_type, optimizar=True)
+    gimnasio.icono_datos, gimnasio.icono_tipo = contenido, tipo
+    gimnasio.icono_url = f"/gym/{gimnasio.slug}/icono"
+    db.commit()
+    return {"icono_url": gimnasio.icono_url, "version": _version_contenido_imagen(contenido)}
+
+
+@app.get("/gym/{slug}/icono", tags=["PWA"])
+def obtener_icono_gimnasio(slug: str, db: Session = Depends(get_db)):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.slug == slug, models.Gimnasio.activo == True).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    if not gimnasio.icono_datos:
+        raise HTTPException(status_code=404, detail="Icono no encontrado")
+    return Response(content=gimnasio.icono_datos, media_type=gimnasio.icono_tipo or "image/webp", headers={"Cache-Control": "public, no-cache"})
+
+
 @app.get("/gym-actual/", tags=["Auth"])
 def info_gimnasio_actual(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.get_usuario_actual)):
     """Info del gimnasio del usuario autenticado. Para que el frontend obtenga el slug sin tenerlo en sessionStorage."""
@@ -2098,6 +2128,8 @@ def info_gimnasio_actual(db: Session = Depends(get_db), usuario: models.Usuario 
         "logo_oscuro_url": gimnasio.logo_oscuro_url,
         "logo_version": _version_contenido_imagen(gimnasio.logo_datos),
         "logo_oscuro_version": _version_contenido_imagen(gimnasio.logo_oscuro_datos),
+        "icono_url": gimnasio.icono_url,
+        "icono_version": _version_contenido_imagen(gimnasio.icono_datos),
         "tema": gimnasio.tema,
         "modo_tema": gimnasio.modo_tema,
     }
@@ -2135,7 +2167,12 @@ def manifest_gimnasio(slug: str, portal: str = "alumno", db: Session = Depends(g
     }
     p = portales.get(portal, portales["alumno"])
 
-    icono_url = gimnasio.logo_url or f"/gym/{slug}/icon.svg"
+    if gimnasio.icono_url:
+        icono_url, icono_mime = gimnasio.icono_url, (gimnasio.icono_tipo or "image/webp")
+    elif gimnasio.logo_url:
+        icono_url, icono_mime = gimnasio.logo_url, (gimnasio.logo_tipo or "image/webp")
+    else:
+        icono_url, icono_mime = f"/gym/{slug}/icon.svg", "image/svg+xml"
 
     manifest = {
         "name": gimnasio.nombre + p["sufijo"],
@@ -2148,9 +2185,9 @@ def manifest_gimnasio(slug: str, portal: str = "alumno", db: Session = Depends(g
         "theme_color": colores["bg"],
         "background_color": colores["bg"],
         "icons": [
-            {"src": icono_url, "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"},
-            {"src": icono_url, "sizes": "192x192", "type": "image/svg+xml"},
-            {"src": icono_url, "sizes": "512x512", "type": "image/svg+xml"},
+            {"src": icono_url, "sizes": "any", "type": icono_mime, "purpose": "any maskable"},
+            {"src": icono_url, "sizes": "192x192", "type": icono_mime},
+            {"src": icono_url, "sizes": "512x512", "type": icono_mime},
         ],
     }
     return JSONResponse(content=manifest, media_type="application/manifest+json")
@@ -2813,7 +2850,13 @@ def login_alumno(datos: schemas.LoginAlumnoRequest, request: Request, db: Sessio
         raise HTTPException(status_code=401, detail="DNI o codigo de acceso incorrectos")
 
     auth.limpiar_fallos_login(db, clave)
-    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    # "Recordarme": sesion larga para que la app instalada en el celular
+    # no pida login de nuevo cada vez que se abre (12h por defecto).
+    expira = timedelta(days=30) if datos.recordar else None
+    token = auth.crear_access_token(
+        {"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id},
+        expires_delta=expira,
+    )
     return schemas.TokenResponse(
         access_token=token,
         rol="alumno",
@@ -5227,6 +5270,39 @@ def reset_password_cliente(
     cliente.codigo_acceso = None
     db.commit()
     return {"message": "El alumno deberá crear una nueva contraseña al ingresar"}
+
+
+@app.post("/clientes/{cliente_id}/enlace-acceso", tags=["Clientes"])
+def generar_enlace_acceso_cliente(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Arma un enlace para que el alumno instale el portal en su celular.
+    Si todavia no tiene contraseña, el enlace incluye un token de un
+    solo uso (7 dias) que lo lleva directo a crear su contraseña, sin
+    que tenga que escribir su DNI. Si ya tiene acceso, devuelve el
+    enlace genérico de login (no hace falta token).
+    """
+    cliente = q(db, models.Cliente, usuario).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+
+    base_env = os.getenv("APP_BASE_URL", "").rstrip("/")
+    base = f"{base_env}/alumno" if base_env else "http://localhost:3001"
+
+    ya_tiene_acceso = bool(cliente.codigo_acceso and cliente.codigo_acceso.strip())
+    if ya_tiene_acceso:
+        url = f"{base}/login.html?gym={gimnasio.slug}"
+    else:
+        token = auth.crear_access_token(
+            {"sub": str(cliente.id), "tipo": "alumno_configuracion", "gimnasio_id": cliente.gimnasio_id},
+            expires_delta=timedelta(days=7),
+        )
+        url = f"{base}/login.html?gym={gimnasio.slug}&setup={token}"
+    return {"url": url, "ya_tiene_acceso": ya_tiene_acceso, "nombre": cliente.nombre, "telefono": cliente.telefono}
 
 
 @app.delete("/clientes/{cliente_id}", tags=["Clientes"])
@@ -11872,7 +11948,13 @@ def cambiar_password_alumno(
         raise HTTPException(status_code=400, detail="Elige una contraseña menos predecible")
     cliente.codigo_acceso = auth.hash_codigo_acceso(nueva)
     db.commit()
-    token = auth.crear_access_token({"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id})
+    # Justo despues de crear su contraseña por primera vez es cuando el
+    # alumno suele estar instalando la app en su celular: sesion larga
+    # para que no tenga que volver a loguearse al abrirla.
+    token = auth.crear_access_token(
+        {"sub": str(cliente.id), "tipo": "alumno", "gimnasio_id": cliente.gimnasio_id},
+        expires_delta=timedelta(days=30),
+    )
     return {
         "message": "Contraseña actualizada correctamente",
         "access_token": token,

@@ -87,6 +87,7 @@ class LoginAlumnoRequest(BaseModel):
     dni: str
     codigo_acceso: str
     slug: Optional[str] = None
+    recordar: bool = False
 
 
 class InicioLoginAlumnoRequest(BaseModel):

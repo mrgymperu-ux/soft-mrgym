@@ -56,6 +56,12 @@
                         <input type="file" id="input-logo-oscuro" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
                         <button class="btn btn-sm btn-primary" onclick="subirLogo('oscuro')">Subir</button>
                     </div>
+                    <label style="margin-top:14px;">Icono para instalar en el celular <span style="font-weight:400;color:var(--color-texto-secundario);">(PWA, imagen cuadrada)</span></label>
+                    <div id="icono-preview" class="logo-preview-transparencia" style="margin-bottom:8px;"></div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="file" id="input-icono" accept="image/jpeg,image/png,image/webp" style="font-size:0.85em;">
+                        <button class="btn btn-sm btn-primary" onclick="subirIcono()">Subir</button>
+                    </div>
                 </div>
                 <button class="btn btn-primary" onclick="guardarConfig()">Guardar cambios</button>
             </div>
@@ -719,10 +725,40 @@
         } catch(e) { showError(e.message); }
     }
 
+    /* ====== Icono para instalar en el celular (PWA) ====== */
+    async function cargarIconoActual(version = "") {
+        try {
+            const info = await apiFetch("/gym-actual/");
+            const v = version || info.icono_version || "";
+            const cacheBuster = v ? `?v=${encodeURIComponent(v)}` : "";
+            const prev = document.getElementById("icono-preview");
+            prev.innerHTML = info && info.icono_url
+                ? `<img src="${API_BASE_URL}${info.icono_url}${cacheBuster}" style="max-width:100px;max-height:100px;object-fit:contain;border-radius:8px;" alt="Icono">`
+                : '<p style="font-size:0.8em;color:#636E72;">Sin icono propio; se usa el logo o una imagen genérica al instalar la app.</p>';
+        } catch(e) {}
+    }
+    async function subirIcono() {
+        const input = document.getElementById("input-icono");
+        if (!input.files.length) { showError("Selecciona una imagen"); return; }
+        try {
+            const formData = new FormData();
+            formData.append("icono", input.files[0]);
+            const headers = {};
+            const token = getToken();
+            if (token) headers["Authorization"] = `Bearer ${token}`;
+            const r = await fetch(`${API_BASE_URL}/gym-actual/icono`, { method: "POST", headers, body: formData });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.detail || "Error al subir icono");
+            showSuccess("Icono actualizado");
+            cargarIconoActual(Date.now());
+        } catch(e) { showError(e.message); }
+    }
+
     mostrarQR();
     cargarConfiguracionWhatsApp();
     actualizarEstadoCounter();
     cargarLogoActual();
+    cargarIconoActual();
     cargarSuscripcionGym();
     cargarVinculoCamaraRemota();
 </script>

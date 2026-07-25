@@ -518,20 +518,23 @@ async function _fcAsignarMembresia() {
 }
 
 async function _fcAbrirPortalWhatsAppAutomatico() {
-    if (!_fcClienteActivo || !_fcClienteActivo.telefono) return;
-    let slug = sessionStorage.getItem("gimnasio_slug") || "";
-    if (!slug) {
-        try {
-            const gimnasio = await apiFetch("/gym-actual/");
-            slug = gimnasio && gimnasio.slug ? gimnasio.slug : "";
-            if (slug) sessionStorage.setItem("gimnasio_slug", slug);
-        } catch (_) { return; }
+    if (!_fcClienteActivo) return;
+    try {
+        const datos = await apiFetch(`/clientes/${_fcClienteActivo.id}/enlace-acceso`, { method: "POST" });
+        const nombre = datos.nombre || _fcClienteActivo.nombre || "";
+        const telefono = datos.telefono || _fcClienteActivo.telefono;
+        if (!telefono) return;
+        const mensaje = datos.ya_tiene_acceso
+            ? `Hola ${nombre}! Tu membresía quedó registrada. Ingresa a tu portal cuando quieras:\n\n${datos.url}`
+            : `Hola ${nombre}! Ya puedes activar tu acceso al gimnasio desde el celular.\n\n` +
+              `1) Toca este enlace y crea tu contraseña:\n${datos.url}\n\n` +
+              `2) Instala la app: en el menú del navegador elige "Agregar a pantalla de inicio" (o "Instalar app").\n\n` +
+              `Así vas a poder ver tu rutina, tus pagos y marcar tu ingreso desde el celular.`;
+        const enlace = linkWhatsApp(telefono, mensaje);
+        if (enlace) window.open(enlace, "_blank", "noopener,noreferrer");
+    } catch (_) {
+        // El enlace de acceso es un plus del flujo de cobro; un fallo aca no debe interrumpirlo.
     }
-    if (!slug) return;
-    const portal = `${window.location.origin}/alumno/login.html?gym=${encodeURIComponent(slug)}`;
-    const mensaje = `Hola ${_fcClienteActivo.nombre || ""}, este es tu acceso al portal de alumnos:\n\n${portal}\n\nIngresa con tu DNI. En tu primer acceso crearás tu contraseña.`;
-    const enlace = linkWhatsApp(_fcClienteActivo.telefono, mensaje);
-    if (enlace) window.open(enlace, "_blank", "noopener,noreferrer");
 }
 
 function _fcAbrirCobro() {

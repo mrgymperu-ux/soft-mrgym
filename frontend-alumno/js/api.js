@@ -8,21 +8,32 @@ function getSlug() {
     return new URLSearchParams(window.location.search).get("gym") || sessionStorage.getItem("alumno_slug") || null;
 }
 
-function getToken() { return sessionStorage.getItem("alumno_token"); }
-function getNombre() { return sessionStorage.getItem("alumno_nombre"); }
-function escapeHTML(valor) { return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
-function debeCambiarPassword() { return sessionStorage.getItem("alumno_cambiar_password") === "1"; }
+/* "Recordarme": si esta activo, la sesion vive en localStorage (persiste
+   al cerrar y reabrir la app instalada). Si no, en sessionStorage como
+   antes (se pierde al cerrar la pestaña/app). */
+const _CLAVES_SESION_ALUMNO = ["alumno_token", "alumno_nombre", "alumno_gimnasio_id", "alumno_cambiar_password", "alumno_slug"];
+function _recordando() { return localStorage.getItem("alumno_recordar") === "1"; }
+function _storageAlumno() { return _recordando() ? localStorage : sessionStorage; }
 
-function guardarSesion(token, nombre, gimnasioId, cambiarPassword = false) {
-    sessionStorage.setItem("alumno_token", token);
-    sessionStorage.setItem("alumno_nombre", nombre);
-    if (gimnasioId != null) sessionStorage.setItem("alumno_gimnasio_id", gimnasioId);
-    sessionStorage.setItem("alumno_cambiar_password", cambiarPassword ? "1" : "0");
+function getToken() { return _storageAlumno().getItem("alumno_token"); }
+function getNombre() { return _storageAlumno().getItem("alumno_nombre"); }
+function escapeHTML(valor) { return String(valor ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
+function debeCambiarPassword() { return _storageAlumno().getItem("alumno_cambiar_password") === "1"; }
+
+function guardarSesion(token, nombre, gimnasioId, cambiarPassword = false, recordar = null) {
+    if (recordar !== null) localStorage.setItem("alumno_recordar", recordar ? "1" : "0");
+    const store = _storageAlumno();
+    store.setItem("alumno_token", token);
+    store.setItem("alumno_nombre", nombre);
+    if (gimnasioId != null) store.setItem("alumno_gimnasio_id", gimnasioId);
+    store.setItem("alumno_cambiar_password", cambiarPassword ? "1" : "0");
     const slug = getSlug();
-    if (slug) sessionStorage.setItem("alumno_slug", slug);
+    if (slug) store.setItem("alumno_slug", slug);
 }
 
 function cerrarSesion() {
+    _CLAVES_SESION_ALUMNO.forEach(clave => { localStorage.removeItem(clave); sessionStorage.removeItem(clave); });
+    localStorage.removeItem("alumno_recordar");
     sessionStorage.clear();
     window.location.href = "login.html";
 }
@@ -336,9 +347,9 @@ function urlFoto(fotoUrl) {
     return fotoUrl.startsWith("http") ? fotoUrl : `${API_BASE}${fotoUrl}`;
 }
 
-async function loginAlumno(dni, codigo) {
+async function loginAlumno(dni, codigo, recordar = false) {
     const slug = getSlug();
-    const body = { dni, codigo_acceso: codigo };
+    const body = { dni, codigo_acceso: codigo, recordar };
     if (slug) body.slug = slug;
     const response = await fetch(`${API_BASE}/auth/login-alumno`, {
         method: "POST",
@@ -347,7 +358,7 @@ async function loginAlumno(dni, codigo) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "DNI o codigo incorrecto");
-    guardarSesion(data.access_token, data.nombre, data.gimnasio_id, data.debe_cambiar_password);
+    guardarSesion(data.access_token, data.nombre, data.gimnasio_id, data.debe_cambiar_password, recordar);
     return data;
 }
 
@@ -371,8 +382,11 @@ async function cambiarPasswordAlumno(nuevaPassword) {
         method: "PUT",
         body: JSON.stringify({ nueva_password: nuevaPassword }),
     });
-    if (data.access_token) guardarSesion(data.access_token, data.nombre, data.gimnasio_id, false);
-    else sessionStorage.setItem("alumno_cambiar_password", "0");
+    // Justo despues de crear su contraseña (o desde un enlace de
+    // instalacion) es el momento de instalar la app: se recuerda la
+    // sesion para que no tenga que volver a loguearse al abrirla.
+    if (data.access_token) guardarSesion(data.access_token, data.nombre, data.gimnasio_id, false, true);
+    else _storageAlumno().setItem("alumno_cambiar_password", "0");
     return data;
 }
 

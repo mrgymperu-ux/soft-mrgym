@@ -99,6 +99,12 @@ class Gimnasio(Base):
     logo_tipo = Column(String, nullable=True)
     logo_oscuro_datos = deferred(Column(LargeBinary, nullable=True))
     logo_oscuro_tipo = Column(String, nullable=True)
+    # Icono separado del logo: para instalar el portal como app en el
+    # celular (PWA / home screen) suele necesitarse un icono cuadrado
+    # distinto del logo rectangular.
+    icono_url = Column(String, nullable=True)
+    icono_datos = deferred(Column(LargeBinary, nullable=True))
+    icono_tipo = Column(String, nullable=True)
     latitud = Column(Float, nullable=True)
     longitud = Column(Float, nullable=True)
     radio_asistencia_metros = Column(Float, default=150.0)

@@ -17,7 +17,15 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-07-24 (celular vinculado procesa reconocimiento facial localmente, ya no la PC del counter)
+> Última actualización: 2026-07-25 (enlace unico de instalacion para alumnos, sesion recordada, icono PWA separado del logo)
+
+## Enlace único de instalación del portal alumno (2026-07-25)
+- Al asignar una membresía ≥30 días con pago (`_fcAsignarMembresia` en `flujo-cliente.js`), se llama `POST /clientes/{id}/enlace-acceso` y se abre WhatsApp (`wa.me`) con el enlace listo para enviar. Si el cliente no tenía acceso aún, el mensaje incluye instrucciones de "instalar la app"; si ya tenía, es un mensaje simple de confirmación.
+- `POST /clientes/{cliente_id}/enlace-acceso` (staff): si el cliente no tiene `codigo_acceso`, genera un token `alumno_configuracion` de **7 días** (vs. los 15 minutos del flujo reactivo por DNI) y arma `/alumno/login.html?gym={slug}&setup={token}`. Si ya tiene acceso, devuelve el enlace genérico sin token.
+- `frontend-alumno/login.html` reconoce `?setup=token`: salta directo al modal de crear contraseña, sin pedir DNI.
+- **Sesión recordada**: `LoginAlumnoRequest.recordar` (checkbox "Recordarme en este celular") hace que `POST /auth/login-alumno` emita un token de 30 días en vez de 12 horas; `PUT /portal-alumno/cambiar-password` (crear contraseña, incl. via enlace único) *siempre* emite 30 días, porque ese momento coincide con instalar la app. `frontend-alumno/js/api.js` guarda la sesión en `localStorage` cuando está "recordada" (persiste al reabrir la app instalada) o en `sessionStorage` si no (como antes). Clave: `alumno_recordar` en `localStorage`.
+- **Ícono separado del logo**: `Gimnasio.icono_url/icono_datos/icono_tipo` (migración `0018_icono_gimnasio`). `POST /gym-actual/icono` / `GET /gym/{slug}/icono`. El manifest PWA (`manifest_gimnasio`) prioriza `icono_url` > `logo_url` > SVG generado con la inicial del gym, y ahora respeta el `content-type` real (antes forzaba `image/svg+xml` aunque el logo fuera jpg/png/webp — bug corregido de paso). UI en Configuración junto a los logos.
+- Todas las páginas de `frontend-alumno/*.html` ahora cargan `js/api.js?v=...` con cache-busting (antes no tenían versión — un deploy podía dejar a alumnos con el JS viejo en la PWA instalada).
 
 ## Reconocimiento facial por móvil — arquitectura standalone (2026-07-24)
 El modo "movil" ya NO transmite video por WebRTC a la PC (eso se eliminó). Ahora el celular vinculado corre Human.js localmente y hace su propio reconocimiento, dejando la PC del counter libre:
