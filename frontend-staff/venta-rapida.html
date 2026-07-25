@@ -38,6 +38,15 @@
         .carrito-footer { padding: 16px 20px; border-top: 1px solid var(--color-borde); }
         .carrito-total { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 1.05em; }
         .empty-carrito { text-align: center; padding: 30px; color: var(--color-texto-secundario); }
+        .vr-cliente-badge { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.88em; }
+        .vr-cliente-badge.vacio { color: var(--color-texto-secundario); }
+        .vr-cliente-buscar { width:100%; padding:8px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.88em; margin-top:6px; box-sizing:border-box; }
+        .vr-cliente-resultados { max-height:180px; overflow-y:auto; margin-top:4px; }
+        .vr-cliente-item { display:flex; flex-direction:column; padding:7px 8px; border:1px solid var(--color-borde); border-top:none; cursor:pointer; font-size:0.85em; }
+        .vr-cliente-item:first-child { border-top:1px solid var(--color-borde); border-radius:8px 8px 0 0; }
+        .vr-cliente-item:last-child { border-radius:0 0 8px 8px; }
+        .vr-cliente-item:hover { background: var(--color-fondo); }
+        .vr-cliente-item small { color: var(--color-texto-secundario); }
     </style>
 </head>
 <body>
@@ -72,9 +81,13 @@
                 <div class="carrito-footer">
                     <div class="form-group" style="margin-bottom:10px;">
                         <label style="font-size:0.82em;">Cliente (opcional)</label>
-                        <select id="f-cliente" style="width:100%;padding:8px;border:1px solid var(--color-borde);border-radius:8px;font-size:0.88em;">
-                            <option value="">Sin cliente</option>
-                        </select>
+                        <div class="vr-cliente-badge vacio" id="vrf-cliente-badge">
+                            <span id="vrf-cliente-texto">Sin cliente seleccionado</span>
+                            <span id="vrf-cliente-quitar" style="display:none;cursor:pointer;color:var(--color-primario);" onclick="quitarClienteVentaCompleta()">quitar ×</span>
+                        </div>
+                        <input type="text" id="vrf-cliente-buscar" class="vr-cliente-buscar" placeholder="Buscar cliente por nombre o DNI..." oninput="buscarClienteVentaCompleta(this.value)">
+                        <div class="vr-cliente-resultados" id="vrf-cliente-resultados"></div>
+                        <input type="hidden" id="f-cliente" value="">
                     </div>
                     <div class="form-group" style="margin-bottom:12px;">
                         <label style="font-size:0.82em;">Metodo de pago</label>
@@ -105,19 +118,25 @@
     let config = null;
     let moneda = "S/";
 
+    function escapeAttr(str) {
+        return (str || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "\\'");
+    }
+
     async function init() {
         config = await getConfiguracion();
         moneda = config.moneda;
         productosCache = await apiFetch("/productos/");
         renderGrid(productosCache);
 
-        const clientes = await apiFetch("/clientes/?limit=200");
-        const sel = document.getElementById("f-cliente");
-        sel.innerHTML = '<option value="">Sin cliente</option>' +
-            clientes.map(c => `<option value="${c.id}">${c.nombre} ${c.apellidos || ""}</option>`).join("");
-
         const clienteUrl = new URLSearchParams(window.location.search).get("cliente");
-        if (clienteUrl) sel.value = clienteUrl;
+        if (clienteUrl) {
+            try {
+                const cliente = await apiFetch(`/clientes/${clienteUrl}`);
+                seleccionarClienteVentaCompleta(cliente.id, `${cliente.nombre} ${cliente.apellidos || ""}`.trim());
+            } catch (_) {
+                // Si el cliente ya no existe o no pertenece a este gimnasio, se deja sin preseleccionar.
+            }
+        }
 
         // Si se llego desde el Panel (boton 🔗 junto a un cliente), al
         // cobrar se debe volver alli en vez de quedarse en esta pantalla.
@@ -131,6 +150,47 @@
     }
 
     let volverAlTerminar = null;
+    let _vrfBusquedaSeq = 0;
+
+    async function buscarClienteVentaCompleta(termino) {
+        const contenedor = document.getElementById("vrf-cliente-resultados");
+        const texto = termino.trim();
+        if (texto.length < 2) { contenedor.innerHTML = ""; return; }
+        const secuencia = ++_vrfBusquedaSeq;
+        try {
+            const pagina = await apiFetch(`/clientes/listado-paginado?buscar=${encodeURIComponent(texto)}&filtro=todos&limit=8`);
+            if (secuencia !== _vrfBusquedaSeq) return; // llego una busqueda mas nueva mientras esperaba
+            const resultados = pagina.items || [];
+            contenedor.innerHTML = !resultados.length
+                ? '<p style="text-align:center;color:var(--color-texto-secundario);padding:10px;font-size:0.82em;">Sin resultados</p>'
+                : resultados.map(c => `
+                    <div class="vr-cliente-item" onclick="seleccionarClienteVentaCompleta(${c.id}, '${escapeAttr(c.nombre_completo)}')">
+                        <strong>${escapeHTML(c.nombre_completo)}</strong>
+                        <small>${c.dni ? "DNI " + escapeHTML(c.dni) : "Sin DNI"}</small>
+                    </div>`).join("");
+        } catch (error) {
+            showError(error.message);
+        }
+    }
+
+    function seleccionarClienteVentaCompleta(clienteId, nombre) {
+        document.getElementById("f-cliente").value = clienteId;
+        document.getElementById("vrf-cliente-badge").classList.remove("vacio");
+        document.getElementById("vrf-cliente-texto").textContent = `👤 ${nombre}`;
+        document.getElementById("vrf-cliente-quitar").style.display = "inline";
+        document.getElementById("vrf-cliente-buscar").value = "";
+        document.getElementById("vrf-cliente-buscar").style.display = "none";
+        document.getElementById("vrf-cliente-resultados").innerHTML = "";
+    }
+
+    function quitarClienteVentaCompleta() {
+        document.getElementById("f-cliente").value = "";
+        document.getElementById("vrf-cliente-badge").classList.add("vacio");
+        document.getElementById("vrf-cliente-texto").textContent = "Sin cliente seleccionado";
+        document.getElementById("vrf-cliente-quitar").style.display = "none";
+        document.getElementById("vrf-cliente-buscar").style.display = "block";
+        document.getElementById("vrf-cliente-buscar").focus();
+    }
 
     function renderGrid(productos) {
         const grid = document.getElementById("grid-productos");
