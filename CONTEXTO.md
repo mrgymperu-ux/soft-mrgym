@@ -17,7 +17,7 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-07-16 (v7 - Endurecimiento inicial de autenticación)
+> Última actualización: 2026-07-24 (fix mimetype .webp + regla de sincronización git multi-sesión)
 > main.py: ~296KB, ~6530 líneas | models.py: ~1225 líneas | schemas.py: ~1470 líneas | auth.py: ~490 líneas
 
 ## Qué es
@@ -82,6 +82,7 @@ Sistema de gestión de gimnasio multi-tenant (SaaS). Un superadmin administra gi
 - Tras editar .py, uvicorn recarga solo (~2-3s)
 - El navegador cachea → Ctrl+Shift+R
 - Para desplegar: `git add . && git commit -m "msg" && git push` → Render redesplega en ~3 min
+- **Este proyecto se trabaja desde varias copias locales/herramientas de IA distintas** (se ha visto `D:\Soft-MrGym` y `D:\Soft-MrGym - CODEX test`, cada una con su propio git). Antes de tocar código o asumir que "hay cambios pendientes sin commitear", correr siempre `git fetch origin && git log main..origin/main --oneline` para chequear si el remoto está adelantado. Si lo está, el remoto es la fuente de verdad: hacer `git pull` (o `git reset --hard origin/main` si el working tree ya refleja ese estado) ANTES de analizar o commitear nada. Nunca hacer `git push` sin haber sincronizado primero — un push rechazado por "fetch first" es la señal de que otra sesión ya avanzó el historial (pasó el 2026-07-24: una sesión con git desactualizado casi commitea 30k líneas que ya existían en el remoto con historial propio).
 
 ---
 
