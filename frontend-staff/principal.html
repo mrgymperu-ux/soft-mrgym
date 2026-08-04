@@ -424,17 +424,43 @@
         } catch (_) { return false; }
     }
 
+    function escuchandoMovilFacial() {
+        return typeof window.escuchandoMovilFacial === "function" && window.escuchandoMovilFacial();
+    }
+
     function actualizarBotonEstacionFacial() {
         const boton = document.getElementById("btn-reconocimiento-facial");
         if (!boton) return;
-        const activa = estacionFacialActiva();
+        const activa = estacionFacialActiva() || escuchandoMovilFacial();
         boton.classList.toggle("activo", activa);
         boton.setAttribute("aria-pressed", String(activa));
         boton.setAttribute("aria-label", activa ? "Abrir estación de reconocimiento facial" : "Iniciar reconocimiento facial");
         boton.title = activa ? "Reconocimiento facial activo en segundo plano" : "Iniciar reconocimiento facial";
     }
 
-    function alternarReconocimientoFacialLazy() {
+    async function alternarReconocimientoFacialLazy() {
+        // Modo "movil": no hay camara que mostrar en la PC, solo hay que
+        // escuchar resultados. Corre en esta misma ventana (no en una
+        // ventana emergente aparte) para poder saltar al cliente en
+        // Busqueda inteligente y alertar aqui mismo cuando haga falta.
+        let modo;
+        try {
+            modo = (await getConfiguracion()).reconocimiento_facial_modo;
+        } catch (error) {
+            showError(error.message);
+            return;
+        }
+        if (modo === "movil") {
+            try {
+                await asegurarReconocimientoFacial();
+                await window.alternarReconocimientoFacial();
+            } catch (error) {
+                showError(error.message);
+            }
+            actualizarBotonEstacionFacial();
+            return;
+        }
+
         const activa = estacionFacialActiva();
         if (!activa) {
             localStorage.setItem("mrgym_rf_estacion_activa", JSON.stringify({

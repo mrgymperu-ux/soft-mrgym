@@ -221,6 +221,11 @@
         socketEscucha = null;
     }
 
+    // Para que principal.html sepa si el modo movil sigue escuchando en
+    // esta misma ventana (sin ventana emergente no hay heartbeat de
+    // "estacion activa" que consultar).
+    window.escuchandoMovilFacial = function () { return escuchandoMovil; };
+
     window.alternarReconocimientoFacial = async function () {
         if (esEstacion()) iniciarActividadEstacion();
         try {
