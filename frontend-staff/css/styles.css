@@ -82,7 +82,7 @@ body {
 .usuario-rol-mini { font-size: 0.76em; color: rgba(255,255,255,0.5); text-transform: capitalize; }
 .btn-logout { width: 100%; background: rgba(255,255,255,0.08); color: #fff; border: none; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 0.85em; }
 .btn-logout:hover { background: rgba(255,255,255,0.15); }
-.main-content { flex: 1; padding: 24px 32px; overflow-y: auto; }
+.main-content { flex: 1; padding: 24px 32px; overflow: visible; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
 .header-title { margin:0; font-size:var(--fuente-lg); font-weight:600; letter-spacing:-0.015em; }
 .header-subtitle { margin:4px 0 0; color:var(--color-texto-secundario); font-size:var(--fuente-base); }
