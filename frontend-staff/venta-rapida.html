@@ -39,7 +39,7 @@
         .carrito-total { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 1.05em; }
         .empty-carrito { text-align: center; padding: 30px; color: var(--color-texto-secundario); }
         .vr-cliente-badge { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.88em; }
-        .vr-cliente-badge.vacio { color: var(--color-texto-secundario); }
+        .vr-cliente-badge.vacio { display:none; }
         .vr-cliente-buscar { width:100%; padding:8px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.88em; margin-top:6px; box-sizing:border-box; }
         .vr-cliente-resultados { max-height:180px; overflow-y:auto; margin-top:4px; }
         .vr-cliente-item { display:flex; flex-direction:column; padding:7px 8px; border:1px solid var(--color-borde); border-top:none; cursor:pointer; font-size:0.85em; }
@@ -85,7 +85,7 @@
                             <span id="vrf-cliente-texto">Sin cliente seleccionado</span>
                             <span id="vrf-cliente-quitar" style="display:none;cursor:pointer;color:var(--color-primario);" onclick="quitarClienteVentaCompleta()">quitar ×</span>
                         </div>
-                        <input type="text" id="vrf-cliente-buscar" class="vr-cliente-buscar" placeholder="Buscar cliente por nombre o DNI..." oninput="buscarClienteVentaCompleta(this.value)">
+                        <input type="text" id="vrf-cliente-buscar" class="vr-cliente-buscar" placeholder="Buscar cliente por nombre..." oninput="buscarClienteVentaCompleta(this.value)">
                         <div class="vr-cliente-resultados" id="vrf-cliente-resultados"></div>
                         <input type="hidden" id="f-cliente" value="">
                     </div>
@@ -158,9 +158,14 @@
         if (texto.length < 2) { contenedor.innerHTML = ""; return; }
         const secuencia = ++_vrfBusquedaSeq;
         try {
-            const pagina = await apiFetch(`/clientes/listado-paginado?buscar=${encodeURIComponent(texto)}&filtro=todos&limit=8`);
+            // El endpoint busca por nombre, DNI, celular o email; aqui solo
+            // interesa el nombre, asi que se filtra del lado del cliente.
+            const pagina = await apiFetch(`/clientes/listado-paginado?buscar=${encodeURIComponent(texto)}&filtro=todos&limit=30`);
             if (secuencia !== _vrfBusquedaSeq) return; // llego una busqueda mas nueva mientras esperaba
-            const resultados = pagina.items || [];
+            const textoNorm = texto.toLocaleLowerCase("es");
+            const resultados = (pagina.items || [])
+                .filter(c => c.nombre_completo.toLocaleLowerCase("es").includes(textoNorm))
+                .slice(0, 8);
             contenedor.innerHTML = !resultados.length
                 ? '<p style="text-align:center;color:var(--color-texto-secundario);padding:10px;font-size:0.82em;">Sin resultados</p>'
                 : resultados.map(c => `
