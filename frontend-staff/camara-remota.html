@@ -49,13 +49,13 @@ const UMBRAL_COINCIDENCIA = 0.55;
 const CAPTURAS_REGISTRO = 3;
 const UMBRAL_ROSTRO = 0.55;
 const ANCHO_ROSTRO_MINIMO = 85;
-const INTERVALO_MS = 240;
+const INTERVALO_MS = 150;
 const NUM_TICKS = 60;
 
 const CONFIG = {
     backend: "webgl",
     modelBasePath: "vendor/human/models/",
-    cacheSensitivity: 0.01,
+    cacheSensitivity: 0.05,
     filter: { enabled: false },
     face: {
         enabled: true,
@@ -342,9 +342,12 @@ async function conectar() {
     estadoNodo.style.display = "block";
     mensaje.textContent = "Preparando reconocimiento facial…";
     try {
+        // Resolucion moderada a proposito: el detector igual reescala cada
+        // frame a un tamano fijo internamente, asi que pedir 1280x720 solo
+        // suma costo de lectura/decodificacion sin mejorar la deteccion.
         stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            video: { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } },
         });
         await aplicarZoomCamara(stream);
         video.srcObject = stream;

@@ -192,7 +192,17 @@
             else if (mensaje.tipo === "asistencia_resultado") {
                 publicarIngresoFacial(mensaje.cliente_id, mensaje.nombre, mensaje.mensaje);
                 if (mensaje.ok) { if (typeof window.showSuccess === "function") window.showSuccess(mensaje.mensaje); }
-                else if (typeof window.showError === "function") window.showError(mensaje.mensaje);
+                else {
+                    if (typeof window.showError === "function") window.showError(mensaje.mensaje);
+                    // Deuda vencida, membresia vencida, etc.: salta al cliente en
+                    // la busqueda inteligente y avisa al counter con un parpadeo
+                    // notorio, ya que el celular esta desatendido en la entrada.
+                    if (mensaje.cliente_id && typeof window.mostrarFichaParaAsistencia === "function") {
+                        window.mostrarFichaParaAsistencia(mensaje.cliente_id);
+                        document.getElementById("panel-clientes")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }
+                    if (typeof window.alertarCounterFacial === "function") window.alertarCounterFacial();
+                }
                 const actualizaciones = [];
                 if (typeof window.cargarUltimosIngresos === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarUltimosIngresos()));
                 if (typeof window.cargarDashboard === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarDashboard()));
