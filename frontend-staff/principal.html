@@ -424,14 +424,14 @@
         } catch (_) { return false; }
     }
 
-    function escuchandoMovilFacial() {
+    function estaEscuchandoMovilFacial() {
         return typeof window.escuchandoMovilFacial === "function" && window.escuchandoMovilFacial();
     }
 
     function actualizarBotonEstacionFacial() {
         const boton = document.getElementById("btn-reconocimiento-facial");
         if (!boton) return;
-        const activa = estacionFacialActiva() || escuchandoMovilFacial();
+        const activa = estacionFacialActiva() || estaEscuchandoMovilFacial();
         boton.classList.toggle("activo", activa);
         boton.setAttribute("aria-pressed", String(activa));
         boton.setAttribute("aria-label", activa ? "Abrir estación de reconocimiento facial" : "Iniciar reconocimiento facial");
@@ -524,6 +524,7 @@
     // Reloj y stats
     // ============================================================
     let secuenciaDashboardPrincipal = 0;
+    let dashboardSecuenciaRenderizada = 0;
     function actualizarHora() {
         document.getElementById("hora-actual").textContent =
             new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -544,25 +545,32 @@
     async function cargarDashboard(opciones={}) {
         if (!ACCESO_PRINCIPAL.sistema) return;
         const secuencia = ++secuenciaDashboardPrincipal;
+        // Solo se descarta un resultado si uno mas nuevo YA SE LLEGO A
+        // PINTAR; no alcanza con que otra llamada mas nueva haya
+        // empezado. Con trafico seguido (varias asistencias por
+        // reconocimiento facial una detras de otra) las llamadas se
+        // van pisando entre si por orden de inicio, y con la version
+        // anterior (exigir ser siempre la ultima en *empezar*) nunca
+        // llegaba a pintarse nada: el panel se quedaba con "—" para
+        // siempre aunque el servidor respondiera bien.
+        const intentarRender = (stats, moneda) => {
+            if (secuencia < dashboardSecuenciaRenderizada) return;
+            dashboardSecuenciaRenderizada = secuencia;
+            mostrarDashboardPrincipal(stats, moneda);
+        };
         try {
             let moneda = sessionStorage.getItem("mrgym_moneda") || "S/";
             let datosVigentes = null;
             const promesaMoneda = getConfiguracion().then(config => {
                 moneda = config.moneda || moneda;
-                if (secuencia === secuenciaDashboardPrincipal && datosVigentes) {
-                    mostrarDashboardPrincipal(datosVigentes, moneda);
-                }
+                if (datosVigentes) intentarRender(datosVigentes, moneda);
             }).catch(() => {});
             const respuesta = await apiFetchConCache("/dashboard/stats", {forzar:opciones.forzar===true});
-            if (secuencia !== secuenciaDashboardPrincipal) return;
             datosVigentes = respuesta.datos;
-            mostrarDashboardPrincipal(datosVigentes, moneda);
+            intentarRender(datosVigentes, moneda);
             if (respuesta.desdeCache) {
-                const datosActualizados = await respuesta.actualizando;
-                if (secuencia === secuenciaDashboardPrincipal) {
-                    datosVigentes = datosActualizados;
-                    mostrarDashboardPrincipal(datosVigentes, moneda);
-                }
+                datosVigentes = await respuesta.actualizando;
+                intentarRender(datosVigentes, moneda);
             }
             void promesaMoneda;
         } catch (error) {
