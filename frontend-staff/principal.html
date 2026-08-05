@@ -78,11 +78,13 @@
         .vr-cliente-badge .nombre-cliente { color: var(--color-primario-tinte-texto); font-weight: 600; }
         .vr-cliente-badge.vacio { background: var(--color-fondo); color: var(--color-texto-secundario); }
         .vr-lista-productos { flex: 1; min-height: 90px; overflow-y: auto; }
-        .vr-prod-item { display: flex; align-items: center; gap: 10px; padding: 8px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
+        .vr-prod-item { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
         .vr-prod-item:hover { background: var(--color-fondo); }
         .vr-prod-item.agotado { opacity: 0.4; cursor: not-allowed; }
-        .vr-prod-icono { width: 30px; height: 30px; border-radius: 8px; background: var(--color-fondo); display: flex; align-items: center; justify-content: center; font-size: 1em; flex-shrink: 0; }
-        .vr-prod-nombre { flex: 1; font-size: 0.82em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .vr-prod-icono { width: 60px; height: 60px; border-radius: 10px; background: var(--color-fondo); display: flex; align-items: center; justify-content: center; font-size: 1.8em; flex-shrink: 0; }
+        .vr-prod-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .vr-prod-nombre { font-size: 0.85em; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .vr-prod-precio { font-size: 0.8em; font-weight: 700; color: var(--color-primario); }
         .vr-carrito { border-top: 1px solid var(--color-borde); }
         .vr-carrito-item { display: flex; align-items: center; gap: 6px; padding: 6px 18px; font-size: 0.8em; }
         .vr-ci-btn { width: 20px; height: 20px; border: 1px solid var(--color-borde); background: var(--color-blanco); border-radius: 5px; cursor: pointer; font-size: 0.85em; padding: 0; line-height: 1; }
@@ -1290,9 +1292,11 @@
         }
         contenedor.innerHTML = items.map(({ producto: p }) => `
             <div class="vr-prod-item ${p.stock <= 0 ? "agotado" : ""}" onclick="${p.stock > 0 ? `agregarProductoMini(${p.id})` : ""}">
-                <div class="vr-prod-icono">${p.foto_url ? `<img src="${urlFoto(p.foto_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">` : (p.icono || "📦")}</div>
-                <div class="vr-prod-nombre">${p.nombre}</div>
-                <strong style="font-size:0.8em;color:var(--color-primario);flex-shrink:0;">${formatCurrency(p.precio_venta)}</strong>
+                <div class="vr-prod-icono">${p.foto_url ? `<img src="${urlFoto(p.foto_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:10px;">` : (p.icono || "📦")}</div>
+                <div class="vr-prod-info">
+                    <div class="vr-prod-nombre">${p.nombre}</div>
+                    <div class="vr-prod-precio">${formatCurrency(p.precio_venta)}</div>
+                </div>
             </div>
         `).join("");
     }
