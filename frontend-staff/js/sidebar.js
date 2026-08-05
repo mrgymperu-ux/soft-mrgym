@@ -81,9 +81,9 @@ function renderSidebar() {
         ? '<img src="' + API_BASE_URL + logoCache.ruta + (logoCache.version ? '?v=' + encodeURIComponent(logoCache.version) : '') + '" alt="Logo">'
         : '';
 
-    // "Principal" queda siempre visible (no es acordeon); el resto
-    // de secciones son acordeon: solo una puede estar abierta a la
-    // vez. Se abre automaticamente la que contiene la pagina actual.
+    // Todas las secciones son acordeon (incluida "Principal"): solo una
+    // puede estar abierta a la vez. Se abre automaticamente la que
+    // contiene la pagina actual.
     const seccionesHtml = NAV_ITEMS.map((seccion, indice) => {
         const itemsVisibles = seccion.items.filter((item) => {
             if (rol === "profesor" && PAGINAS_SOLO_STAFF.includes(item.href)) return false;
@@ -95,7 +95,7 @@ function renderSidebar() {
         });
         if (!itemsVisibles.length) return "";
 
-        const esAcordeon = seccion.seccion !== "Principal";
+        const esAcordeon = true;
         const contieneActiva = itemsVisibles.some((item) => item.href === paginaActual);
         const abierta = !esAcordeon || contieneActiva;
 

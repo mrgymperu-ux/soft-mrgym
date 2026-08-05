@@ -17,7 +17,7 @@
         .panel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: start; }
         @media (max-width: 1100px) { .panel-grid { grid-template-columns: 1fr; } }
 
-        .panel-card { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); overflow: hidden; display: flex; flex-direction: column; }
+        .panel-card { background: var(--color-blanco); border-radius: var(--radio); box-shadow: var(--sombra); overflow: hidden; display: flex; flex-direction: column; max-height: var(--alto-panel-principal, 640px); }
         /* Alerta del reconocimiento facial por movil: cliente con deuda o
            membresia vencida detectado en la entrada, sin nadie supervisando
            el celular. El parpadeo debe notarse aunque el counter este
@@ -32,7 +32,8 @@
 
         .bi-input { width: 100%; padding: 10px 12px; border: 1px solid var(--color-borde); background: var(--color-fondo); color: var(--color-texto); border-radius: 8px; font-size: 0.88em; box-sizing: border-box; }
 
-        .bi-resultados { max-height: 340px; overflow-y: auto; }
+        #bi-resultados-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        .bi-resultados { flex: 1; min-height: 0; overflow-y: auto; }
         .bi-item { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
         .bi-item:hover { background: var(--color-fondo); }
         .bi-item-info { flex: 1; min-width: 0; }
@@ -71,11 +72,12 @@
         .ui-resumen-tabs { display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid var(--color-borde); background:var(--color-fondo); }
         .ui-resumen-tab { flex:1; border:1px solid var(--color-borde); border-radius:9px; padding:7px 8px; background:var(--color-blanco); color:var(--color-texto-secundario); font:inherit; font-size:var(--fuente-sm); cursor:pointer; white-space:nowrap; }
         .ui-resumen-tab.activo { border-color:var(--color-primario); background:var(--color-primario); color:#fff; }
+        #ui-lista { flex: 1; min-height: 0; overflow-y: auto; }
 
         .vr-cliente-badge { padding: 10px 18px; background: var(--color-primario-tinte); display: flex; align-items: center; justify-content: space-between; font-size: 0.8em; border-bottom: 1px solid var(--color-borde); }
         .vr-cliente-badge .nombre-cliente { color: var(--color-primario-tinte-texto); font-weight: 600; }
         .vr-cliente-badge.vacio { background: var(--color-fondo); color: var(--color-texto-secundario); }
-        .vr-lista-productos { max-height: 220px; overflow-y: auto; }
+        .vr-lista-productos { flex: 1; min-height: 90px; overflow-y: auto; }
         .vr-prod-item { display: flex; align-items: center; gap: 10px; padding: 8px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
         .vr-prod-item:hover { background: var(--color-fondo); }
         .vr-prod-item.agotado { opacity: 0.4; cursor: not-allowed; }
@@ -210,7 +212,7 @@
                     <button class="ui-resumen-tab" id="ui-tab-hoy" onclick="cambiarVistaIngresos('hoy')">Ingresos de hoy (—)</button>
                     <button class="ui-resumen-tab activo" id="ui-tab-sala" onclick="cambiarVistaIngresos('en_sala')">En sala (—)</button>
                 </div>
-                <div id="ui-lista" style="max-height:420px;overflow-y:auto;" aria-busy="true">
+                <div id="ui-lista" aria-busy="true">
                     <div class="carga-suave"><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div><div class="carga-suave-linea"></div></div>
                 </div>
             </div>
@@ -512,6 +514,24 @@
     }
 
     configurarPrincipalPorPermisos();
+
+    // Los 3 paneles (Busqueda inteligente, Control de sala, Venta rapida)
+    // se ajustan al alto disponible de la pantalla donde se abren, en vez
+    // de usar un alto fijo en pixeles que sobraba en monitores grandes y
+    // se quedaba corto en pantallas chicas.
+    let _alturaPanelesTimer = null;
+    function ajustarAlturaPanelesPrincipal() {
+        const grid = document.getElementById("panel-grid-principal");
+        if (!grid || getComputedStyle(grid).display === "none") return;
+        const top = grid.getBoundingClientRect().top;
+        const disponible = Math.max(360, Math.round(window.innerHeight - top - 24));
+        grid.style.setProperty("--alto-panel-principal", disponible + "px");
+    }
+    window.addEventListener("resize", () => {
+        clearTimeout(_alturaPanelesTimer);
+        _alturaPanelesTimer = setTimeout(ajustarAlturaPanelesPrincipal, 120);
+    });
+    ajustarAlturaPanelesPrincipal();
 
     function _panelFcTerminado(cliente) {
         // Se llama cuando termina el flujo compartido "Nuevo Cliente ->
