@@ -26,7 +26,7 @@
             0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0); }
             50% { box-shadow: 0 0 0 6px rgba(220,38,38,.6); }
         }
-        .panel-card.rf-alerta { animation: rf-alerta-parpadeo .6s ease-in-out 5; }
+        .panel-card.rf-alerta { animation: rf-alerta-parpadeo .6s ease-in-out infinite; }
         .panel-card-header { padding: 16px 18px; border-bottom: 1px solid var(--color-borde); font-weight: 600; font-size: 0.95em; }
         .panel-card-body { padding: 14px 18px; }
 
@@ -945,13 +945,18 @@
 
     // Aviso notorio cuando el reconocimiento facial por movil detecta un
     // cliente con deuda o membresia vencida (nadie supervisa el celular).
+    // El parpadeo queda encendido hasta que el counter lo atienda (hace
+    // clic en el panel), no se apaga solo.
     window.alertarCounterFacial = function () {
         const panel = document.getElementById("panel-clientes");
         if (!panel) return;
         panel.classList.remove("rf-alerta");
         void panel.offsetWidth; // reinicia la animacion si ya estaba corriendo
         panel.classList.add("rf-alerta");
-        window.setTimeout(() => panel.classList.remove("rf-alerta"), 3200);
+        if (!panel.dataset.rfAlertaListener) {
+            panel.dataset.rfAlertaListener = "1";
+            panel.addEventListener("click", () => panel.classList.remove("rf-alerta"));
+        }
     };
 
     async function onClienteEncontradoClick(clienteId, nombre) {
@@ -1648,6 +1653,36 @@
         cargarUltimosIngresos();
         cargarDashboard({forzar:true});
     });
+
+    // Escucha automatica del celular vinculado: si ya hay un movil de
+    // confianza enlazado no hace falta tocar el ojo cada vez que se abre
+    // Panel Principal.
+    async function autoActivarEscuchaMovilFacial() {
+        if (!ACCESO_PRINCIPAL.asistencias || getRol() !== "staff") return;
+        if (!localStorage.getItem("mrgym_camara_remota_token")) return;
+        try {
+            const config = await getConfiguracion();
+            if (config.reconocimiento_facial_modo !== "movil") return;
+            await asegurarReconocimientoFacial();
+            if (!estaEscuchandoMovilFacial()) await window.alternarReconocimientoFacial();
+        } catch (_) { /* silencioso: no debe interrumpir el resto del panel */ }
+        actualizarBotonEstacionFacial();
+    }
+    autoActivarEscuchaMovilFacial();
+
+    // Si el reconocimiento facial nos trajo aqui por una alerta de deuda o
+    // membresia vencida (ver reconocimiento-facial.js), muestra la ficha y
+    // el aviso parpadeante apenas carga el panel.
+    (function atenderAlertaFacialSiCorresponde() {
+        const rfClienteId = new URLSearchParams(window.location.search).get("rf_cliente");
+        if (!rfClienteId) return;
+        history.replaceState(null, "", window.location.pathname);
+        requestAnimationFrame(() => {
+            if (typeof mostrarFichaParaAsistencia === "function") mostrarFichaParaAsistencia(Number(rfClienteId));
+            document.getElementById("panel-clientes")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (typeof window.alertarCounterFacial === "function") window.alertarCounterFacial();
+        });
+    })();
 </script>
 </body>
 </html>

@@ -192,16 +192,21 @@
             else if (mensaje.tipo === "asistencia_resultado") {
                 publicarIngresoFacial(mensaje.cliente_id, mensaje.nombre, mensaje.mensaje);
                 if (mensaje.ok) { if (typeof window.showSuccess === "function") window.showSuccess(mensaje.mensaje); }
-                else {
-                    if (typeof window.showError === "function") window.showError(mensaje.mensaje);
+                else if (mensaje.cliente_id && typeof window.mostrarFichaParaAsistencia === "function") {
                     // Deuda vencida, membresia vencida, etc.: salta al cliente en
                     // la busqueda inteligente y avisa al counter con un parpadeo
-                    // notorio, ya que el celular esta desatendido en la entrada.
-                    if (mensaje.cliente_id && typeof window.mostrarFichaParaAsistencia === "function") {
-                        window.mostrarFichaParaAsistencia(mensaje.cliente_id);
-                        document.getElementById("panel-clientes")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }
+                    // notorio (sin toast generico), ya que el celular esta
+                    // desatendido en la entrada.
+                    window.mostrarFichaParaAsistencia(mensaje.cliente_id);
+                    document.getElementById("panel-clientes")?.scrollIntoView({ behavior: "smooth", block: "start" });
                     if (typeof window.alertarCounterFacial === "function") window.alertarCounterFacial();
+                } else if (mensaje.cliente_id) {
+                    // El counter no esta en Panel Principal (no existen las
+                    // funciones de arriba en esta pagina): lo llevamos ahi
+                    // para que vea la ficha completa y el aviso parpadeante.
+                    window.location.href = `principal.html?rf_cliente=${encodeURIComponent(mensaje.cliente_id)}`;
+                } else if (typeof window.showError === "function") {
+                    window.showError(mensaje.mensaje);
                 }
                 const actualizaciones = [];
                 if (typeof window.cargarUltimosIngresos === "function") actualizaciones.push(Promise.resolve().then(() => window.cargarUltimosIngresos()));

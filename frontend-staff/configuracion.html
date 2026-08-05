@@ -112,7 +112,7 @@
                 <div class="form-group">
                     <label>Fuente de cámara</label>
                     <select id="c-reconocimiento-facial" onchange="actualizarAyudaReconocimientoFacial()">
-                        <option value="movil">Móvil por QR (cámara frontal)</option>
+                        <option value="movil">Tablet o Móvil por QR (cámara frontal)</option>
                         <option value="webcam_1080p">Webcam conectada al PC</option>
                     </select>
                 </div>
@@ -281,7 +281,7 @@
         const modo = document.getElementById("c-reconocimiento-facial").value;
         document.getElementById("c-reconocimiento-facial").disabled = !activo;
         const textos = {
-            movil: "Enlaza una vez el móvil mediante el QR inferior. Después funcionará como cámara de confianza, sin iniciar sesión.",
+            movil: "Enlaza una vez la tablet o el móvil mediante el QR inferior. Después funcionará como cámara de confianza, sin iniciar sesión.",
             webcam_1080p: "Usa directamente una webcam conectada a esta computadora.",
         };
         document.getElementById("ayuda-reconocimiento-facial").textContent = activo ? textos[modo] : "El reconocimiento facial está desactivado.";
