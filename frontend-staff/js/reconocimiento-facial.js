@@ -96,10 +96,15 @@
     async function cargarModoDispositivo() {
         const config = await window.getConfiguracion();
         modoDispositivo = config.reconocimiento_facial_modo || "desactivado";
-        umbralRostro = 0.65;
+        // Con mesh/iris/antispoof apagados (por rendimiento) la unica barrera
+        // real contra falsos positivos (una mano, un objeto redondeado) es la
+        // confianza del detector de rostro. Umbrales bajos dejaban pasar
+        // manos; un rostro real bien iluminado de frente supera 0.8 sin
+        // problema.
+        umbralRostro = 0.8;
         anchoRostroMinimo = 120;
         intervaloMs = 120;
-        CONFIG.face.detector.minConfidence = 0.55;
+        CONFIG.face.detector.minConfidence = 0.75;
         return modoDispositivo;
     }
 

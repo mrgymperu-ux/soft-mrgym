@@ -47,7 +47,11 @@ const WS_BASE = (esLocal ? "ws" : "wss") + "://" + (esLocal ? "localhost:8000" :
 const MODELO_VERSION = "human-3.3.6-faceres";
 const UMBRAL_COINCIDENCIA = 0.55;
 const CAPTURAS_REGISTRO = 3;
-const UMBRAL_ROSTRO = 0.55;
+// Con mesh/iris/antispoof apagados (por rendimiento) la unica barrera real
+// contra falsos positivos (una mano, un objeto redondeado) es la confianza
+// del detector de rostro. 0.45 dejaba pasar manos; un rostro real bien
+// iluminado de frente supera 0.8 sin problema.
+const UMBRAL_ROSTRO = 0.8;
 const ANCHO_ROSTRO_MINIMO = 85;
 const INTERVALO_MS = 150;
 const NUM_TICKS = 60;
@@ -59,7 +63,7 @@ const CONFIG = {
     filter: { enabled: false },
     face: {
         enabled: true,
-        detector: { rotation: false, maxDetected: 1, minConfidence: 0.45 },
+        detector: { rotation: false, maxDetected: 1, minConfidence: 0.75 },
         mesh: { enabled: false },
         iris: { enabled: false },
         description: { enabled: true },
