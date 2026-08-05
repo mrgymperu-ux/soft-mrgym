@@ -77,13 +77,13 @@
         .vr-cliente-badge { padding: 10px 18px; background: var(--color-primario-tinte); display: flex; align-items: center; justify-content: space-between; font-size: 0.8em; border-bottom: 1px solid var(--color-borde); }
         .vr-cliente-badge .nombre-cliente { color: var(--color-primario-tinte-texto); font-weight: 600; }
         .vr-cliente-badge.vacio { background: var(--color-fondo); color: var(--color-texto-secundario); }
-        .vr-lista-productos { flex: 1; min-height: 90px; overflow-y: auto; }
-        .vr-prod-item { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--color-borde); cursor: pointer; }
-        .vr-prod-item:hover { background: var(--color-fondo); }
+        .vr-lista-productos { flex: 1; min-height: 90px; overflow-y: auto; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 12px 18px; align-content: start; }
+        .vr-prod-item { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 10px; border: 1px solid var(--color-borde); border-radius: 12px; cursor: pointer; background: var(--color-blanco); transition: border-color 0.15s, background 0.15s; }
+        .vr-prod-item:hover { border-color: var(--color-primario); background: var(--color-fondo); }
         .vr-prod-item.agotado { opacity: 0.4; cursor: not-allowed; }
-        .vr-prod-icono { width: 60px; height: 60px; border-radius: 10px; background: var(--color-fondo); display: flex; align-items: center; justify-content: center; font-size: 1.8em; flex-shrink: 0; }
-        .vr-prod-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-        .vr-prod-nombre { font-size: 0.85em; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .vr-prod-icono { width: 66px; height: 66px; border-radius: 10px; background: var(--color-fondo); display: flex; align-items: center; justify-content: center; font-size: 2em; flex-shrink: 0; }
+        .vr-prod-info { min-width: 0; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+        .vr-prod-nombre { font-size: 0.8em; font-weight: 600; min-width: 0; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; white-space: normal; word-break: break-word; }
         .vr-prod-precio { font-size: 0.8em; font-weight: 700; color: var(--color-primario); }
         .vr-carrito { border-top: 1px solid var(--color-borde); }
         .vr-carrito-item { display: flex; align-items: center; gap: 6px; padding: 6px 18px; font-size: 0.8em; }
