@@ -8,7 +8,7 @@
     "use strict";
 
     const MODELO_VERSION = "human-3.3.6-faceres";
-    const UMBRAL_COINCIDENCIA = 0.55;
+    const UMBRAL_COINCIDENCIA = 0.62;
     const CAPTURAS_REGISTRO = 3;
     const CLAVE_ESTACION_ACTIVA = "mrgym_rf_estacion_activa";
     const CLAVE_EVENTO_RECONOCIDO = "mrgym_rf_evento";
@@ -27,7 +27,11 @@
             // La webcam del counter permanece vertical; evitar buscar rotaciones
             // reduce trabajo sin afectar el uso normal de frente.
             detector: { rotation: false, maxDetected: 1, minConfidence: 0.55 },
-            mesh: { enabled: false },
+            // El mesh (468 puntos) es liviano y permite recortar/alinear el
+            // rostro antes de calcular el descriptor; sin el, el recorte usa
+            // solo el cuadro del detector (sin rotacion ni encuadre fino) y
+            // el descriptor sale mas ruidoso, confundiendo caras distintas.
+            mesh: { enabled: true },
             iris: { enabled: false },
             description: { enabled: true },
             antispoof: { enabled: false },
@@ -359,7 +363,7 @@
                 segundo = { item, similitud: valorSimilitud };
             }
         }
-        const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.03;
+        const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.05;
 
         if (!mejor || mejor.similitud < UMBRAL_COINCIDENCIA || !margenSeguro) {
             ultimoCandidato = null;
@@ -372,7 +376,7 @@
             ultimoCandidato = mejor.item.cliente_id;
             repeticionesCandidato = 1;
         }
-        if (repeticionesCandidato < 2) {
+        if (repeticionesCandidato < 3) {
             estado("Verificando identidad...");
             return;
         }

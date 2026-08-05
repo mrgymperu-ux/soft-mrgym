@@ -45,7 +45,7 @@ const API_BASE = esLocal ? "http://localhost:8000" : `${location.origin}/api`;
 const WS_BASE = (esLocal ? "ws" : "wss") + "://" + (esLocal ? "localhost:8000" : `${location.host}/api`);
 
 const MODELO_VERSION = "human-3.3.6-faceres";
-const UMBRAL_COINCIDENCIA = 0.55;
+const UMBRAL_COINCIDENCIA = 0.62;
 const CAPTURAS_REGISTRO = 3;
 // Con mesh/iris/antispoof apagados (por rendimiento) la unica barrera real
 // contra falsos positivos (una mano, un objeto redondeado) es la confianza
@@ -64,7 +64,11 @@ const CONFIG = {
     face: {
         enabled: true,
         detector: { rotation: false, maxDetected: 1, minConfidence: 0.75 },
-        mesh: { enabled: false },
+        // El mesh (468 puntos) es liviano y permite recortar/alinear el
+        // rostro antes de calcular el descriptor; sin el, el recorte usa
+        // solo el cuadro del detector (sin rotacion ni encuadre fino) y el
+        // descriptor sale mas ruidoso, confundiendo caras distintas.
+        mesh: { enabled: true },
         iris: { enabled: false },
         description: { enabled: true },
         antispoof: { enabled: false },
@@ -233,7 +237,7 @@ async function procesarReconocimiento(cara) {
         if (!mejor || s > mejor.similitud) { segundo = mejor; mejor = { item, similitud: s }; }
         else if (!segundo || s > segundo.similitud) segundo = { item, similitud: s };
     }
-    const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.03;
+    const margenSeguro = !mejor || !segundo || mejor.similitud - segundo.similitud >= 0.05;
     if (!mejor || mejor.similitud < UMBRAL_COINCIDENCIA || !margenSeguro) {
         ultimoCandidato = null;
         repeticionesCandidato = 0;
@@ -242,7 +246,7 @@ async function procesarReconocimiento(cara) {
     }
     if (ultimoCandidato === mejor.item.cliente_id) repeticionesCandidato += 1;
     else { ultimoCandidato = mejor.item.cliente_id; repeticionesCandidato = 1; }
-    if (repeticionesCandidato < 2) {
+    if (repeticionesCandidato < 3) {
         actualizarGuia(60, "Rostro alineado. Mantente quieto.", "alineado");
         return;
     }
