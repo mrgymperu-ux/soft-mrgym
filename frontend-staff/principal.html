@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel - Soft-Gym</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260723-3">
+    <link rel="stylesheet" href="css/styles.css?v=20260805-1">
     <link rel="stylesheet" href="css/reconocimiento-facial.css?v=20260724-3">
     <link rel="preload" href="vendor/human/human.js" as="script">
     <link rel="prefetch" href="vendor/human/models/faceres.bin">
@@ -115,6 +115,26 @@
         .rf-eye-button .rf-dot { position:absolute; right:1px; bottom:1px; width:5px; height:5px; border-radius:50%; background:#98A0A6; border:1.5px solid var(--color-blanco); }
         .rf-eye-button.activo { color:#19A463; border-color:#19A463; background:#EAF9F1; box-shadow:0 0 0 3px rgba(25,164,99,.12); }
         .rf-eye-button.activo .rf-dot { background:#19A463; }
+
+        /* En celular las tarjetas informativas ocupan mucho alto util;
+           se ocultan y el encabezado (titulo + hora) queda fijo arriba
+           para orientarse sin perder espacio de los 3 paneles. */
+        @media (max-width: 768px) {
+            #panel-stats { display: none !important; }
+            .header {
+                position: sticky; top: 0; z-index: 50; background: var(--color-fondo);
+                margin: -14px -12px 10px; padding: 10px 12px; border-bottom: 1px solid var(--color-borde);
+            }
+            /* En celular los 3 paneles van uno debajo del otro y la
+               pagina entera scrollea, asi que no tiene sentido encerrar
+               cada uno a lo que quede de pantalla (eso apretaba a Venta
+               rapida a 1-2 filas de producto). Cada panel crece a su
+               alto natural y solo su lista interna tiene scroll propio,
+               con al menos 3 filas de producto visibles antes de necesitarlo. */
+            .panel-card { max-height: none; }
+            #bi-resultados-wrap { flex: none; }
+            .bi-resultados, #ui-lista, .vr-lista-productos { flex: none; max-height: 340px; }
+        }
     </style>
 </head>
 <body>
@@ -393,7 +413,7 @@
 </div>
 
 <script src="js/api.js?v=20260723-3"></script>
-<script src="js/sidebar.js"></script>
+<script src="js/sidebar.js?v=20260805-1"></script>
 <script src="js/flujo-cliente.js?v=20260723-3"></script>
 <script>
     function cerrarModal(id) { document.getElementById(id).classList.remove("active"); }

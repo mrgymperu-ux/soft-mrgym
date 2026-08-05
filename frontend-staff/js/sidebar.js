@@ -121,6 +121,8 @@ function renderSidebar() {
     }).join("");
 
     contenedor.innerHTML =
+        '<button type="button" class="btn-toggle-sidebar-movil" onclick="toggleSidebarMovil()" aria-label="Abrir menu" title="Menu">☰</button>' +
+        '<div class="sidebar-backdrop-movil" onclick="toggleSidebarMovil(false)"></div>' +
         '<aside class="sidebar">' +
         '<div class="sidebar-header">' +
         '<div class="logo"><span class="logo-brand-icon">' + logoInicial + '</span><span class="logo-text"></span></div>' +
@@ -139,6 +141,18 @@ function renderSidebar() {
 
     cargarMarcaSidebar();
 }
+
+// Drawer del menu en movil: el sidebar queda fuera de pantalla (ver
+// media query en styles.css) y se despliega con la pestaña fija abajo
+// a la izquierda, en vez de robarle alto util a las paginas.
+window.toggleSidebarMovil = function (forzar) {
+    const sidebar = document.querySelector("#sidebar-container .sidebar");
+    const backdrop = document.querySelector("#sidebar-container .sidebar-backdrop-movil");
+    if (!sidebar) return;
+    const abrir = typeof forzar === "boolean" ? forzar : !sidebar.classList.contains("abierta-movil");
+    sidebar.classList.toggle("abierta-movil", abrir);
+    if (backdrop) backdrop.classList.toggle("activo", abrir);
+};
 
 async function cargarMarcaSidebar() {
     try {
