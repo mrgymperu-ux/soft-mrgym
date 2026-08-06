@@ -28,7 +28,9 @@ import logging
 import json
 import secrets
 import hashlib
+import hmac
 import urllib.request
+import urllib.error
 import unicodedata
 from urllib.parse import parse_qs, urlparse
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -37,7 +39,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, File, Request, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, Response, JSONResponse
+from fastapi.responses import StreamingResponse, Response, JSONResponse, RedirectResponse
 from sqlalchemy import case, func, text, or_, literal, union_all
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -11687,30 +11689,22 @@ def actualizar_suscripcion_saas(
     return _serializar_suscripcion(gimnasio)
 
 
-@app.post("/saas/gimnasios/{gimnasio_id}/suscripcion/renovar", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
-def renovar_suscripcion_saas(
-    gimnasio_id: int,
-    datos: schemas.RenovacionSaasRequest,
-    db: Session = Depends(get_db),
-    usuario: models.Usuario = Depends(auth.requiere_superadmin),
-):
-    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
-    if not gimnasio:
-        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
-    plan_id = datos.plan_id or gimnasio.plan_id
-    plan = db.query(models.PlanSaas).filter(
-        models.PlanSaas.id == plan_id, models.PlanSaas.activo == True
-    ).first()
-    if not plan:
-        raise HTTPException(status_code=400, detail="Selecciona un plan SaaS activo")
-
+def _registrar_pago_suscripcion(
+    db: Session, gimnasio: models.Gimnasio, plan: models.PlanSaas, meses: int,
+    monto: float, moneda: str, metodo_pago: str, referencia: Optional[str] = None,
+    fecha_pago: Optional[datetime] = None, registrado_por_id: Optional[int] = None,
+    notas: Optional[str] = None,
+) -> models.PagoSaas:
+    """Aplica un pago de suscripcion SaaS ya confirmado: extiende el
+    periodo de acceso y deja el registro contable. Usado tanto por el
+    superadmin (pago manual/POS) como por la IPN de Izipay (pago online)."""
     suscripcion = gimnasio.suscripcion_saas
     hoy = hoy_lima()
     if suscripcion and suscripcion.fecha_fin_periodo >= hoy and _estado_suscripcion(suscripcion) not in {"cancelada"}:
         periodo_inicio = suscripcion.fecha_fin_periodo + timedelta(days=1)
     else:
         periodo_inicio = hoy
-    periodo_fin = _sumar_meses(periodo_inicio, datos.meses) - timedelta(days=1)
+    periodo_fin = _sumar_meses(periodo_inicio, meses) - timedelta(days=1)
 
     if not suscripcion:
         suscripcion = models.SuscripcionSaas(
@@ -11736,20 +11730,231 @@ def renovar_suscripcion_saas(
         gimnasio_id=gimnasio.id,
         suscripcion_id=suscripcion.id,
         plan_id=plan.id,
-        monto=datos.monto,
-        moneda=datos.moneda,
-        metodo_pago=datos.metodo_pago,
-        referencia=datos.referencia,
-        fecha_pago=datos.fecha_pago or ahora_lima(),
+        monto=monto,
+        moneda=moneda,
+        metodo_pago=metodo_pago,
+        referencia=referencia,
+        fecha_pago=fecha_pago or ahora_lima(),
         periodo_inicio=periodo_inicio,
         periodo_fin=periodo_fin,
-        registrado_por_id=usuario.id,
-        notas=datos.notas,
+        registrado_por_id=registrado_por_id,
+        notas=notas,
     )
     db.add(pago)
+    db.flush()
+    return pago
+
+
+@app.post("/saas/gimnasios/{gimnasio_id}/suscripcion/renovar", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
+def renovar_suscripcion_saas(
+    gimnasio_id: int,
+    datos: schemas.RenovacionSaasRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    plan_id = datos.plan_id or gimnasio.plan_id
+    plan = db.query(models.PlanSaas).filter(
+        models.PlanSaas.id == plan_id, models.PlanSaas.activo == True
+    ).first()
+    if not plan:
+        raise HTTPException(status_code=400, detail="Selecciona un plan SaaS activo")
+
+    _registrar_pago_suscripcion(
+        db, gimnasio, plan, datos.meses, datos.monto, datos.moneda, datos.metodo_pago,
+        referencia=datos.referencia, fecha_pago=datos.fecha_pago, registrado_por_id=usuario.id,
+        notas=datos.notas,
+    )
     db.commit()
     db.refresh(gimnasio)
     return _serializar_suscripcion(gimnasio)
+
+
+# ========================================================
+# Pago online de la suscripcion SaaS via Izipay (checkout incrustado)
+# ========================================================
+# Credenciales por variables de entorno -- distintas para modo TEST y
+# PRODUCTION en Izipay; en cada ambiente (local/Render) se configuran
+# las que correspondan.
+_IZIPAY_API_BASE = os.getenv("IZIPAY_API_BASE", "https://api.micuentaweb.pe/api-payment/V4")
+_IZIPAY_SHOP_ID = os.getenv("IZIPAY_SHOP_ID")
+_IZIPAY_PASSWORD = os.getenv("IZIPAY_PASSWORD")
+_IZIPAY_PUBLIC_KEY = os.getenv("IZIPAY_PUBLIC_KEY")
+_IZIPAY_HMAC_KEY = os.getenv("IZIPAY_HMAC_KEY")
+
+
+def _izipay_configurado() -> bool:
+    return bool(_IZIPAY_SHOP_ID and _IZIPAY_PASSWORD and _IZIPAY_PUBLIC_KEY)
+
+
+def _izipay_llamar_api(ruta: str, payload: dict) -> dict:
+    """POST autenticado (Basic usuario:password) a la API REST de Izipay."""
+    credenciales = base64.b64encode(f"{_IZIPAY_SHOP_ID}:{_IZIPAY_PASSWORD}".encode()).decode()
+    peticion = urllib.request.Request(
+        f"{_IZIPAY_API_BASE}{ruta}",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Basic {credenciales}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(peticion, timeout=20) as respuesta:
+            return json.loads(respuesta.read().decode())
+    except urllib.error.HTTPError as error:
+        detalle = error.read().decode(errors="ignore")
+        logging.error(f"Izipay API error {error.code}: {detalle}")
+        raise HTTPException(status_code=502, detail="No se pudo conectar con la pasarela de pago")
+
+
+@app.post("/suscripcion/pago/izipay/crear", response_model=schemas.IzipayCrearPagoResponse, tags=["SaaS"])
+def crear_pago_izipay_suscripcion(
+    datos: schemas.IzipayCrearPagoRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    if not _izipay_configurado():
+        raise HTTPException(status_code=503, detail="El pago online todavia no esta configurado")
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == get_gid(usuario)).first()
+    if not gimnasio:
+        raise HTTPException(status_code=404, detail="Gimnasio no encontrado")
+    plan_id = datos.plan_id or gimnasio.plan_id
+    plan = db.query(models.PlanSaas).filter(
+        models.PlanSaas.id == plan_id, models.PlanSaas.activo == True
+    ).first()
+    if not plan or not plan.precio_mensual:
+        raise HTTPException(status_code=400, detail="El plan actual no tiene un precio configurado para pago online")
+
+    monto = round(float(plan.precio_mensual) * datos.meses, 2)
+    moneda = "PEN"
+    orden_id = f"saas-{gimnasio.id}-{uuid.uuid4().hex[:12]}"
+
+    respuesta = _izipay_llamar_api("/Charge/CreatePayment", {
+        "amount": int(round(monto * 100)),
+        "currency": moneda,
+        "orderId": orden_id,
+        "customer": {"email": gimnasio.email_contacto or usuario.email or "soporte@softgym.pe"},
+    })
+    if respuesta.get("status") != "SUCCESS":
+        logging.error(f"Izipay CreatePayment fallo: {respuesta}")
+        raise HTTPException(status_code=502, detail="La pasarela de pago no acepto la solicitud")
+    form_token = respuesta.get("answer", {}).get("formToken")
+    if not form_token:
+        raise HTTPException(status_code=502, detail="La pasarela de pago no devolvio un token valido")
+
+    intento = models.IntentoPagoIzipay(
+        orden_id=orden_id, gimnasio_id=gimnasio.id, plan_id=plan.id,
+        meses=datos.meses, monto=monto, moneda=moneda,
+    )
+    db.add(intento)
+    db.commit()
+
+    return schemas.IzipayCrearPagoResponse(
+        form_token=form_token, public_key=_IZIPAY_PUBLIC_KEY, monto=monto, moneda=moneda,
+    )
+
+
+def _izipay_verificar_firma(kr_answer_crudo: str, kr_hash: str, kr_hash_algorithm: str, clave: str) -> bool:
+    if kr_hash_algorithm != "sha256_hmac" or not clave or not kr_hash:
+        return False
+    calculado = hmac.new(clave.encode(), kr_answer_crudo.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(calculado, kr_hash)
+
+
+def _izipay_procesar_confirmacion(db: Session, respuesta: dict) -> str:
+    """Aplica el resultado de un pago Izipay ya verificado (firma OK).
+    Devuelve un texto corto de resultado, para logging/depuracion."""
+    detalles = respuesta.get("orderDetails", {})
+    orden_id = detalles.get("orderId")
+    estado_orden = respuesta.get("orderStatus")
+    if not orden_id:
+        return "sin orderId en la respuesta"
+
+    intento = db.query(models.IntentoPagoIzipay).filter(models.IntentoPagoIzipay.orden_id == orden_id).first()
+    if not intento:
+        return f"orden {orden_id} no encontrada"
+    if intento.estado != "pendiente":
+        return f"orden {orden_id} ya procesada ({intento.estado})"
+
+    if estado_orden != "PAID":
+        intento.estado = "fallido"
+        db.commit()
+        return f"orden {orden_id} no pagada (status={estado_orden})"
+
+    monto_recibido = round((detalles.get("orderEffectiveAmount") or detalles.get("orderTotalAmount") or 0) / 100, 2)
+    moneda_recibida = detalles.get("orderCurrency")
+    if monto_recibido != float(intento.monto) or moneda_recibida != intento.moneda:
+        logging.error(f"Izipay: monto/moneda no coincide para orden {orden_id}: recibido {monto_recibido} {moneda_recibida}, esperado {intento.monto} {intento.moneda}")
+        return f"orden {orden_id}: monto no coincide"
+
+    gimnasio = db.query(models.Gimnasio).filter(models.Gimnasio.id == intento.gimnasio_id).first()
+    plan = db.query(models.PlanSaas).filter(models.PlanSaas.id == intento.plan_id).first()
+    if not gimnasio or not plan:
+        return f"orden {orden_id}: gimnasio o plan ya no existe"
+
+    pago = _registrar_pago_suscripcion(
+        db, gimnasio, plan, intento.meses, float(intento.monto), intento.moneda, "izipay",
+        referencia=orden_id, registrado_por_id=None,
+        notas="Pago online via Izipay (checkout incrustado)",
+    )
+    intento.estado = "pagado"
+    intento.confirmado_en = ahora_lima()
+    intento.pago_id = pago.id
+    db.commit()
+    return f"orden {orden_id}: pago aplicado correctamente"
+
+
+@app.post("/pagos/izipay/notificacion", tags=["SaaS"])
+async def notificacion_izipay(request: Request, db: Session = Depends(get_db)):
+    """IPN (Instant Payment Notification): Izipay llama a esta URL server-a-server
+    para confirmar el resultado de un pago, sin depender de que el navegador
+    del comprador siga abierto. Debe responder 200 para que Izipay no reintente."""
+    datos = await request.form()
+    kr_answer = datos.get("kr-answer", "")
+    kr_hash = datos.get("kr-hash", "")
+    kr_hash_algorithm = datos.get("kr-hash-algorithm", "")
+
+    if not _izipay_verificar_firma(kr_answer, kr_hash, kr_hash_algorithm, _IZIPAY_PASSWORD):
+        logging.warning("Izipay IPN: firma invalida")
+        raise HTTPException(status_code=400, detail="Firma invalida")
+
+    try:
+        respuesta = json.loads(kr_answer)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="kr-answer invalido")
+
+    resultado = _izipay_procesar_confirmacion(db, respuesta)
+    logging.info(f"Izipay IPN: {resultado}")
+    return {"status": "ok"}
+
+
+@app.api_route("/pagos/izipay/retorno", methods=["GET", "POST"], tags=["SaaS"])
+async def retorno_izipay(request: Request, db: Session = Depends(get_db)):
+    """El comprador vuelve aqui despues de pagar (kr-post-url-success). Solo
+    da una respuesta visual rapida -- quien aplica el pago de verdad es la
+    IPN (server a server), que puede llegar antes o despues de este retorno."""
+    if request.method == "POST":
+        datos = await request.form()
+    else:
+        datos = request.query_params
+    kr_answer = datos.get("kr-answer", "")
+    kr_hash = datos.get("kr-hash", "")
+    kr_hash_algorithm = datos.get("kr-hash-algorithm", "")
+
+    resultado = "error"
+    if _izipay_verificar_firma(kr_answer, kr_hash, kr_hash_algorithm, _IZIPAY_HMAC_KEY):
+        try:
+            respuesta = json.loads(kr_answer)
+            if respuesta.get("orderStatus") == "PAID":
+                resultado = "exitoso"
+            else:
+                resultado = "rechazado"
+        except (TypeError, ValueError):
+            pass
+
+    base_url = os.getenv("APP_BASE_URL", "http://localhost:3000").rstrip("/")
+    destino = f"{base_url}/configuracion.html?pago_izipay={resultado}"
+    return RedirectResponse(url=destino, status_code=303)
 
 
 @app.delete("/saas/gimnasios/{gimnasio_id}", tags=["SaaS"])

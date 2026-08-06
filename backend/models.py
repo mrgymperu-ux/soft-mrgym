@@ -202,6 +202,32 @@ class PagoSaas(Base):
     plan = relationship("PlanSaas")
 
 
+class IntentoPagoIzipay(Base):
+    """
+    Intento de pago de suscripcion SaaS via Izipay (checkout incrustado).
+    Se crea "pendiente" al pedir el formToken y se confirma via la IPN de
+    Izipay (server a server); asi la suscripcion solo avanza cuando el
+    pago fue realmente aprobado, no solo intentado.
+    """
+    __tablename__ = "intentos_pago_izipay"
+
+    id = Column(Integer, primary_key=True, index=True)
+    orden_id = Column(String, unique=True, nullable=False, index=True)
+    gimnasio_id = Column(Integer, ForeignKey("gimnasios.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("planes_saas.id"), nullable=False)
+    meses = Column(Integer, nullable=False, default=1)
+    monto = Column(Numeric(12, 2, asdecimal=False), nullable=False)
+    moneda = Column(String, nullable=False, default="PEN")
+    estado = Column(String, nullable=False, default="pendiente")  # pendiente | pagado | fallido
+    creado_en = Column(DateTime, nullable=False, default=ahora_lima)
+    confirmado_en = Column(DateTime, nullable=True)
+    pago_id = Column(Integer, ForeignKey("pagos_saas.id"), nullable=True)
+
+    gimnasio = relationship("Gimnasio")
+    plan = relationship("PlanSaas")
+    pago = relationship("PagoSaas")
+
+
 class WhatsAppConfiguracion(Base):
     """Configuracion independiente del modulo WhatsApp de cada gimnasio."""
     __tablename__ = "whatsapp_configuraciones"

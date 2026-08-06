@@ -230,6 +230,18 @@
     </main>
 </div>
 
+<div class="modal" id="modal-pago-izipay">
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Pagar suscripcion</h3>
+            <button class="modal-close" onclick="cerrarModalPagoIzipay()">&times;</button>
+        </div>
+        <p style="font-size:.85em;color:var(--color-texto-secundario);margin:0 0 4px;">Total a pagar</p>
+        <p style="font-size:1.3em;font-weight:700;margin:0 0 16px;" id="izipay-monto">—</p>
+        <div id="izipay-form-container"></div>
+    </div>
+</div>
+
 <script src="js/api.js"></script>
 <script src="js/sidebar.js?v=20260805-1"></script>
 <script>
@@ -579,11 +591,61 @@
                     <div><span style="color:var(--color-texto-secundario);">Gracia hasta</span><br><strong>${fecha(s.fecha_fin_gracia)}</strong></div>
                 </div>
                 ${pagos ? `<div class="table-container"><table class="table"><thead><tr><th>Fecha</th><th>Monto</th><th>Metodo</th></tr></thead><tbody>${pagos}</tbody></table></div>` : '<p style="font-size:.82em;color:var(--color-texto-secundario);">Aun no hay pagos SaaS registrados.</p>'}
-                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">La renovacion la registra el administrador de la plataforma. La pasarela automatica se integrara posteriormente.</p>`;
+                <button class="btn btn-primary" type="button" style="margin-top:14px;" onclick="abrirPagoIzipay()">💳 Pagar suscripcion online</button>
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Tambien puedes coordinar la renovacion con el administrador de la plataforma.</p>`;
         } catch (e) {
             document.getElementById("suscripcion-gym").innerHTML = `<p style="color:var(--color-error);font-size:.85em;">${e.message}</p>`;
         }
     }
+
+    // ====== Pago online de la suscripcion (Izipay, checkout incrustado) ======
+    async function abrirPagoIzipay() {
+        try {
+            const datos = await apiFetch("/suscripcion/pago/izipay/crear", {
+                method: "POST",
+                body: JSON.stringify({ meses: 1 }),
+            });
+            document.getElementById("izipay-monto").textContent = `${datos.moneda} ${datos.monto.toFixed(2)}`;
+            document.getElementById("modal-pago-izipay").classList.add("active");
+            montarFormularioIzipay(datos.form_token, datos.public_key);
+        } catch (e) {
+            showError(e.message);
+        }
+    }
+
+    function montarFormularioIzipay(formToken, publicKey) {
+        const contenedor = document.getElementById("izipay-form-container");
+        contenedor.innerHTML = `<div class="kr-smart-form" kr-form-token="${formToken}"></div>`;
+        // Se recarga el SDK cada vez que se abre el modal: mas simple y
+        // confiable que depender de una API interna para actualizar el
+        // formToken de un script ya cargado.
+        document.querySelectorAll("script[data-izipay-sdk]").forEach(s => s.remove());
+        const script = document.createElement("script");
+        script.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js";
+        script.setAttribute("kr-public-key", publicKey);
+        script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
+        script.dataset.izipaySdk = "1";
+        document.head.appendChild(script);
+    }
+
+    function cerrarModalPagoIzipay() {
+        document.getElementById("modal-pago-izipay").classList.remove("active");
+        document.getElementById("izipay-form-container").innerHTML = "";
+    }
+
+    (function verificarRetornoIzipay() {
+        const resultado = new URLSearchParams(window.location.search).get("pago_izipay");
+        if (!resultado) return;
+        window.history.replaceState({}, "", window.location.pathname);
+        if (resultado === "exitoso") {
+            showSuccess("¡Pago recibido! Actualizando tu suscripcion...");
+            setTimeout(cargarSuscripcionGym, 2500);
+        } else if (resultado === "rechazado") {
+            showError("El pago no se pudo completar. Intenta nuevamente.");
+        } else {
+            showError("No se pudo confirmar el resultado del pago.");
+        }
+    })();
 
     /* ====== QR para compartir portal de socios ====== */
     function actualizarEstadoCounter() {

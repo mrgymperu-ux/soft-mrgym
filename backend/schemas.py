@@ -306,6 +306,18 @@ class RenovacionSaasRequest(BaseModel):
     notas: Optional[str] = Field(default=None, max_length=500)
 
 
+class IzipayCrearPagoRequest(BaseModel):
+    meses: int = Field(default=1, ge=1, le=24)
+    plan_id: Optional[int] = None
+
+
+class IzipayCrearPagoResponse(BaseModel):
+    form_token: str
+    public_key: str
+    monto: float
+    moneda: str
+
+
 class SuscripcionSaasUpdate(BaseModel):
     plan_id: Optional[int] = None
     estado: Optional[str] = Field(default=None, pattern="^(prueba|activa|gracia|vencida|suspendida|cancelada)$")

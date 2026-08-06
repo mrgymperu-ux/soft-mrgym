@@ -622,10 +622,23 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 - Reconciliar manualmente el descuadre histórico de S/ 89 de la base SQLite antes de usar el libro de pagos como fuente contable definitiva
 - Bloquear secciones del menú según plan (frontend)
 - Flujo para que el dueño del gym upgrade su plan
-- Integrar Izipay Online para suscripciones SaaS: primera etapa con Link de Pago/IPN y renovación confirmada por webhook; automatizar cobro con token solo después de que Izipay habilite y confirme recurrencia/MIT para la cuenta. El POS físico se mantiene como cobro presencial con renovación registrada por superadmin
 - Notificaciones (WhatsApp/email a clientes por vencimiento)
 - Dashboard analytics avanzado para superadmin
 - Fotos persistentes (actualmente se pierden al redesplegar; migrar a Supabase Storage o Cloudflare R2)
+- Izipay: falta que el usuario configure las credenciales reales (TEST y PRODUCTION) y pruebe un pago real de punta a punta; ver sección "Pago online de la suscripción SaaS (Izipay)" más abajo
+
+### ✅ Pago online de la suscripción SaaS con Izipay (checkout incrustado)
+- Integración del "Formulario incrustado smartForm" de Izipay (Mi Cuenta Web / Lyra) para que el propio administrador del gimnasio pague/renueve su suscripción SaaS desde `configuracion.html` sin depender del superadmin
+- Backend (`backend/main.py`):
+  - `POST /suscripcion/pago/izipay/crear` (admin del gym): calcula el monto (`plan.precio_mensual * meses`), llama a `Charge/CreatePayment` de Izipay con Basic Auth (`IZIPAY_SHOP_ID:IZIPAY_PASSWORD`), guarda un `IntentoPagoIzipay` en estado "pendiente" y devuelve el `formToken` + `IZIPAY_PUBLIC_KEY` al frontend
+  - `POST /pagos/izipay/notificacion` (IPN, pública, sin auth): verifica la firma HMAC-SHA-256 con `IZIPAY_PASSWORD`, valida que el `orderStatus` sea `PAID` y que el monto/moneda coincidan con el intento guardado (protección ante manipulación), y recién ahí aplica el pago llamando a `_registrar_pago_suscripcion()` (la misma función que usa el superadmin para renovar manualmente). Es idempotente: un reintento de Izipay con la misma orden no vuelve a aplicar el pago
+  - `GET|POST /pagos/izipay/retorno` (pública): el navegador del comprador vuelve aquí (`kr-post-url-success`) después de pagar; verifica la firma con `IZIPAY_HMAC_KEY` (clave distinta a la de la IPN) solo para dar una respuesta visual rápida — quien aplica el pago de verdad siempre es la IPN, server a server
+  - Tabla nueva `intentos_pago_izipay` (migración `0019_intento_pago_izipay`): rastrea cada intento de pago (orden_id único, gimnasio, plan, meses, monto, estado) para que la IPN sepa qué suscripción actualizar y evite duplicar pagos
+- Frontend (`frontend-staff/configuracion.html`): botón "Pagar suscripción online" en la tarjeta "Mi suscripción" abre un modal, pide el `formToken` al backend y carga ahí mismo el SDK `kr-payment-form.min.js` de Izipay con `kr-public-key`; al volver del pago, lee `?pago_izipay=exitoso|rechazado|error` de la URL y refresca el estado de la suscripción
+- Variables de entorno requeridas (ver `backend/.env.example`): `IZIPAY_SHOP_ID`, `IZIPAY_PASSWORD`, `IZIPAY_PUBLIC_KEY`, `IZIPAY_HMAC_KEY` (opcional `IZIPAY_API_BASE`). Hay un juego de claves TEST y otro PRODUCTION en el Back Office Vendedor de Izipay (Configuración > Tienda > Claves de la API REST); cuál se usa depende de qué valores se carguen en cada ambiente (local vs Render)
+- **Importante para producción**: en el Back Office Vendedor de Izipay, la URL de notificación (IPN) debe configurarse como `https://soft-mrgym.onrender.com/api/pagos/izipay/notificacion` (con el prefijo `/api`, ya que nginx solo expone las rutas del backend bajo ese prefijo o en el allowlist de `deploy/nginx.conf`; `pagos` no está en ese allowlist). También hay que permitir el rango de IPs de Izipay `194.50.38.0/24` puerto 443 si el hosting lo exige
+- Probado en local sin credenciales reales: falla controlada (503) si no hay `IZIPAY_SHOP_ID/PASSWORD/PUBLIC_KEY`; con credenciales de prueba falsas, la llamada real a `Charge/CreatePayment` llega correctamente al servidor de Izipay y este la rechaza por credenciales inválidas (confirma que la integración está bien armada). El flujo completo de la IPN (firma válida → aplica pago → extiende suscripción → idempotente ante reintento) se probó de punta a punta contra el endpoint HTTP real con una firma calculada a mano
+- Pendiente real: cargar las credenciales verdaderas de Izipay y hacer una prueba de pago real (con tarjeta de test) de punta a punta, incluyendo configurar la URL de IPN en su Back Office
 
 ---
 
