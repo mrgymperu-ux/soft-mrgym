@@ -12,10 +12,16 @@
         .zona-filtros { position:sticky; top:0; z-index:40; background:var(--color-fondo); padding-bottom:12px; margin-bottom:6px; }
         .filtros-bar { display:flex; flex-direction:column; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); }
         .filtros-fila-fecha { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
-        .filtros-fila-fecha label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
         .filtros-conector { font-size:0.82em; color:var(--color-texto-secundario); }
-        .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
-        .filtros-bar input[type=checkbox] { width:auto; margin:0; }
+        /* El formato dd/mm/aa del texto visible no depende del idioma
+           del sistema operativo (a diferencia del input nativo, cuyo
+           formato de fecha varia segun el dispositivo); el input nativo
+           queda encima, invisible, solo para abrir el calendario. */
+        .fecha-picker-wrap { position:relative; display:inline-flex; }
+        .input-fecha-texto { width:88px; padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); cursor:pointer; }
+        .input-fecha-nativo { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+        .btn-hoy { padding:6px 16px; border-radius:14px; border:1px solid var(--color-borde); font:inherit; font-size:0.82em; font-weight:600; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; }
+        .btn-hoy.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
 
         /* Selector de tipo: Alumnos / Staff / Profesores -- repartidos
            parejo en todo el ancho, como botones. */
@@ -28,6 +34,12 @@
         .subtabs { display:flex; gap:8px; margin:10px 0 0; }
         .subtab { flex:1; text-align:center; padding:8px 14px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); user-select:none; box-shadow:var(--sombra); }
         .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
+
+        /* En celular los botones de filtro van sin icono, solo texto,
+           para que quepan mejor repartidos en el ancho. */
+        @media (max-width: 768px) {
+            .icono-filtro { display: none; }
+        }
 
         /* Vista general: filas simples, solo lectura */
         .fila-asistencia { display:flex; align-items:center; gap:12px; padding:10px 18px; border-top:1px solid var(--color-borde); }
@@ -76,24 +88,30 @@
         <div class="zona-filtros">
             <div class="filtros-bar">
                 <div class="filtros-fila-fecha">
-                    <label><input type="checkbox" id="chk-hoy" checked onchange="onCheckHoy()"> Hoy</label>
+                    <button type="button" id="chk-hoy" class="btn-hoy activo" onclick="onToggleHoy()">Hoy</button>
                     <span class="filtros-conector">de</span>
-                    <input type="date" id="f-desde">
+                    <span class="fecha-picker-wrap">
+                        <input type="text" id="f-desde-texto" class="input-fecha-texto" readonly placeholder="dd/mm/aa">
+                        <input type="date" id="f-desde" class="input-fecha-nativo">
+                    </span>
                     <span class="filtros-conector">a</span>
-                    <input type="date" id="f-hasta">
+                    <span class="fecha-picker-wrap">
+                        <input type="text" id="f-hasta-texto" class="input-fecha-texto" readonly placeholder="dd/mm/aa">
+                        <input type="date" id="f-hasta" class="input-fecha-nativo">
+                    </span>
                 </div>
                 <div class="chips-tipo-persona" id="chips-tipo-persona">
-                    <span class="chip-persona activo" data-tipo="alumnos" onclick="onChipPersona(this)">🧑‍🤝‍🧑 Alumnos</span>
-                    <span class="chip-persona" data-tipo="staff" onclick="onChipPersona(this)">🔑 Staff</span>
-                    <span class="chip-persona" data-tipo="profesores" onclick="onChipPersona(this)">🎓 Profesores</span>
+                    <span class="chip-persona activo" data-tipo="alumnos" onclick="onChipPersona(this)"><span class="icono-filtro">🧑‍🤝‍🧑</span> Alumnos</span>
+                    <span class="chip-persona" data-tipo="staff" onclick="onChipPersona(this)"><span class="icono-filtro">🔑</span> Staff</span>
+                    <span class="chip-persona" data-tipo="profesores" onclick="onChipPersona(this)"><span class="icono-filtro">🎓</span> Profesores</span>
                 </div>
             </div>
 
             <!-- Sub-tabs solo para Alumnos -->
             <div class="subtabs" id="subtabs-alumnos">
-                <span class="subtab activo" data-vista="general" onclick="onSubtab(this)">📋 General</span>
-                <span class="subtab" data-vista="horario" onclick="onSubtab(this)">🕐 Por horario</span>
-                <span class="subtab" data-vista="alumno" onclick="onSubtab(this)">🔎 Por alumno</span>
+                <span class="subtab activo" data-vista="general" onclick="onSubtab(this)"><span class="icono-filtro">📋</span> General</span>
+                <span class="subtab" data-vista="horario" onclick="onSubtab(this)"><span class="icono-filtro">🕐</span> Por horario</span>
+                <span class="subtab" data-vista="alumno" onclick="onSubtab(this)"><span class="icono-filtro">🔎</span> Por alumno</span>
             </div>
         </div>
 
@@ -167,6 +185,7 @@
     let tipoPersonaActivo = "alumnos";
     let vistaAlumnoActiva = "general";
     let busquedaTimeout = null;
+    let filtroHoyActivo = true;
 
     // ================================================================
     // Filtros de fecha (compartidos por todas las vistas)
@@ -175,26 +194,42 @@
         const hoy = new Date();
         document.getElementById("f-desde").value = isoFecha(hoy);
         document.getElementById("f-hasta").value = isoFecha(hoy);
+        actualizarTextoFecha("f-desde");
+        actualizarTextoFecha("f-hasta");
     }
     function isoFecha(d) { return fechaLocalISO(d); }
 
-    function onCheckHoy() {
-        // Las fechas quedan siempre editables; si el usuario marca "Hoy"
+    // El input nativo type=date muestra su fecha en el formato del
+    // dispositivo (varia por SO/navegador); este texto siempre se ve
+    // dd/mm/aa sin importar donde se abra.
+    function actualizarTextoFecha(id) {
+        const valor = document.getElementById(id).value;
+        const texto = document.getElementById(id + "-texto");
+        if (!valor) { texto.value = ""; return; }
+        const [anio, mes, dia] = valor.split("-");
+        texto.value = `${dia}/${mes}/${anio.slice(2)}`;
+    }
+
+    function onToggleHoy() {
+        filtroHoyActivo = !filtroHoyActivo;
+        document.getElementById("chk-hoy").classList.toggle("activo", filtroHoyActivo);
+        // Las fechas quedan siempre editables; si el usuario activa "Hoy"
         // manualmente, se refleja el dia de hoy en los campos.
-        if (document.getElementById("chk-hoy").checked) initFechas();
+        if (filtroHoyActivo) initFechas();
         recargarVistaActual();
     }
-    function onFechaChange() {
-        document.getElementById("chk-hoy").checked = false;
+    function onFechaChange(evento) {
+        filtroHoyActivo = false;
+        document.getElementById("chk-hoy").classList.remove("activo");
+        actualizarTextoFecha(evento.target.id);
         recargarVistaActual();
     }
     document.getElementById("f-desde")?.addEventListener?.("change", onFechaChange);
     document.getElementById("f-hasta")?.addEventListener?.("change", onFechaChange);
 
     function rangoActual() {
-        const chkHoy = document.getElementById("chk-hoy").checked;
         const hoy = isoFecha(new Date());
-        if (chkHoy) return { desde: hoy, hasta: hoy, esHoy: true };
+        if (filtroHoyActivo) return { desde: hoy, hasta: hoy, esHoy: true };
         return { desde: document.getElementById("f-desde").value, hasta: document.getElementById("f-hasta").value, esHoy: false };
     }
 
