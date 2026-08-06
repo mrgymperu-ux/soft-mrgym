@@ -209,13 +209,6 @@ table thead th,
 .form-row.arriba { align-items:flex-start; }
 .form-row.arriba label { margin-top:6px; }
 
-@media (max-width: 768px) {
-    .sidebar:not(.expandido-movil) { width: 70px; }
-    .sidebar:not(.expandido-movil) .logo-text, .sidebar:not(.expandido-movil) .nav-item-text, .sidebar:not(.expandido-movil) .nav-section-title, .sidebar:not(.expandido-movil) .usuario-info-mini { display: none; }
-    .sidebar:not(.expandido-movil) .nav-item { justify-content: center; }
-    .main-content { padding: 16px; }
-}
-
 /* Sidebar colapsado manualmente (boton en el encabezado, persiste entre paginas) */
 .sidebar.colapsado { width: 84px; }
 .sidebar.colapsado .logo-text,
