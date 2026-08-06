@@ -7,19 +7,26 @@
     <link rel="stylesheet" href="css/styles.css?v=20260805-1">
     <script src="js/tema.js"></script>
     <style>
-        .filtros-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); margin-bottom:18px; }
-        .filtros-bar label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        /* Zona de filtros: fecha + tipo de persona + sub-tabs, siempre a
+           la vista mientras se scrollea la lista de abajo. */
+        .zona-filtros { position:sticky; top:0; z-index:40; background:var(--color-fondo); padding-bottom:12px; margin-bottom:6px; }
+        .filtros-bar { display:flex; flex-direction:column; gap:10px; padding:14px 18px; background:var(--color-blanco); border-radius:var(--radio); box-shadow:var(--sombra); }
+        .filtros-fila-fecha { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
+        .filtros-fila-fecha label { font-size:0.82em; color:var(--color-texto-secundario); display:flex; align-items:center; gap:5px; }
+        .filtros-conector { font-size:0.82em; color:var(--color-texto-secundario); }
         .filtros-bar input[type=date] { padding:6px 10px; border:1px solid var(--color-borde); border-radius:8px; font-size:0.82em; background:var(--color-fondo); color:var(--color-texto); }
         .filtros-bar input[type=checkbox] { width:auto; margin:0; }
 
-        /* Selector de tipo: Alumnos / Staff / Profesores */
-        .chips-tipo-persona { display:flex; gap:6px; }
-        .chip-persona { padding:6px 14px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; font-weight:600; }
+        /* Selector de tipo: Alumnos / Staff / Profesores -- repartidos
+           parejo en todo el ancho, como botones. */
+        .chips-tipo-persona { display:flex; gap:8px; }
+        .chip-persona { flex:1; text-align:center; padding:7px 14px; border-radius:14px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-fondo); color:var(--color-texto-secundario); user-select:none; font-weight:600; }
         .chip-persona.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
 
-        /* Sub-tabs de vista (solo alumnos) */
-        .subtabs { display:flex; gap:6px; margin-bottom:16px; }
-        .subtab { padding:7px 14px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); user-select:none; }
+        /* Sub-tabs de vista (solo alumnos) -- mismo criterio: repartidos
+           parejo en todo el ancho. */
+        .subtabs { display:flex; gap:8px; margin:10px 0 0; }
+        .subtab { flex:1; text-align:center; padding:8px 14px; border-radius:10px; border:1px solid var(--color-borde); font-size:0.82em; cursor:pointer; background:var(--color-blanco); color:var(--color-texto-secundario); user-select:none; box-shadow:var(--sombra); }
         .subtab.activo { background:var(--color-primario); color:#fff; border-color:var(--color-primario); }
 
         /* Vista general: filas simples, solo lectura */
@@ -65,23 +72,29 @@
             </div>
         </div>
 
-        <!-- Filtros de fecha + tipo de persona -->
-        <div class="filtros-bar">
-            <label><input type="checkbox" id="chk-hoy" checked onchange="onCheckHoy()"> Hoy</label>
-            <label>Desde <input type="date" id="f-desde" disabled></label>
-            <label>Hasta <input type="date" id="f-hasta" disabled></label>
-            <div class="chips-tipo-persona" id="chips-tipo-persona" style="margin-left:auto;">
-                <span class="chip-persona activo" data-tipo="alumnos" onclick="onChipPersona(this)">🧑‍🤝‍🧑 Alumnos</span>
-                <span class="chip-persona" data-tipo="staff" onclick="onChipPersona(this)">🔑 Staff</span>
-                <span class="chip-persona" data-tipo="profesores" onclick="onChipPersona(this)">🎓 Profesores</span>
+        <!-- Zona de filtros: fecha + tipo de persona + sub-tabs, fija arriba al scrollear -->
+        <div class="zona-filtros">
+            <div class="filtros-bar">
+                <div class="filtros-fila-fecha">
+                    <label><input type="checkbox" id="chk-hoy" checked onchange="onCheckHoy()"> Hoy</label>
+                    <span class="filtros-conector">de</span>
+                    <input type="date" id="f-desde">
+                    <span class="filtros-conector">a</span>
+                    <input type="date" id="f-hasta">
+                </div>
+                <div class="chips-tipo-persona" id="chips-tipo-persona">
+                    <span class="chip-persona activo" data-tipo="alumnos" onclick="onChipPersona(this)">🧑‍🤝‍🧑 Alumnos</span>
+                    <span class="chip-persona" data-tipo="staff" onclick="onChipPersona(this)">🔑 Staff</span>
+                    <span class="chip-persona" data-tipo="profesores" onclick="onChipPersona(this)">🎓 Profesores</span>
+                </div>
             </div>
-        </div>
 
-        <!-- Sub-tabs solo para Alumnos -->
-        <div class="subtabs" id="subtabs-alumnos">
-            <span class="subtab activo" data-vista="general" onclick="onSubtab(this)">📋 General</span>
-            <span class="subtab" data-vista="horario" onclick="onSubtab(this)">🕐 Por horario</span>
-            <span class="subtab" data-vista="alumno" onclick="onSubtab(this)">🔎 Por alumno</span>
+            <!-- Sub-tabs solo para Alumnos -->
+            <div class="subtabs" id="subtabs-alumnos">
+                <span class="subtab activo" data-vista="general" onclick="onSubtab(this)">📋 General</span>
+                <span class="subtab" data-vista="horario" onclick="onSubtab(this)">🕐 Por horario</span>
+                <span class="subtab" data-vista="alumno" onclick="onSubtab(this)">🔎 Por alumno</span>
+            </div>
         </div>
 
         <!-- ============== VISTA: GENERAL (alumnos) ============== -->
@@ -166,9 +179,9 @@
     function isoFecha(d) { return fechaLocalISO(d); }
 
     function onCheckHoy() {
-        const chk = document.getElementById("chk-hoy").checked;
-        document.getElementById("f-desde").disabled = chk;
-        document.getElementById("f-hasta").disabled = chk;
+        // Las fechas quedan siempre editables; si el usuario marca "Hoy"
+        // manualmente, se refleja el dia de hoy en los campos.
+        if (document.getElementById("chk-hoy").checked) initFechas();
         recargarVistaActual();
     }
     function onFechaChange() {
