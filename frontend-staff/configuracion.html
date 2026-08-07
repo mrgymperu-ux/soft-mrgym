@@ -6,7 +6,7 @@
     <title>Configuracion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css?v=20260805-1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-    <link rel="stylesheet" href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/ext/classic-reset.css">
+    <link rel="stylesheet" href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/ext/classic.css">
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="js/tema.js"></script>
     <style>
@@ -239,8 +239,8 @@
         </div>
         <p style="font-size:.85em;color:var(--color-texto-secundario);margin:0 0 4px;">Total a pagar</p>
         <p style="font-size:1.3em;font-weight:700;margin:0 0 16px;" id="izipay-monto">—</p>
-        <div id="izipay-form-wrap" style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.15);">
-            <div id="izipay-form-container"></div>
+        <div id="izipay-form-wrap" style="background:#fff;border-radius:0;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.15);display:flex;justify-content:center;">
+            <div id="izipay-form-container" style="width:100%;"></div>
         </div>
     </div>
 </div>
@@ -635,6 +635,13 @@
             script.setAttribute("kr-public-key", publicKey);
             script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
             script.dataset.izipaySdk = "1";
+            script.onload = () => {
+                if (window.KR) {
+                    KR.onFormReady(() => {
+                        KR.setFormConfig({ smartForm: { layout: "compact" } });
+                    });
+                }
+            };
             document.head.appendChild(script);
         };
         document.head.appendChild(scriptTema);
