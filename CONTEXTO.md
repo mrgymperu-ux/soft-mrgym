@@ -17,7 +17,7 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-07-25 (enlace unico de instalacion para alumnos, sesion recordada, icono PWA separado del logo)
+> Última actualización: 2026-08-06 (pago online Izipay; nuevo servicio de Render soft-gym reemplaza a soft-mrgym como URL publica)
 
 ## Enlace único de instalación del portal alumno (2026-07-25)
 - Al asignar una membresía ≥30 días con pago (`_fcAsignarMembresia` en `flujo-cliente.js`), se llama `POST /clientes/{id}/enlace-acceso` y se abre WhatsApp (`wa.me`) con el enlace listo para enviar. Si el cliente no tenía acceso aún, el mensaje incluye instrucciones de "instalar la app"; si ya tenía, es un mensaje simple de confirmación.
@@ -75,12 +75,12 @@ Sistema de gestión de gimnasio multi-tenant (SaaS). Un superadmin administra gi
 - `scripts/migrate_legacy_media.py` rescata medios `/uploads/` desde el contenedor activo; simula por defecto y revierte toda la operación si alguna descarga falla.
 
 ## URLs en producción
-- **Panel Staff:** https://soft-mrgym.onrender.com/
-- **Portal Alumno:** https://soft-mrgym.onrender.com/alumno/login.html?gym={slug}
-- **Zona Profesores:** https://soft-mrgym.onrender.com/profesor/login.html?gym={slug}
-- **API Docs:** https://soft-mrgym.onrender.com/docs
+- **Panel Staff:** https://soft-gym.onrender.com/
+- **Portal Alumno:** https://soft-gym.onrender.com/alumno/login.html?gym={slug}
+- **Zona Profesores:** https://soft-gym.onrender.com/profesor/login.html?gym={slug}
+- **API Docs:** https://soft-gym.onrender.com/docs
 - **Repo GitHub:** https://github.com/mrgymperu-ux/soft-mrgym (privado)
-- **Marca comercial oficial:** `Soft-Gym`. La URL de Render, el repositorio y la carpeta local conservan `soft-mrgym`/`Soft-MrGym` como identificadores técnicos heredados para no romper el despliegue existente.
+- **Marca comercial oficial:** `Soft-Gym`. El servicio de Render y la URL pública ya usan `soft-gym`; el repositorio de GitHub y la carpeta local conservan `soft-mrgym`/`Soft-MrGym` como identificadores técnicos heredados (ver entrada del 2026-08-06 más abajo).
 
 ## Stack
 - **Backend:** FastAPI + SQLAlchemy + SQLite (dev) / PostgreSQL (prod, Supabase free permanente)
@@ -363,7 +363,7 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 
 ## Flujo de URLs por gym (slug)
 
-- **Staff**: `https://soft-mrgym.onrender.com/` (login con username, gimnasio_id en JWT)
+- **Staff**: `https://soft-gym.onrender.com/` (login con username, gimnasio_id en JWT)
 - **Alumno**: `.../alumno/login.html?gym=mi-gimnasio` → personaliza login, envía slug
 - **Profesor**: `.../profesor/login.html?gym=mi-gimnasio` → idem
 - **Info pública**: `GET /gym/{slug}` → nombre, logo_url, tema, modo_tema
@@ -597,7 +597,7 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 
 ### ✅ Marca oficial Soft-Gym (2026-07-13)
 - La marca comercial y visible del proyecto cambia de `Soft-MrGym` a `Soft-Gym` en panel staff, portal del alumno, zona de profesores, pantallas auxiliares, API, mensajes de suscripción, PWA y scripts locales
-- Producción continúa funcionando en `https://soft-mrgym.onrender.com` con PostgreSQL en Supabase; la URL de Render, el repositorio y las rutas locales no se renombran para evitar romper el despliegue
+- Producción continúa funcionando en `https://soft-mrgym.onrender.com` con PostgreSQL en Supabase; en ese momento la URL de Render, el repositorio y las rutas locales no se renombran para evitar romper el despliegue (el servicio de Render se renombró después, ver entrada del 2026-08-06 más abajo)
 - La futura integración Izipay usará el origen público HTTPS ya existente en Render; las rutas previstas son `/pagos/izipay/notificacion` para IPN y una pantalla propia de resultado para el retorno del comprador
 
 ### ✅ Actualización preparada para producción (2026-07-13)
@@ -626,6 +626,17 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 - Dashboard analytics avanzado para superadmin
 - Fotos persistentes (actualmente se pierden al redesplegar; migrar a Supabase Storage o Cloudflare R2)
 - Izipay: falta que el usuario configure las credenciales reales (TEST y PRODUCTION) y pruebe un pago real de punta a punta; ver sección "Pago online de la suscripción SaaS (Izipay)" más abajo
+- Izipay: si ya se configuraron credenciales, falta actualizar en su Back Office la URL de IPN a `https://soft-gym.onrender.com/api/pagos/izipay/notificacion` (cambió con el rename del 2026-08-06)
+- Borrar (o suspender) el servicio viejo `soft-mrgym` en Render una vez confirmado que `soft-gym` funciona sin problemas en producción durante unos días
+
+### ✅ Nuevo servicio de Render soft-gym reemplaza a soft-mrgym (2026-08-06)
+- Se actualizaron todas las referencias en el repo de `soft-mrgym.onrender.com` a `soft-gym.onrender.com`: `render.yaml` (`name`, `APP_BASE_URL`, `CORS_ORIGINS`), `backend/main.py` (fallback de `APP_BASE_URL` en el correo de prueba), `deploy/.env.example`, `DEPLOY.md` y las URLs vigentes en este archivo
+- Las entradas históricas fechadas (2026-07-13 y anteriores) que describían el estado de la URL en ese momento se dejaron con `soft-mrgym.onrender.com` tal cual era entonces, para no falsear el registro
+- **Renombrar el servicio existente en Render no cambia la URL pública** (`.onrender.com` queda fijo al slug con el que se creó el servicio); se comprobó en el dashboard: tras renombrar `soft-mrgym` → `soft-gym` en Settings, la URL siguió siendo `soft-mrgym.onrender.com` y `soft-gym.onrender.com` daba "Not Found". Se revirtió ese rename
+- En su lugar se creó un **servicio nuevo** `soft-gym` en Render (mismo repo `mrgympeuru-ux/soft-mrgym`, rama `main`, Docker, plan Free, mismo proyecto/environment), copiando las 6 variables de entorno del servicio viejo (`APP_BASE_URL`, `CORS_ORIGINS`, `DATABASE_URL`, `EMAIL_FROM`, `RESEND_API_KEY`, `SECRET_KEY`) vía descarga/carga de archivo `.env` (el botón "Copy env vars" al portapapeles fallaba y solo pegaba un valor suelto), y corrigiendo `APP_BASE_URL` a la URL nueva; `CORS_ORIGINS` ya estaba en `"*"` y no requirió cambio
+- Deploy verificado de punta a punta: build, migraciones Alembic y arranque de gunicorn OK; `https://soft-gym.onrender.com` muestra la pantalla de login normal, contra la misma base de datos de Supabase (mismos usuarios/datos que `soft-mrgym`)
+- El servicio viejo `soft-mrgym` se dejó activo (no se borró) como respaldo hasta confirmar que `soft-gym` funciona bien un tiempo en producción
+- El repositorio de GitHub (`soft-mrgym`) y la carpeta local no se renombraron; solo cambió la URL pública de Render
 
 ### ✅ Pago online de la suscripción SaaS con Izipay (checkout incrustado)
 - Integración del "Formulario incrustado smartForm" de Izipay (Mi Cuenta Web / Lyra) para que el propio administrador del gimnasio pague/renueve su suscripción SaaS desde `configuracion.html` sin depender del superadmin
@@ -636,7 +647,7 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
   - Tabla nueva `intentos_pago_izipay` (migración `0019_intento_pago_izipay`): rastrea cada intento de pago (orden_id único, gimnasio, plan, meses, monto, estado) para que la IPN sepa qué suscripción actualizar y evite duplicar pagos
 - Frontend (`frontend-staff/configuracion.html`): botón "Pagar suscripción online" en la tarjeta "Mi suscripción" abre un modal, pide el `formToken` al backend y carga ahí mismo el SDK `kr-payment-form.min.js` de Izipay con `kr-public-key`; al volver del pago, lee `?pago_izipay=exitoso|rechazado|error` de la URL y refresca el estado de la suscripción
 - Variables de entorno requeridas (ver `backend/.env.example`): `IZIPAY_SHOP_ID`, `IZIPAY_PASSWORD`, `IZIPAY_PUBLIC_KEY`, `IZIPAY_HMAC_KEY` (opcional `IZIPAY_API_BASE`). Hay un juego de claves TEST y otro PRODUCTION en el Back Office Vendedor de Izipay (Configuración > Tienda > Claves de la API REST); cuál se usa depende de qué valores se carguen en cada ambiente (local vs Render)
-- **Importante para producción**: en el Back Office Vendedor de Izipay, la URL de notificación (IPN) debe configurarse como `https://soft-mrgym.onrender.com/api/pagos/izipay/notificacion` (con el prefijo `/api`, ya que nginx solo expone las rutas del backend bajo ese prefijo o en el allowlist de `deploy/nginx.conf`; `pagos` no está en ese allowlist). También hay que permitir el rango de IPs de Izipay `194.50.38.0/24` puerto 443 si el hosting lo exige
+- **Importante para producción**: en el Back Office Vendedor de Izipay, la URL de notificación (IPN) debe configurarse como `https://soft-gym.onrender.com/api/pagos/izipay/notificacion` (con el prefijo `/api`, ya que nginx solo expone las rutas del backend bajo ese prefijo o en el allowlist de `deploy/nginx.conf`; `pagos` no está en ese allowlist). También hay que permitir el rango de IPs de Izipay `194.50.38.0/24` puerto 443 si el hosting lo exige
 - Probado en local sin credenciales reales: falla controlada (503) si no hay `IZIPAY_SHOP_ID/PASSWORD/PUBLIC_KEY`; con credenciales de prueba falsas, la llamada real a `Charge/CreatePayment` llega correctamente al servidor de Izipay y este la rechaza por credenciales inválidas (confirma que la integración está bien armada). El flujo completo de la IPN (firma válida → aplica pago → extiende suscripción → idempotente ante reintento) se probó de punta a punta contra el endpoint HTTP real con una firma calculada a mano
 - Pendiente real: cargar las credenciales verdaderas de Izipay y hacer una prueba de pago real (con tarjeta de test) de punta a punta, incluyendo configurar la URL de IPN en su Back Office
 

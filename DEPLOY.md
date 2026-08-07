@@ -50,22 +50,22 @@ git push -u origin main
 
 Render te asigna una URL como:
 ```
-https://soft-mrgym.onrender.com
+https://soft-gym.onrender.com
 ```
 
 | Portal | URL |
 |--------|-----|
-| Panel Staff | `https://soft-mrgym.onrender.com/login.html` |
-| Portal Alumno | `https://soft-mrgym.onrender.com/alumno/login.html` |
-| Zona Profesores | `https://soft-mrgym.onrender.com/profesor/login.html` |
-| API Docs | `https://soft-mrgym.onrender.com/docs` |
+| Panel Staff | `https://soft-gym.onrender.com/login.html` |
+| Portal Alumno | `https://soft-gym.onrender.com/alumno/login.html` |
+| Zona Profesores | `https://soft-gym.onrender.com/profesor/login.html` |
+| API Docs | `https://soft-gym.onrender.com/docs` |
 
 ## Paso 5: Crear el primer usuario
 
 La BD está vacía. El sistema siembra automáticamente los catálogos (ejercicios, alimentos, etc.) al arrancar. Para crear tu gimnasio y admin, entra a:
 
 ```
-https://soft-mrgym.onrender.com/registro.html
+https://soft-gym.onrender.com/registro.html
 ```
 
 ---
@@ -144,13 +144,13 @@ El restaurador se niega a trabajar si encuentra datos en el destino y deliberada
 Antes del despliegue, detectar medios antiguos todavía alojados en el contenedor activo:
 
 ```powershell
-python scripts/migrate_legacy_media.py --base-url https://soft-mrgym.onrender.com
+python scripts/migrate_legacy_media.py --base-url https://soft-gym.onrender.com
 ```
 
 La simulación no escribe. Después del respaldo y de revisar el resultado:
 
 ```powershell
-python scripts/migrate_legacy_media.py --base-url https://soft-mrgym.onrender.com --apply --confirm MIGRATE_MEDIA
+python scripts/migrate_legacy_media.py --base-url https://soft-gym.onrender.com --apply --confirm MIGRATE_MEDIA
 ```
 
 La operación es transaccional: si una descarga falla, revierte todo y conserva las URLs anteriores.

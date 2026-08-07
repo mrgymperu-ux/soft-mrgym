@@ -1154,7 +1154,7 @@ def probar_correo_produccion(
                 "Correo configurado correctamente",
                 "Soft-Gym pudo enviar este mensaje desde el entorno de produccion.",
                 "Abrir Soft-Gym",
-                os.getenv("APP_BASE_URL", "https://soft-mrgym.onrender.com"),
+                os.getenv("APP_BASE_URL", "https://soft-gym.onrender.com"),
             ),
         )
     except Exception as exc:

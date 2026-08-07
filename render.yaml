@@ -8,7 +8,7 @@
 
 services:
   - type: web
-    name: soft-mrgym
+    name: soft-gym
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
@@ -20,7 +20,7 @@ services:
       - key: ENVIRONMENT
         value: "production"
       - key: APP_BASE_URL
-        value: "https://soft-mrgym.onrender.com"
+        value: "https://soft-gym.onrender.com"
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
@@ -28,6 +28,6 @@ services:
       - key: REQUIRE_EMAIL_VERIFICATION
         value: "false"
       - key: CORS_ORIGINS
-        value: "https://soft-mrgym.onrender.com"
+        value: "https://soft-gym.onrender.com"
 
 # SIN sección "databases" — la BD vive en Supabase, no en Render
