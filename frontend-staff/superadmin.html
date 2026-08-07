@@ -137,6 +137,21 @@
         </div>
     </div>
 
+    <!-- Modal Migrar data de gimnasio -->
+    <div class="modal-overlay" id="modal-migrar">
+        <div class="modal">
+            <h3 id="migrar-titulo">Mover data a otro gimnasio</h3>
+            <input type="hidden" id="migrar-origen-id">
+            <p id="migrar-resumen" style="font-size:.85em;color:#555;"></p>
+            <div class="form-group"><label>Gimnasio destino</label><select id="migrar-destino"></select></div>
+            <div id="migrar-choque" style="display:none;background:#fff3cd;border-radius:8px;padding:10px;margin-top:8px;font-size:.85em;"></div>
+            <div class="modal-actions">
+                <button class="btn" onclick="cerrarModal('modal-migrar')">Cancelar</button>
+                <button class="btn btn-primary" id="migrar-btn-confirmar" onclick="confirmarMigracion()">Mover data</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Plan -->
     <div class="modal-overlay" id="modal-plan">
         <div class="modal">
@@ -370,24 +385,43 @@
             cargarTodo();
         }
 
-        async function migrarDatosGimnasio(origenId, origenNombre) {
-            const opciones = gimnasiosCache.filter(g => g.id !== origenId).map(g => `${g.id} = ${g.nombre}`).join("\n");
-            const destinoTexto = prompt(`Mover TODA la data de "${origenNombre}" a otro gimnasio.\n\nEscribe el ID del gimnasio destino:\n\n${opciones}`);
-            if (!destinoTexto) return;
-            const destinoId = Number(destinoTexto.trim());
-            const destino = gimnasiosCache.find(g => g.id === destinoId);
-            if (!destino) { alert("ID de destino invalido."); return; }
-            if (!confirm(`¿Mover toda la data de "${origenNombre}" al gimnasio "${destino.nombre}"?\n\n"${origenNombre}" quedara vacio despues de esto.`)) return;
+        let migrarRequiereBorrado = false;
 
-            let resultado = await api(`/saas/gimnasios/${origenId}/migrar-a/${destinoId}`, { method: "POST" });
+        function migrarDatosGimnasio(origenId, origenNombre) {
+            const otros = gimnasiosCache.filter(g => g.id !== origenId);
+            if (otros.length === 0) { alert("No hay otro gimnasio al cual mover la data."); return; }
+            migrarRequiereBorrado = false;
+            document.getElementById("migrar-origen-id").value = origenId;
+            document.getElementById("migrar-titulo").textContent = `Mover data de "${origenNombre}"`;
+            document.getElementById("migrar-resumen").textContent = `"${origenNombre}" quedará vacío después de esto.`;
+            document.getElementById("migrar-destino").innerHTML = otros.map(g => `<option value="${g.id}">${g.nombre} (${g.slug})</option>`).join("");
+            document.getElementById("migrar-choque").style.display = "none";
+            document.getElementById("migrar-btn-confirmar").textContent = "Mover data";
+            document.getElementById("modal-migrar").classList.add("active");
+        }
+
+        async function confirmarMigracion() {
+            const origenId = Number(document.getElementById("migrar-origen-id").value);
+            const destinoId = Number(document.getElementById("migrar-destino").value);
+            const destino = gimnasiosCache.find(g => g.id === destinoId);
+
+            const resultado = await api(
+                `/saas/gimnasios/${origenId}/migrar-a/${destinoId}${migrarRequiereBorrado ? "?confirmar_borrado_destino=true" : ""}`,
+                { method: "POST" },
+            );
             if (!resultado) return;
+
             if (resultado.requiere_confirmacion) {
-                const detalle = Object.entries(resultado.destino_tiene_datos).map(([t, n]) => `- ${t}: ${n}`).join("\n");
-                const confirmarBorrado = confirm(`"${destino.nombre}" ya tiene datos propios:\n\n${detalle}\n\n¿Borrarlos y reemplazarlos con los de "${origenNombre}"?`);
-                if (!confirmarBorrado) return;
-                resultado = await api(`/saas/gimnasios/${origenId}/migrar-a/${destinoId}?confirmar_borrado_destino=true`, { method: "POST" });
-                if (!resultado) return;
+                migrarRequiereBorrado = true;
+                const detalle = Object.entries(resultado.destino_tiene_datos).map(([t, n]) => `${t}: ${n}`).join(", ");
+                const choque = document.getElementById("migrar-choque");
+                choque.style.display = "block";
+                choque.textContent = `"${destino.nombre}" ya tiene datos propios (${detalle}). Si continúas, se BORRARÁN antes de mover los datos.`;
+                document.getElementById("migrar-btn-confirmar").textContent = "Sí, borrar y mover";
+                return;
             }
+
+            cerrarModal("modal-migrar");
             alert(resultado.detalle || "Listo");
             cargarTodo();
         }
