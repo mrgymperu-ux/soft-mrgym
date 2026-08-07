@@ -221,6 +221,7 @@
                     <td>
                         <button class="btn btn-primary btn-sm" onclick="abrirSuscripcion(${g.id})" title="Suscripcion">💳</button>
                         <button class="btn btn-sm" onclick="editarGimnasio(${g.id})">✏️</button>
+                        <button class="btn btn-sm" onclick="migrarDatosGimnasio(${g.id},'${g.nombre.replace(/'/g,"\\'")}')" title="Mover toda la data a otro gimnasio">🔀</button>
                         ${g.id !== 1 ? `<button class="btn btn-danger btn-sm" onclick="eliminarGimnasio(${g.id},'${g.nombre.replace(/'/g,"\\'")}')">🗑️</button>` : ''}
                     </td>
                 </tr>
@@ -366,6 +367,28 @@
         async function eliminarGimnasio(id, nombre) {
             if (!confirm(`¿Eliminar el gimnasio "${nombre}" y TODOS sus datos? Esta acción es irreversible.`)) return;
             await api(`/saas/gimnasios/${id}`, { method: "DELETE" });
+            cargarTodo();
+        }
+
+        async function migrarDatosGimnasio(origenId, origenNombre) {
+            const opciones = gimnasiosCache.filter(g => g.id !== origenId).map(g => `${g.id} = ${g.nombre}`).join("\n");
+            const destinoTexto = prompt(`Mover TODA la data de "${origenNombre}" a otro gimnasio.\n\nEscribe el ID del gimnasio destino:\n\n${opciones}`);
+            if (!destinoTexto) return;
+            const destinoId = Number(destinoTexto.trim());
+            const destino = gimnasiosCache.find(g => g.id === destinoId);
+            if (!destino) { alert("ID de destino invalido."); return; }
+            if (!confirm(`¿Mover toda la data de "${origenNombre}" al gimnasio "${destino.nombre}"?\n\n"${origenNombre}" quedara vacio despues de esto.`)) return;
+
+            let resultado = await api(`/saas/gimnasios/${origenId}/migrar-a/${destinoId}`, { method: "POST" });
+            if (!resultado) return;
+            if (resultado.requiere_confirmacion) {
+                const detalle = Object.entries(resultado.destino_tiene_datos).map(([t, n]) => `- ${t}: ${n}`).join("\n");
+                const confirmarBorrado = confirm(`"${destino.nombre}" ya tiene datos propios:\n\n${detalle}\n\n¿Borrarlos y reemplazarlos con los de "${origenNombre}"?`);
+                if (!confirmarBorrado) return;
+                resultado = await api(`/saas/gimnasios/${origenId}/migrar-a/${destinoId}?confirmar_borrado_destino=true`, { method: "POST" });
+                if (!resultado) return;
+            }
+            alert(resultado.detalle || "Listo");
             cargarTodo();
         }
 

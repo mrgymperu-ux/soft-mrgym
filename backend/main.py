@@ -11993,6 +11993,69 @@ def eliminar_gimnasio(
     return {"ok": True, "detalle": f"Gimnasio '{gimnasio.nombre}' y todos sus datos eliminados"}
 
 
+@app.post("/saas/gimnasios/{origen_id}/migrar-a/{destino_id}", tags=["SaaS"])
+def migrar_datos_gimnasio(
+    origen_id: int,
+    destino_id: int,
+    confirmar_borrado_destino: bool = False,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(auth.requiere_superadmin),
+):
+    """
+    Mueve TODA la data operativa (clientes, membresias, ventas, etc.)
+    de un gimnasio "origen" a un gimnasio "destino", reasignando
+    gimnasio_id en cada tabla que lo tenga. El gimnasio origen queda
+    vacio (pero no se elimina). Es una operacion de un solo uso,
+    pensada para corregir datos cargados por error en el gimnasio
+    equivocado -- no para uso recurrente.
+
+    Si el destino ya tiene datos propios, por defecto NO se ejecuta:
+    se devuelve un resumen de lo que hay para que el superadmin decida
+    y reintente con confirmar_borrado_destino=true (los borra antes de
+    mover los del origen, para evitar choques de datos).
+    """
+    if origen_id == destino_id:
+        raise HTTPException(status_code=400, detail="origen y destino deben ser gimnasios distintos")
+    origen = db.query(models.Gimnasio).filter(models.Gimnasio.id == origen_id).first()
+    destino = db.query(models.Gimnasio).filter(models.Gimnasio.id == destino_id).first()
+    if not origen or not destino:
+        raise HTTPException(status_code=404, detail="Gimnasio origen o destino no encontrado")
+
+    tablas_hijos_primero = list(reversed(models.Base.metadata.sorted_tables))
+    tablas_con_gimnasio_id = [t for t in tablas_hijos_primero if "gimnasio_id" in t.columns]
+
+    resumen_destino = {}
+    for tabla in tablas_con_gimnasio_id:
+        cantidad = db.query(func.count()).select_from(tabla).filter(
+            tabla.c.gimnasio_id == destino_id
+        ).scalar() or 0
+        if cantidad:
+            resumen_destino[tabla.name] = cantidad
+
+    if resumen_destino and not confirmar_borrado_destino:
+        return {
+            "ok": False,
+            "requiere_confirmacion": True,
+            "detalle": f"'{destino.nombre}' ya tiene datos propios. Reintenta con confirmar_borrado_destino=true para borrarlos antes de mover los de '{origen.nombre}'.",
+            "destino_tiene_datos": resumen_destino,
+        }
+
+    # 1. Borrar lo que ya tenga el destino (hijos antes que padres, para no violar FKs)
+    for tabla in tablas_con_gimnasio_id:
+        db.execute(tabla.delete().where(tabla.c.gimnasio_id == destino_id))
+
+    # 2. Mover (reasignar) todo lo del origen al destino
+    for tabla in tablas_con_gimnasio_id:
+        db.execute(tabla.update().where(tabla.c.gimnasio_id == origen_id).values(gimnasio_id=destino_id))
+
+    db.commit()
+    return {
+        "ok": True,
+        "detalle": f"Data movida de '{origen.nombre}' a '{destino.nombre}'. '{origen.nombre}' quedo vacio.",
+        "destino_tenia_y_se_borro": resumen_destino,
+    }
+
+
 @app.get("/saas/dashboard", tags=["SaaS"])
 def dashboard_saas(db: Session = Depends(get_db), _: models.Usuario = Depends(auth.requiere_superadmin)):
     """Stats globales de la plataforma para el super-admin."""
