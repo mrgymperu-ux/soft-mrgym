@@ -6,6 +6,7 @@
     <title>Configuracion - Soft-Gym</title>
     <link rel="stylesheet" href="css/styles.css?v=20260805-1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <link rel="stylesheet" href="https://static.micuentaweb.pe/static/js/krypton-client/V4.0/ext/classic-reset.css">
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script src="js/tema.js"></script>
     <style>
@@ -622,12 +623,21 @@
         // confiable que depender de una API interna para actualizar el
         // formToken de un script ya cargado.
         document.querySelectorAll("script[data-izipay-sdk]").forEach(s => s.remove());
-        const script = document.createElement("script");
-        script.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js";
-        script.setAttribute("kr-public-key", publicKey);
-        script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
-        script.dataset.izipaySdk = "1";
-        document.head.appendChild(script);
+        // El tema "classic" necesita su JS cargado ANTES que la libreria
+        // principal (asi lo pide la doc de Lyra/Izipay); sin tema, el
+        // formulario se ve sin estilos (campos sin caja visible).
+        const scriptTema = document.createElement("script");
+        scriptTema.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/ext/classic.js";
+        scriptTema.dataset.izipaySdk = "1";
+        scriptTema.onload = () => {
+            const script = document.createElement("script");
+            script.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js";
+            script.setAttribute("kr-public-key", publicKey);
+            script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
+            script.dataset.izipaySdk = "1";
+            document.head.appendChild(script);
+        };
+        document.head.appendChild(scriptTema);
     }
 
     function cerrarModalPagoIzipay() {
