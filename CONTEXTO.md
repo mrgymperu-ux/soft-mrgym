@@ -17,7 +17,7 @@
 -->
 
 # CONTEXTO — Soft-Gym
-> Última actualización: 2026-08-06 (pago online Izipay; nuevo servicio de Render soft-gym reemplaza a soft-mrgym como URL publica)
+> Última actualización: 2026-08-06 (pago online Izipay probado con credenciales TEST de punta a punta; nuevo servicio de Render soft-gym reemplaza a soft-mrgym como URL publica)
 
 ## Enlace único de instalación del portal alumno (2026-07-25)
 - Al asignar una membresía ≥30 días con pago (`_fcAsignarMembresia` en `flujo-cliente.js`), se llama `POST /clientes/{id}/enlace-acceso` y se abre WhatsApp (`wa.me`) con el enlace listo para enviar. Si el cliente no tenía acceso aún, el mensaje incluye instrucciones de "instalar la app"; si ya tenía, es un mensaje simple de confirmación.
@@ -625,8 +625,7 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 - Notificaciones (WhatsApp/email a clientes por vencimiento)
 - Dashboard analytics avanzado para superadmin
 - Fotos persistentes (actualmente se pierden al redesplegar; migrar a Supabase Storage o Cloudflare R2)
-- Izipay: falta que el usuario configure las credenciales reales (TEST y PRODUCTION) y pruebe un pago real de punta a punta; ver sección "Pago online de la suscripción SaaS (Izipay)" más abajo
-- Izipay: si ya se configuraron credenciales, falta actualizar en su Back Office la URL de IPN a `https://soft-gym.onrender.com/api/pagos/izipay/notificacion` (cambió con el rename del 2026-08-06)
+- Izipay: probado con credenciales TEST de punta a punta (ver sección "Pago online de la suscripción SaaS (Izipay)" más abajo); falta cambiar a credenciales PRODUCTION en Render cuando se quiera cobrar de verdad
 - Borrar (o suspender) el servicio viejo `soft-mrgym` en Render una vez confirmado que `soft-gym` funciona sin problemas en producción durante unos días
 
 ### ✅ Nuevo servicio de Render soft-gym reemplaza a soft-mrgym (2026-08-06)
@@ -649,7 +648,9 @@ JWT incluye: sub (id), tipo, rol, gimnasio_id. Expira 12h.
 - Variables de entorno requeridas (ver `backend/.env.example`): `IZIPAY_SHOP_ID`, `IZIPAY_PASSWORD`, `IZIPAY_PUBLIC_KEY`, `IZIPAY_HMAC_KEY` (opcional `IZIPAY_API_BASE`). Hay un juego de claves TEST y otro PRODUCTION en el Back Office Vendedor de Izipay (Configuración > Tienda > Claves de la API REST); cuál se usa depende de qué valores se carguen en cada ambiente (local vs Render)
 - **Importante para producción**: en el Back Office Vendedor de Izipay, la URL de notificación (IPN) debe configurarse como `https://soft-gym.onrender.com/api/pagos/izipay/notificacion` (con el prefijo `/api`, ya que nginx solo expone las rutas del backend bajo ese prefijo o en el allowlist de `deploy/nginx.conf`; `pagos` no está en ese allowlist). También hay que permitir el rango de IPs de Izipay `194.50.38.0/24` puerto 443 si el hosting lo exige
 - Probado en local sin credenciales reales: falla controlada (503) si no hay `IZIPAY_SHOP_ID/PASSWORD/PUBLIC_KEY`; con credenciales de prueba falsas, la llamada real a `Charge/CreatePayment` llega correctamente al servidor de Izipay y este la rechaza por credenciales inválidas (confirma que la integración está bien armada). El flujo completo de la IPN (firma válida → aplica pago → extiende suscripción → idempotente ante reintento) se probó de punta a punta contra el endpoint HTTP real con una firma calculada a mano
-- Pendiente real: cargar las credenciales verdaderas de Izipay y hacer una prueba de pago real (con tarjeta de test) de punta a punta, incluyendo configurar la URL de IPN en su Back Office
+- El tema del formulario es obligatorio: sin cargar un tema, Izipay no aplica NINGUN CSS al formulario incrustado (campos de tarjeta/vencimiento/CVV sin caja visible, solo la etiqueta flotante). Se agregó el tema `classic` oficial de Lyra/Izipay: `classic-reset.css` en el `<head>` de `configuracion.html` y `classic.js` cargado dinámicamente ANTES que `kr-payment-form.min.js` (así lo exige la doc) dentro de `montarFormularioIzipay()`. El modal también envuelve el formulario en una tarjeta blanca redondeada con sombra (`#izipay-form-wrap`) para que el fondo blanco fijo del widget (requisito PCI, no se puede recolorear) no choque feo contra el modo oscuro del sitio
+- **2026-08-06: probado con credenciales TEST reales de punta a punta y funcionó** — Shop ID + password/public key/HMAC key de test cargados como variables de entorno en Render (`soft-gym`), URL de IPN configurada en el Back Office de Izipay (Configuración de la tienda → Reglas de notificación → "URL de notificación al final del pago" → sección API REST → `https://soft-gym.onrender.com/api/pagos/izipay/notificacion` en modo prueba y producción), pago de S/ 49.00 con tarjeta de test completado, IPN recibida y aplicada: la suscripción del gimnasio de prueba pasó a plan Pro "Activa", con el pago listado en el historial (fecha, monto, método "Izipay")
+- Pendiente real: reemplazar las credenciales TEST por las de PRODUCTION en Render cuando el usuario esté listo para cobrar de verdad (mismas 4 variables, tomadas de la columna "de producción" del Back Office)
 
 ---
 
