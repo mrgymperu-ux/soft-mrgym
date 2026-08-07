@@ -626,7 +626,6 @@
         script.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js";
         script.setAttribute("kr-public-key", publicKey);
         script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
-        script.setAttribute("kr-theme", "neon");
         script.dataset.izipaySdk = "1";
         document.head.appendChild(script);
     }
