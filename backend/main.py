@@ -40,7 +40,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, Fi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse, RedirectResponse
-from sqlalchemy import case, func, text, or_, literal, union_all
+from sqlalchemy import case, func, text, or_, literal, union_all, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from . import models, schemas, auth, pdf_generator, email_service
@@ -11993,6 +11993,38 @@ def eliminar_gimnasio(
     return {"ok": True, "detalle": f"Gimnasio '{gimnasio.nombre}' y todos sus datos eliminados"}
 
 
+def _condiciones_borrado_por_gimnasio(gimnasio_id: int):
+    """
+    Calcula, para cada tabla del esquema, la condicion SQL que
+    identifica sus filas pertenecientes a un gimnasio -- ya sea porque
+    la tabla tiene gimnasio_id directo, o porque alguna de sus FK
+    apunta a una fila de otra tabla que si pertenece al gimnasio
+    (en cascada, para tablas como cliente_membresias o detalle_ventas
+    que no tienen gimnasio_id propio).
+
+    Devuelve una lista de (tabla, condicion) en orden hijos-primero,
+    lista para borrar sin violar constraints de FK.
+    """
+    tablas_padres_primero = models.Base.metadata.sorted_tables
+    condiciones = {}
+    for tabla in tablas_padres_primero:
+        partes = []
+        if "gimnasio_id" in tabla.columns:
+            partes.append(tabla.c.gimnasio_id == gimnasio_id)
+        for fk in tabla.foreign_keys:
+            tabla_referenciada = fk.column.table
+            if tabla_referenciada is tabla:
+                continue  # FK auto-referencial (ej. invitado_por_cm_id): no aporta al filtro
+            condicion_padre = condiciones.get(tabla_referenciada)
+            if condicion_padre is not None:
+                partes.append(fk.parent.in_(select(fk.column).where(condicion_padre)))
+        if partes:
+            condiciones[tabla] = or_(*partes) if len(partes) > 1 else partes[0]
+
+    tablas_hijos_primero = list(reversed(tablas_padres_primero))
+    return [(tabla, condiciones[tabla]) for tabla in tablas_hijos_primero if tabla in condiciones]
+
+
 @app.post("/saas/gimnasios/{origen_id}/migrar-a/{destino_id}", tags=["SaaS"])
 def migrar_datos_gimnasio(
     origen_id: int,
@@ -12021,8 +12053,7 @@ def migrar_datos_gimnasio(
     if not origen or not destino:
         raise HTTPException(status_code=404, detail="Gimnasio origen o destino no encontrado")
 
-    tablas_hijos_primero = list(reversed(models.Base.metadata.sorted_tables))
-    tablas_con_gimnasio_id = [t for t in tablas_hijos_primero if "gimnasio_id" in t.columns]
+    tablas_con_gimnasio_id = [t for t in models.Base.metadata.sorted_tables if "gimnasio_id" in t.columns]
 
     resumen_destino = {}
     for tabla in tablas_con_gimnasio_id:
@@ -12040,11 +12071,13 @@ def migrar_datos_gimnasio(
             "destino_tiene_datos": resumen_destino,
         }
 
-    # 1. Borrar lo que ya tenga el destino (hijos antes que padres, para no violar FKs)
-    for tabla in tablas_con_gimnasio_id:
-        db.execute(tabla.delete().where(tabla.c.gimnasio_id == destino_id))
+    # 1. Borrar lo que ya tenga el destino, en cascada (hijos antes que padres)
+    for tabla, condicion in _condiciones_borrado_por_gimnasio(destino_id):
+        db.execute(tabla.delete().where(condicion))
 
-    # 2. Mover (reasignar) todo lo del origen al destino
+    # 2. Mover (reasignar) todo lo del origen al destino. Las tablas sin
+    # gimnasio_id propio (ej. cliente_membresias) no necesitan tocarse:
+    # siguen apuntando al mismo id de fila, que ahora vive en el destino.
     for tabla in tablas_con_gimnasio_id:
         db.execute(tabla.update().where(tabla.c.gimnasio_id == origen_id).values(gimnasio_id=destino_id))
 
