@@ -238,7 +238,9 @@
         </div>
         <p style="font-size:.85em;color:var(--color-texto-secundario);margin:0 0 4px;">Total a pagar</p>
         <p style="font-size:1.3em;font-weight:700;margin:0 0 16px;" id="izipay-monto">—</p>
-        <div id="izipay-form-container"></div>
+        <div id="izipay-form-wrap" style="background:#fff;border-radius:14px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.15);">
+            <div id="izipay-form-container"></div>
+        </div>
     </div>
 </div>
 
@@ -624,6 +626,7 @@
         script.src = "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js";
         script.setAttribute("kr-public-key", publicKey);
         script.setAttribute("kr-post-url-success", `${API_BASE_URL}/pagos/izipay/retorno`);
+        script.setAttribute("kr-theme", "neon");
         script.dataset.izipaySdk = "1";
         document.head.appendChild(script);
     }
