@@ -40,7 +40,8 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Path, UploadFile, Fi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, Response, JSONResponse, RedirectResponse
-from sqlalchemy import case, func, text, or_, literal, union_all, select
+from sqlalchemy import case, func, text, or_, literal, union_all, select, insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from . import models, schemas, auth, pdf_generator, email_service
@@ -11993,7 +11994,46 @@ def eliminar_gimnasio(
     return {"ok": True, "detalle": f"Gimnasio '{gimnasio.nombre}' y todos sus datos eliminados"}
 
 
-def _condiciones_borrado_por_gimnasio(gimnasio_id: int):
+# Tablas que jamas participan en migrar/copiar/borrar-para-migrar entre
+# gimnasios: son credenciales de acceso, sesiones, auditoria o facturacion
+# de la plataforma -- cada gimnasio conserva siempre las suyas propias,
+# sin importar que categorias de "data operativa" se muevan o copien.
+TABLAS_EXCLUIDAS_MIGRACION = {
+    models.Usuario.__table__, models.TokenAutenticacion.__table__,
+    models.SesionUsuario.__table__, models.InvitacionUsuario.__table__,
+    models.IntentoAcceso.__table__, models.EventoAuditoria.__table__,
+    models.SuscripcionSaas.__table__, models.PagoSaas.__table__,
+    models.IntentoPagoIzipay.__table__,
+}
+
+# Categorias seleccionables desde el panel de superadmin para mover/copiar
+# data entre gimnasios. "staff" incluye tanto staff administrativo como
+# profesores de sala: ambos son filas de la misma tabla Empleado
+# (distinguidas por tipo/puesto), asi que no se pueden separar en dos
+# categorias sin duplicar filas.
+CATEGORIAS_MIGRACION = {
+    "clientes": [
+        models.Cliente, models.Membresia, models.BiometriaFacial,
+        models.ClienteHistorico, models.Medida, models.Asistencia, models.Progreso,
+    ],
+    "productos": [models.Producto, models.Compra, models.Venta],
+    "staff": [
+        models.Puesto, models.Empleado, models.PagoPlanilla,
+        models.TramoComision, models.MetaMensual, models.ClaseDictada,
+        models.SalaGimnasio, models.ReservaSala,
+    ],
+    "otros": [
+        models.Rutina, models.TipoEjercicio, models.PaqueteRutina,
+        models.PlanNutricion, models.Alimento, models.PaqueteNutricion,
+        models.Reto, models.Servicio, models.CargoServicio,
+        models.ConceptoOtroIngreso, models.OtroIngreso, models.Gasto,
+        models.DocumentoFinanciero, models.TurnoCaja, models.AjusteCaja,
+        models.CorrelativoDocumento, models.WhatsAppConfiguracion, models.WhatsAppMensaje,
+    ],
+}
+
+
+def _condiciones_borrado_por_gimnasio(gimnasio_id: int, tablas_raiz=None):
     """
     Calcula, para cada tabla del esquema, la condicion SQL que
     identifica sus filas pertenecientes a un gimnasio -- ya sea porque
@@ -12002,14 +12042,21 @@ def _condiciones_borrado_por_gimnasio(gimnasio_id: int):
     (en cascada, para tablas como cliente_membresias o detalle_ventas
     que no tienen gimnasio_id propio).
 
+    tablas_raiz, si se da, restringe que tablas arrancan la condicion
+    por su propio gimnasio_id (las demas solo entran si algun padre en
+    cascada ya quedo incluido); por defecto todas las tablas con
+    gimnasio_id son raiz. TABLAS_EXCLUIDAS_MIGRACION nunca participa.
+
     Devuelve una lista de (tabla, condicion) en orden hijos-primero,
     lista para borrar sin violar constraints de FK.
     """
     tablas_padres_primero = models.Base.metadata.sorted_tables
     condiciones = {}
     for tabla in tablas_padres_primero:
+        if tabla in TABLAS_EXCLUIDAS_MIGRACION:
+            continue
         partes = []
-        if "gimnasio_id" in tabla.columns:
+        if "gimnasio_id" in tabla.columns and (tablas_raiz is None or tabla in tablas_raiz):
             partes.append(tabla.c.gimnasio_id == gimnasio_id)
         for fk in tabla.foreign_keys:
             tabla_referenciada = fk.column.table
@@ -12025,27 +12072,74 @@ def _condiciones_borrado_por_gimnasio(gimnasio_id: int):
     return [(tabla, condiciones[tabla]) for tabla in tablas_hijos_primero if tabla in condiciones]
 
 
+def _clonar_datos_gimnasio(db: Session, origen_id: int, destino_id: int, tablas_raiz):
+    """
+    Copia (sin tocar el origen) las filas de tablas_raiz -- y sus
+    dependientes en cascada -- del gimnasio origen al destino: cada fila
+    se re-inserta con un id nuevo y sus FK internas se remapean para
+    apuntar al clon correspondiente (padres se clonan antes que hijos).
+
+    Limitacion conocida: una FK auto-referencial (ej. invitado_por_cm_id)
+    se pone en NULL en el clon en vez de remapearse, para no arriesgar
+    que apunte a una fila del origen.
+    """
+    condiciones_hijos_primero = _condiciones_borrado_por_gimnasio(origen_id, tablas_raiz=tablas_raiz)
+    mapas_id = {}  # tabla -> {id_viejo: id_nuevo}
+    for tabla, condicion in reversed(condiciones_hijos_primero):  # padres primero
+        filas = db.execute(select(tabla).where(condicion)).mappings().all()
+        mapa = {}
+        for fila in filas:
+            valores = dict(fila)
+            id_viejo = valores.pop("id")
+            if "gimnasio_id" in valores:
+                valores["gimnasio_id"] = destino_id
+            for fk in tabla.foreign_keys:
+                tabla_padre = fk.column.table
+                col_local = fk.parent.name
+                if tabla_padre is tabla:
+                    valores[col_local] = None  # auto-referencial: ver limitacion
+                    continue
+                mapa_padre = mapas_id.get(tabla_padre)
+                if mapa_padre is not None and valores.get(col_local) in mapa_padre:
+                    valores[col_local] = mapa_padre[valores[col_local]]
+            id_nuevo = db.execute(insert(tabla).values(valores).returning(tabla.c.id)).scalar_one()
+            mapa[id_viejo] = id_nuevo
+        mapas_id[tabla] = mapa
+    return {tabla.name: len(mapa) for tabla, mapa in mapas_id.items() if mapa}
+
+
 @app.post("/saas/gimnasios/{origen_id}/migrar-a/{destino_id}", tags=["SaaS"])
 def migrar_datos_gimnasio(
     origen_id: int,
     destino_id: int,
+    categorias: str = "clientes,productos,staff,otros",
+    modo: str = "mover",
     confirmar_borrado_destino: bool = False,
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(auth.requiere_superadmin),
 ):
     """
-    Mueve TODA la data operativa (clientes, membresias, ventas, etc.)
-    de un gimnasio "origen" a un gimnasio "destino", reasignando
-    gimnasio_id en cada tabla que lo tenga. El gimnasio origen queda
-    vacio (pero no se elimina). Es una operacion de un solo uso,
-    pensada para corregir datos cargados por error en el gimnasio
-    equivocado -- no para uso recurrente.
+    Mueve o copia data operativa (clientes, productos/ventas, staff y
+    profesores, u otros catalogos) de un gimnasio "origen" a un
+    gimnasio "destino", segun las categorias elegidas.
 
-    Si el destino ya tiene datos propios, por defecto NO se ejecuta:
-    se devuelve un resumen de lo que hay para que el superadmin decida
-    y reintente con confirmar_borrado_destino=true (los borra antes de
-    mover los del origen, para evitar choques de datos).
+    Las credenciales de acceso (usuarios, tokens, sesiones) y la
+    facturacion SaaS del gimnasio (TABLAS_EXCLUIDAS_MIGRACION) NUNCA se
+    tocan: cada gimnasio conserva siempre su propio acceso, se elija lo
+    que se elija migrar.
+
+    modo="mover" (default): reasigna gimnasio_id; el origen queda vacio
+    en las categorias elegidas.
+    modo="copiar": clona las filas con id nuevo en el destino; el
+    origen se mantiene intacto.
+
+    Si el destino ya tiene datos propios en esas categorias, por
+    defecto NO se ejecuta: se devuelve un resumen para que el
+    superadmin decida y reintente con confirmar_borrado_destino=true
+    (los borra antes de mover/copiar los del origen).
     """
+    if modo not in ("mover", "copiar"):
+        raise HTTPException(status_code=400, detail="modo debe ser 'mover' o 'copiar'")
     if origen_id == destino_id:
         raise HTTPException(status_code=400, detail="origen y destino deben ser gimnasios distintos")
     origen = db.query(models.Gimnasio).filter(models.Gimnasio.id == origen_id).first()
@@ -12053,7 +12147,19 @@ def migrar_datos_gimnasio(
     if not origen or not destino:
         raise HTTPException(status_code=404, detail="Gimnasio origen o destino no encontrado")
 
-    tablas_con_gimnasio_id = [t for t in models.Base.metadata.sorted_tables if "gimnasio_id" in t.columns]
+    claves = [c.strip() for c in categorias.split(",") if c.strip()]
+    claves_invalidas = [c for c in claves if c not in CATEGORIAS_MIGRACION]
+    if not claves or claves_invalidas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"categorias invalidas o vacias: {claves_invalidas or 'ninguna seleccionada'}",
+        )
+    tablas_raiz = {m.__table__ for c in claves for m in CATEGORIAS_MIGRACION[c]}
+
+    tablas_con_gimnasio_id = [
+        t for t in models.Base.metadata.sorted_tables
+        if "gimnasio_id" in t.columns and t in tablas_raiz
+    ]
 
     resumen_destino = {}
     for tabla in tablas_con_gimnasio_id:
@@ -12064,28 +12170,46 @@ def migrar_datos_gimnasio(
             resumen_destino[tabla.name] = cantidad
 
     if resumen_destino and not confirmar_borrado_destino:
+        verbo = "mover" if modo == "mover" else "copiar"
         return {
             "ok": False,
             "requiere_confirmacion": True,
-            "detalle": f"'{destino.nombre}' ya tiene datos propios. Reintenta con confirmar_borrado_destino=true para borrarlos antes de mover los de '{origen.nombre}'.",
+            "detalle": f"'{destino.nombre}' ya tiene datos propios en las categorias elegidas. Reintenta con confirmar_borrado_destino=true para borrarlos antes de {verbo} los de '{origen.nombre}'.",
             "destino_tiene_datos": resumen_destino,
         }
 
-    # 1. Borrar lo que ya tenga el destino, en cascada (hijos antes que padres)
-    for tabla, condicion in _condiciones_borrado_por_gimnasio(destino_id):
+    # 1. Borrar en el destino lo que choque, en cascada (hijos antes que padres)
+    for tabla, condicion in _condiciones_borrado_por_gimnasio(destino_id, tablas_raiz=tablas_raiz):
         db.execute(tabla.delete().where(condicion))
 
-    # 2. Mover (reasignar) todo lo del origen al destino. Las tablas sin
-    # gimnasio_id propio (ej. cliente_membresias) no necesitan tocarse:
-    # siguen apuntando al mismo id de fila, que ahora vive en el destino.
-    for tabla in tablas_con_gimnasio_id:
-        db.execute(tabla.update().where(tabla.c.gimnasio_id == origen_id).values(gimnasio_id=destino_id))
+    if modo == "mover":
+        # Reasignar todo lo del origen al destino. Las tablas sin
+        # gimnasio_id propio (ej. cliente_membresias) no necesitan
+        # tocarse: siguen apuntando al mismo id de fila, que ahora vive
+        # en el destino.
+        for tabla in tablas_con_gimnasio_id:
+            db.execute(tabla.update().where(tabla.c.gimnasio_id == origen_id).values(gimnasio_id=destino_id))
+        db.commit()
+        return {
+            "ok": True,
+            "detalle": f"Data movida de '{origen.nombre}' a '{destino.nombre}'. '{origen.nombre}' quedo vacio en esas categorias.",
+            "destino_tenia_y_se_borro": resumen_destino,
+        }
 
+    try:
+        filas_copiadas = _clonar_datos_gimnasio(db, origen_id, destino_id, tablas_raiz)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudo copiar: choque de datos unicos en el destino ({exc.orig})",
+        )
     db.commit()
     return {
         "ok": True,
-        "detalle": f"Data movida de '{origen.nombre}' a '{destino.nombre}'. '{origen.nombre}' quedo vacio.",
+        "detalle": f"Data copiada de '{origen.nombre}' a '{destino.nombre}'. '{origen.nombre}' se mantiene intacto.",
         "destino_tenia_y_se_borro": resumen_destino,
+        "filas_copiadas": filas_copiadas,
     }
 
 

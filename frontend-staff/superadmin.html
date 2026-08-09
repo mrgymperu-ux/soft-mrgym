@@ -144,6 +144,23 @@
             <input type="hidden" id="migrar-origen-id">
             <p id="migrar-resumen" style="font-size:.85em;color:#555;"></p>
             <div class="form-group"><label>Gimnasio destino</label><select id="migrar-destino"></select></div>
+            <div class="form-group">
+                <label>Que hacer</label>
+                <select id="migrar-modo" onchange="migrarRequiereBorrado=false; document.getElementById('migrar-choque').style.display='none'; document.getElementById('migrar-btn-confirmar').textContent = migrarBtnTexto(this.value);">
+                    <option value="mover">Mover (el origen queda vacio)</option>
+                    <option value="copiar">Copiar (el origen no se toca)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Que datos</label>
+                <div style="font-size:.9em;line-height:1.9;">
+                    <label style="display:block;"><input type="checkbox" class="migrar-cat" value="clientes" checked> Clientes (membresias, asistencias, progreso)</label>
+                    <label style="display:block;"><input type="checkbox" class="migrar-cat" value="productos" checked> Productos, ventas y compras</label>
+                    <label style="display:block;"><input type="checkbox" class="migrar-cat" value="staff" checked> Staff y profesores (comparten la misma tabla, no se pueden separar)</label>
+                    <label style="display:block;"><input type="checkbox" class="migrar-cat" value="otros" checked> Todo lo demas (rutinas, nutricion, retos, servicios, caja, WhatsApp, etc.)</label>
+                </div>
+                <p style="font-size:.75em;color:#777;margin-top:4px;">El usuario/contraseña de cada gimnasio nunca se toca, sea cual sea la selección.</p>
+            </div>
             <div id="migrar-choque" style="display:none;background:#fff3cd;border-radius:8px;padding:10px;margin-top:8px;font-size:.85em;"></div>
             <div class="modal-actions">
                 <button class="btn" onclick="cerrarModal('modal-migrar')">Cancelar</button>
@@ -392,21 +409,33 @@
             if (otros.length === 0) { alert("No hay otro gimnasio al cual mover la data."); return; }
             migrarRequiereBorrado = false;
             document.getElementById("migrar-origen-id").value = origenId;
-            document.getElementById("migrar-titulo").textContent = `Mover data de "${origenNombre}"`;
-            document.getElementById("migrar-resumen").textContent = `"${origenNombre}" quedará vacío después de esto.`;
+            document.getElementById("migrar-titulo").textContent = `Mover/copiar data de "${origenNombre}"`;
+            document.getElementById("migrar-resumen").textContent = `Elige qué datos y si quieres moverlos (el origen queda vacío en esas categorías) o copiarlos (el origen no se toca).`;
             document.getElementById("migrar-destino").innerHTML = otros.map(g => `<option value="${g.id}">${g.nombre} (${g.slug})</option>`).join("");
+            document.getElementById("migrar-modo").value = "mover";
+            document.querySelectorAll(".migrar-cat").forEach(c => c.checked = true);
             document.getElementById("migrar-choque").style.display = "none";
-            document.getElementById("migrar-btn-confirmar").textContent = "Mover data";
+            document.getElementById("migrar-btn-confirmar").textContent = migrarBtnTexto("mover");
             document.getElementById("modal-migrar").classList.add("active");
+        }
+
+        function migrarBtnTexto(modo) {
+            return modo === "copiar" ? "Copiar data" : "Mover data";
         }
 
         async function confirmarMigracion() {
             const origenId = Number(document.getElementById("migrar-origen-id").value);
             const destinoId = Number(document.getElementById("migrar-destino").value);
             const destino = gimnasiosCache.find(g => g.id === destinoId);
+            const modo = document.getElementById("migrar-modo").value;
+            const categorias = Array.from(document.querySelectorAll(".migrar-cat:checked")).map(c => c.value);
+            if (categorias.length === 0) { alert("Elige al menos una categoría de datos."); return; }
+
+            const params = new URLSearchParams({ categorias: categorias.join(","), modo });
+            if (migrarRequiereBorrado) params.set("confirmar_borrado_destino", "true");
 
             const resultado = await api(
-                `/saas/gimnasios/${origenId}/migrar-a/${destinoId}${migrarRequiereBorrado ? "?confirmar_borrado_destino=true" : ""}`,
+                `/saas/gimnasios/${origenId}/migrar-a/${destinoId}?${params.toString()}`,
                 { method: "POST" },
             );
             if (!resultado) return;
@@ -416,8 +445,8 @@
                 const detalle = Object.entries(resultado.destino_tiene_datos).map(([t, n]) => `${t}: ${n}`).join(", ");
                 const choque = document.getElementById("migrar-choque");
                 choque.style.display = "block";
-                choque.textContent = `"${destino.nombre}" ya tiene datos propios (${detalle}). Si continúas, se BORRARÁN antes de mover los datos.`;
-                document.getElementById("migrar-btn-confirmar").textContent = "Sí, borrar y mover";
+                choque.textContent = `"${destino.nombre}" ya tiene datos propios (${detalle}). Si continúas, se BORRARÁN antes de ${modo === "copiar" ? "copiar" : "mover"} los datos.`;
+                document.getElementById("migrar-btn-confirmar").textContent = `Sí, borrar y ${modo === "copiar" ? "copiar" : "mover"}`;
                 return;
             }
 
