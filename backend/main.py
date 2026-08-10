@@ -11394,13 +11394,28 @@ def registro_gimnasio(datos: schemas.RegistroGimnasioRequest, request: Request, 
 def _sembrar_datos_gimnasio_nuevo(db: Session, gimnasio_id: int):
     """
     Copia los datos iniciales (ejercicios, paquetes de rutinas,
-    alimentos, paquetes de nutricion, puestos y servicios) del gimnasio 1 al
-    nuevo gimnasio. Asi cada gym nuevo arranca con el catalogo
-    completo sin hardcodear la data aqui.
+    alimentos, paquetes de nutricion, puestos, servicios, logo e icono)
+    del gimnasio 1 al nuevo gimnasio. Asi cada gym nuevo arranca con el
+    catalogo completo y la marca del sistema principal, sin hardcodear
+    la data aqui.
     """
     GYM_TEMPLATE = 1
     if gimnasio_id == GYM_TEMPLATE:
         return
+
+    # --- Logo e icono: por defecto, los mismos que el gimnasio plantilla ---
+    plantilla = db.query(models.Gimnasio).filter(models.Gimnasio.id == GYM_TEMPLATE).first()
+    gimnasio_nuevo = db.query(models.Gimnasio).filter(models.Gimnasio.id == gimnasio_id).first()
+    if plantilla and gimnasio_nuevo:
+        if plantilla.logo_datos:
+            gimnasio_nuevo.logo_datos, gimnasio_nuevo.logo_tipo = plantilla.logo_datos, plantilla.logo_tipo
+            gimnasio_nuevo.logo_url = f"/gym/{gimnasio_nuevo.slug}/logo/claro"
+        if plantilla.logo_oscuro_datos:
+            gimnasio_nuevo.logo_oscuro_datos, gimnasio_nuevo.logo_oscuro_tipo = plantilla.logo_oscuro_datos, plantilla.logo_oscuro_tipo
+            gimnasio_nuevo.logo_oscuro_url = f"/gym/{gimnasio_nuevo.slug}/logo/oscuro"
+        if plantilla.icono_datos:
+            gimnasio_nuevo.icono_datos, gimnasio_nuevo.icono_tipo = plantilla.icono_datos, plantilla.icono_tipo
+            gimnasio_nuevo.icono_url = f"/gym/{gimnasio_nuevo.slug}/icono"
 
     # --- Ejercicios ---
     mapa_ejercicios = {}  # id_viejo -> obj_nuevo (para paquetes de rutinas)
