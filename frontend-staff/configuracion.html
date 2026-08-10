@@ -19,17 +19,25 @@
         .logo-preview-transparencia { width:fit-content; max-width:100%; min-width:120px; min-height:72px; padding:8px; border:1px solid var(--color-borde); border-radius:8px; background-color:#fff; background-image:linear-gradient(45deg,#dfe3e6 25%,transparent 25%),linear-gradient(-45deg,#dfe3e6 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#dfe3e6 75%),linear-gradient(-45deg,transparent 75%,#dfe3e6 75%); background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; }
         @media (max-width: 900px) { .config-grid { grid-template-columns: 1fr; } }
         @media (max-width: 520px) { .busqueda-mapa { grid-template-columns:1fr; } #mapa-ubicacion { height:280px; } }
-        .planes-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:16px; }
-        .plan-card { border:1px solid var(--color-borde); border-radius:12px; padding:16px; position:relative; display:flex; flex-direction:column; gap:6px; }
+        .planes-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-top:16px; justify-items:center; }
+        .plan-card { border:1px solid var(--color-borde); border-radius:12px; padding:20px 16px; position:relative; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; width:100%; max-width:240px; transition:transform .15s, box-shadow .15s; }
+        .plan-card:not(.plan-actual):hover { transform:translateY(-3px); box-shadow:0 6px 16px rgba(0,0,0,0.1); }
         .plan-card.plan-actual { border-color:var(--color-exito); background:color-mix(in srgb, var(--color-exito) 8%, transparent); }
         .plan-card.plan-recomendado { border-color:var(--color-info); box-shadow:0 0 0 1px var(--color-info); }
-        .plan-card .plan-badge { position:absolute; top:-10px; right:12px; font-size:.68em; font-weight:700; padding:3px 8px; border-radius:20px; color:#fff; }
+        .plan-card .plan-badge { position:absolute; top:-10px; left:50%; transform:translateX(-50%); font-size:.68em; font-weight:700; padding:3px 10px; border-radius:20px; color:#fff; white-space:nowrap; }
         .plan-card .plan-badge.actual { background:var(--color-exito); }
         .plan-card .plan-badge.recomendado { background:var(--color-info); }
-        .plan-card .plan-nombre { font-weight:700; font-size:1.02em; }
-        .plan-card .plan-precio-mensual { font-size:.88em; }
+        .plan-card .plan-nombre { font-weight:700; font-size:1.05em; margin-top:4px; }
+        .plan-card .plan-precio-mensual { font-size:.9em; }
         .plan-card .plan-precio-anual { font-size:.78em; color:var(--color-texto-secundario); }
-        .plan-card .plan-botones { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+        .plan-caracteristicas { list-style:none; padding:0; margin:10px 0 0; font-size:.8em; color:var(--color-texto-secundario); display:flex; flex-direction:column; gap:4px; }
+        .switch-anual { position:relative; display:inline-block; width:44px; height:24px; }
+        .switch-anual input { opacity:0; width:0; height:0; }
+        .switch-anual .switch-track { position:absolute; inset:0; background:#ccc; border-radius:24px; transition:.2s; }
+        .switch-anual input:checked ~ .switch-track { background:var(--color-exito); }
+        .switch-anual .switch-thumb { position:absolute; top:3px; left:3px; width:18px; height:18px; background:#fff; border-radius:50%; transition:.2s; }
+        .switch-anual input:checked ~ .switch-thumb { left:23px; }
+        #modal-planes.active, #modal-resumen-plan.active { backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
     </style>
 </head>
 <body>
@@ -253,6 +261,29 @@
         <div id="izipay-form-wrap" style="background:#fff;border-radius:0;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.15);display:flex;justify-content:center;">
             <div id="izipay-form-container" style="width:100%;"></div>
         </div>
+    </div>
+</div>
+
+<!-- Modal 1: elegir membresia -->
+<div class="modal" id="modal-planes">
+    <div class="modal-content" style="max-width:960px;text-align:center;">
+        <div class="modal-header">
+            <h3 class="modal-title" style="width:100%;">Elige tu membresia Soft-Gym</h3>
+            <button class="modal-close" onclick="cerrarModalPlanes()">&times;</button>
+        </div>
+        <p style="font-size:.85em;color:var(--color-texto-secundario);margin:0 0 18px;">Selecciona el plan que mejor se ajuste a tu gimnasio.</p>
+        <div class="planes-grid" id="planes-grid-modal"></div>
+    </div>
+</div>
+
+<!-- Modal 2: resumen de compra -->
+<div class="modal" id="modal-resumen-plan">
+    <div class="modal-content" style="max-width:440px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Resumen de compra</h3>
+            <button class="modal-close" onclick="cerrarModalResumen()">&times;</button>
+        </div>
+        <div id="resumen-plan-body"></div>
     </div>
 </div>
 
@@ -605,51 +636,121 @@
                     <div><span style="color:var(--color-texto-secundario);">Gracia hasta</span><br><strong>${fecha(s.fecha_fin_gracia)}</strong></div>
                 </div>
                 ${pagos ? `<div class="table-container"><table class="table"><thead><tr><th>Fecha</th><th>Monto</th><th>Metodo</th></tr></thead><tbody>${pagos}</tbody></table></div>` : '<p style="font-size:.82em;color:var(--color-texto-secundario);">Aun no hay pagos SaaS registrados.</p>'}
-                <button class="btn btn-primary" type="button" style="margin-top:14px;" onclick="abrirPagoIzipay(${s.plan_id ?? "null"})">💳 Pagar suscripcion online</button>
-                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Tambien puedes coordinar la renovacion con el administrador de la plataforma.</p>
-                <div id="planes-disponibles"></div>`;
-            cargarPlanesDisponibles(s.plan_id, s.estado);
+                <button class="btn btn-primary" type="button" style="margin-top:14px;" onclick="abrirModalPlanes()">✨ Adquiere una Membresia</button>
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Tambien puedes coordinar la renovacion con el administrador de la plataforma.</p>`;
         } catch (e) {
             document.getElementById("suscripcion-gym").innerHTML = `<p style="color:var(--color-error);font-size:.85em;">${e.message}</p>`;
         }
     }
 
-    async function cargarPlanesDisponibles(planActualId, estado) {
-        const cont = document.getElementById("planes-disponibles");
-        if (!cont) return;
+    function formatLimitePlan(n) {
+        return (n === 0 || n === null || n === undefined) ? "Ilimitado" : n;
+    }
+
+    function caracteristicasPlan(p) {
+        return `
+            <li>${formatLimitePlan(p.max_clientes)} clientes</li>
+            <li>${formatLimitePlan(p.max_productos)} productos</li>
+            <li>${formatLimitePlan(p.max_usuarios_staff)} usuario(s) de staff</li>
+            ${p.nutricion_habilitada ? "<li>Modulo de nutricion</li>" : ""}
+            ${p.reportes_avanzados ? "<li>Reportes avanzados</li>" : ""}
+            ${p.dominio_propio ? "<li>Dominio propio</li>" : ""}
+        `;
+    }
+
+    let planesCache = [];
+    let planSeleccionadoParaComprar = null;
+
+    async function abrirModalPlanes() {
+        const grid = document.getElementById("planes-grid-modal");
+        grid.innerHTML = '<p style="grid-column:1/-1;text-align:center;font-size:.85em;color:var(--color-texto-secundario);">Cargando planes...</p>';
+        document.getElementById("modal-planes").classList.add("active");
         try {
-            const planes = await apiFetch("/suscripcion/planes");
-            const tienePlan = Boolean(planActualId) && estado !== "sin_configurar";
-            const planActual = planes.find(p => p.id === planActualId);
-            const titulo = tienePlan ? "Mejora tu plan" : "Elige tu plan";
-            const tarjetas = planes.map(p => {
-                const esActual = p.id === planActualId;
-                const esSuperior = tienePlan && planActual && p.precio_mensual > planActual.precio_mensual;
+            const [planes, s] = await Promise.all([
+                apiFetch("/suscripcion/planes"),
+                apiFetch("/suscripcion/mi-plan"),
+            ]);
+            planesCache = planes.filter(p => p.precio_mensual > 0); // no mostrar el plan Free
+            const planActual = planesCache.find(p => p.id === s.plan_id);
+            grid.innerHTML = planesCache.map(p => {
+                const esActual = p.id === s.plan_id;
+                const esSuperior = planActual && p.precio_mensual > planActual.precio_mensual;
                 const clases = ["plan-card"];
                 if (esActual) clases.push("plan-actual");
                 else if (esSuperior) clases.push("plan-recomendado");
                 const badge = esActual
                     ? '<span class="plan-badge actual">Tu plan actual</span>'
-                    : (esSuperior ? '<span class="plan-badge recomendado">Mejora tu plan</span>' : "");
-                const botones = esActual ? "" : `
-                    <div class="plan-botones">
-                        <button class="btn btn-secondary" type="button" style="font-size:.82em;" onclick="abrirPagoIzipay(${p.id},1)">${tienePlan ? "Cambiar" : "Elegir"} mensual</button>
-                        <button class="btn btn-primary" type="button" style="font-size:.82em;" onclick="abrirPagoIzipay(${p.id},12)">${tienePlan ? "Cambiar" : "Elegir"} anual</button>
-                    </div>`;
-                return `<div class="${clases.join(" ")}">
+                    : (esSuperior ? '<span class="plan-badge recomendado">Recomendado</span>' : "");
+                return `<div class="${clases.join(" ")}" style="cursor:${esActual ? "default" : "pointer"};" ${esActual ? "" : `onclick="seleccionarPlanParaComprar(${p.id})"`}>
                     ${badge}
                     <div class="plan-nombre">${p.nombre}</div>
                     <div class="plan-precio-mensual">S/ ${p.precio_mensual.toFixed(2)} /mes</div>
                     <div class="plan-precio-anual">Anual: S/ ${p.precio_anual.toFixed(2)}</div>
-                    ${botones}
+                    <ul class="plan-caracteristicas">${caracteristicasPlan(p)}</ul>
                 </div>`;
             }).join("");
-            cont.innerHTML = `<h4 style="margin:20px 0 4px;font-size:.9em;">${titulo}</h4>
-                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:0 0 4px;">El precio anual equivale a 10 meses (2 meses gratis).</p>
-                <div class="planes-grid">${tarjetas}</div>`;
         } catch (e) {
-            cont.innerHTML = "";
+            grid.innerHTML = `<p style="grid-column:1/-1;text-align:center;color:var(--color-error);font-size:.85em;">${e.message}</p>`;
         }
+    }
+
+    function cerrarModalPlanes() {
+        document.getElementById("modal-planes").classList.remove("active");
+    }
+
+    function seleccionarPlanParaComprar(planId) {
+        planSeleccionadoParaComprar = planesCache.find(p => p.id === planId);
+        if (!planSeleccionadoParaComprar) return;
+        cerrarModalPlanes();
+        document.getElementById("modal-resumen-plan").classList.add("active");
+        renderResumenPlan();
+    }
+
+    function renderResumenPlan() {
+        const p = planSeleccionadoParaComprar;
+        if (!p) return;
+        const anual = document.getElementById("resumen-switch-anual")?.checked ?? true;
+        const monto = anual ? p.precio_anual : p.precio_mensual;
+        const vencimiento = new Date();
+        vencimiento.setMonth(vencimiento.getMonth() + (anual ? 12 : 1));
+        const nombreGym = document.getElementById("c-nombre")?.value || "Tu gimnasio";
+        document.getElementById("resumen-plan-body").innerHTML = `
+            <div style="text-align:center;margin-bottom:16px;">
+                <div style="font-size:.78em;color:var(--color-texto-secundario);">GIMNASIO</div>
+                <strong>${nombreGym}</strong>
+            </div>
+            <div style="text-align:center;margin-bottom:16px;">
+                <div style="font-size:1.05em;font-weight:700;">${p.nombre}</div>
+                <ul class="plan-caracteristicas" style="display:inline-block;text-align:left;margin:8px auto 0;">${caracteristicasPlan(p)}</ul>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:16px;">
+                <span style="font-size:.85em;${anual ? "" : "font-weight:700;"}">Mensual</span>
+                <label class="switch-anual">
+                    <input type="checkbox" id="resumen-switch-anual" ${anual ? "checked" : ""} onchange="renderResumenPlan()">
+                    <span class="switch-track"></span>
+                    <span class="switch-thumb"></span>
+                </label>
+                <span style="font-size:.85em;${anual ? "font-weight:700;" : ""}">Anual</span>
+            </div>
+            <div style="text-align:center;margin-bottom:16px;">
+                <div style="font-size:.78em;color:var(--color-texto-secundario);">TOTAL A PAGAR</div>
+                <div style="font-size:1.4em;font-weight:700;">S/ ${monto.toFixed(2)}</div>
+                <div style="font-size:.78em;color:var(--color-texto-secundario);margin-top:4px;">Vence: ${vencimiento.toLocaleDateString("es-PE")}</div>
+            </div>
+            <button class="btn btn-primary" type="button" style="width:100%;" onclick="confirmarCompraPlan()">💳 Pagar</button>
+        `;
+    }
+
+    function cerrarModalResumen() {
+        document.getElementById("modal-resumen-plan").classList.remove("active");
+    }
+
+    function confirmarCompraPlan() {
+        const p = planSeleccionadoParaComprar;
+        if (!p) return;
+        const anual = document.getElementById("resumen-switch-anual")?.checked ?? true;
+        cerrarModalResumen();
+        abrirPagoIzipay(p.id, anual ? 12 : 1);
     }
 
     // ====== Pago online de la suscripcion (Izipay, checkout incrustado) ======
