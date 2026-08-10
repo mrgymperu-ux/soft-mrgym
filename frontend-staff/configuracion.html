@@ -37,7 +37,7 @@
         .switch-anual input:checked ~ .switch-track { background:var(--color-exito); }
         .switch-anual .switch-thumb { position:absolute; top:3px; left:3px; width:18px; height:18px; background:#fff; border-radius:50%; transition:.2s; }
         .switch-anual input:checked ~ .switch-thumb { left:23px; }
-        #modal-planes.active, #modal-resumen-plan.active { backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+        #modal-planes.active, #modal-resumen-plan.active, #modal-pago-izipay.active { backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
     </style>
 </head>
 <body>
@@ -704,6 +704,26 @@
         cerrarModalPlanes();
         document.getElementById("modal-resumen-plan").classList.add("active");
         renderResumenPlan();
+        precargarSdkIzipay();
+    }
+
+    // Deja los scripts del formulario de pago ya en cache del navegador
+    // mientras el usuario revisa el resumen, para que al tocar "Pagar" el
+    // formulario aparezca de inmediato en vez de esperar la descarga.
+    let izipaySdkPrecargado = false;
+    function precargarSdkIzipay() {
+        if (izipaySdkPrecargado) return;
+        izipaySdkPrecargado = true;
+        [
+            "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/ext/classic.js",
+            "https://static.micuentaweb.pe/static/js/krypton-client/V4.0/stable/kr-payment-form.min.js",
+        ].forEach(src => {
+            const link = document.createElement("link");
+            link.rel = "preload";
+            link.as = "script";
+            link.href = src;
+            document.head.appendChild(link);
+        });
     }
 
     function renderResumenPlan() {
