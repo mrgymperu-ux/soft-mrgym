@@ -11659,6 +11659,28 @@ def mi_suscripcion_saas(
     return _serializar_suscripcion(gimnasio)
 
 
+@app.get("/suscripcion/planes", response_model=List[schemas.PlanSaasPublico], tags=["SaaS"])
+def listar_planes_disponibles(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Planes activos que el dueño del gimnasio puede elegir/mejorar,
+    ordenados de menor a mayor precio. El anual se calcula como 10
+    meses (2 gratis), no es un precio guardado aparte."""
+    planes = db.query(models.PlanSaas).filter(models.PlanSaas.activo == True).order_by(models.PlanSaas.precio_mensual).all()
+    return [
+        schemas.PlanSaasPublico(
+            id=p.id, nombre=p.nombre,
+            precio_mensual=float(p.precio_mensual or 0),
+            precio_anual=round(float(p.precio_mensual or 0) * 10, 2),
+            max_clientes=p.max_clientes, max_productos=p.max_productos, max_rutinas=p.max_rutinas,
+            max_usuarios_staff=p.max_usuarios_staff, nutricion_habilitada=p.nutricion_habilitada,
+            reportes_avanzados=p.reportes_avanzados, dominio_propio=p.dominio_propio,
+        )
+        for p in planes
+    ]
+
+
 @app.put("/saas/gimnasios/{gimnasio_id}/suscripcion", response_model=schemas.SuscripcionSaasOut, tags=["SaaS"])
 def actualizar_suscripcion_saas(
     gimnasio_id: int,
@@ -11841,7 +11863,9 @@ def crear_pago_izipay_suscripcion(
     if not plan or not plan.precio_mensual:
         raise HTTPException(status_code=400, detail="El plan actual no tiene un precio configurado para pago online")
 
-    monto = round(float(plan.precio_mensual) * datos.meses, 2)
+    # Anual (12 meses de cobertura) se cobra al precio de 10 meses -- 2 gratis.
+    meses_a_cobrar = 10 if datos.meses == 12 else datos.meses
+    monto = round(float(plan.precio_mensual) * meses_a_cobrar, 2)
     moneda = "PEN"
     orden_id = f"saas-{gimnasio.id}-{uuid.uuid4().hex[:12]}"
 

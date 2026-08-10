@@ -222,6 +222,22 @@ class PlanSaas(PlanSaasBase):
     activo: bool
 
 
+class PlanSaasPublico(BaseModel):
+    """Version reducida de PlanSaas para el selector de planes del dueño
+    del gimnasio: agrega precio_anual (10 meses, 2 gratis) calculado."""
+    id: int
+    nombre: str
+    precio_mensual: float
+    precio_anual: float
+    max_clientes: int
+    max_productos: int
+    max_rutinas: int
+    max_usuarios_staff: int
+    nutricion_habilitada: bool
+    reportes_avanzados: bool
+    dominio_propio: bool
+
+
 class GimnasioBase(BaseModel):
     nombre: str
     slug: str

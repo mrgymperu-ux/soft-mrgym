@@ -19,6 +19,17 @@
         .logo-preview-transparencia { width:fit-content; max-width:100%; min-width:120px; min-height:72px; padding:8px; border:1px solid var(--color-borde); border-radius:8px; background-color:#fff; background-image:linear-gradient(45deg,#dfe3e6 25%,transparent 25%),linear-gradient(-45deg,#dfe3e6 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#dfe3e6 75%),linear-gradient(-45deg,transparent 75%,#dfe3e6 75%); background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; }
         @media (max-width: 900px) { .config-grid { grid-template-columns: 1fr; } }
         @media (max-width: 520px) { .busqueda-mapa { grid-template-columns:1fr; } #mapa-ubicacion { height:280px; } }
+        .planes-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:16px; }
+        .plan-card { border:1px solid var(--color-borde); border-radius:12px; padding:16px; position:relative; display:flex; flex-direction:column; gap:6px; }
+        .plan-card.plan-actual { border-color:var(--color-exito); background:color-mix(in srgb, var(--color-exito) 8%, transparent); }
+        .plan-card.plan-recomendado { border-color:var(--color-info); box-shadow:0 0 0 1px var(--color-info); }
+        .plan-card .plan-badge { position:absolute; top:-10px; right:12px; font-size:.68em; font-weight:700; padding:3px 8px; border-radius:20px; color:#fff; }
+        .plan-card .plan-badge.actual { background:var(--color-exito); }
+        .plan-card .plan-badge.recomendado { background:var(--color-info); }
+        .plan-card .plan-nombre { font-weight:700; font-size:1.02em; }
+        .plan-card .plan-precio-mensual { font-size:.88em; }
+        .plan-card .plan-precio-anual { font-size:.78em; color:var(--color-texto-secundario); }
+        .plan-card .plan-botones { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
     </style>
 </head>
 <body>
@@ -594,19 +605,61 @@
                     <div><span style="color:var(--color-texto-secundario);">Gracia hasta</span><br><strong>${fecha(s.fecha_fin_gracia)}</strong></div>
                 </div>
                 ${pagos ? `<div class="table-container"><table class="table"><thead><tr><th>Fecha</th><th>Monto</th><th>Metodo</th></tr></thead><tbody>${pagos}</tbody></table></div>` : '<p style="font-size:.82em;color:var(--color-texto-secundario);">Aun no hay pagos SaaS registrados.</p>'}
-                <button class="btn btn-primary" type="button" style="margin-top:14px;" onclick="abrirPagoIzipay()">💳 Pagar suscripcion online</button>
-                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Tambien puedes coordinar la renovacion con el administrador de la plataforma.</p>`;
+                <button class="btn btn-primary" type="button" style="margin-top:14px;" onclick="abrirPagoIzipay(${s.plan_id ?? "null"})">💳 Pagar suscripcion online</button>
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:12px 0 0;">Tambien puedes coordinar la renovacion con el administrador de la plataforma.</p>
+                <div id="planes-disponibles"></div>`;
+            cargarPlanesDisponibles(s.plan_id, s.estado);
         } catch (e) {
             document.getElementById("suscripcion-gym").innerHTML = `<p style="color:var(--color-error);font-size:.85em;">${e.message}</p>`;
         }
     }
 
-    // ====== Pago online de la suscripcion (Izipay, checkout incrustado) ======
-    async function abrirPagoIzipay() {
+    async function cargarPlanesDisponibles(planActualId, estado) {
+        const cont = document.getElementById("planes-disponibles");
+        if (!cont) return;
         try {
+            const planes = await apiFetch("/suscripcion/planes");
+            const tienePlan = Boolean(planActualId) && estado !== "sin_configurar";
+            const planActual = planes.find(p => p.id === planActualId);
+            const titulo = tienePlan ? "Mejora tu plan" : "Elige tu plan";
+            const tarjetas = planes.map(p => {
+                const esActual = p.id === planActualId;
+                const esSuperior = tienePlan && planActual && p.precio_mensual > planActual.precio_mensual;
+                const clases = ["plan-card"];
+                if (esActual) clases.push("plan-actual");
+                else if (esSuperior) clases.push("plan-recomendado");
+                const badge = esActual
+                    ? '<span class="plan-badge actual">Tu plan actual</span>'
+                    : (esSuperior ? '<span class="plan-badge recomendado">Mejora tu plan</span>' : "");
+                const botones = esActual ? "" : `
+                    <div class="plan-botones">
+                        <button class="btn btn-secondary" type="button" style="font-size:.82em;" onclick="abrirPagoIzipay(${p.id},1)">${tienePlan ? "Cambiar" : "Elegir"} mensual</button>
+                        <button class="btn btn-primary" type="button" style="font-size:.82em;" onclick="abrirPagoIzipay(${p.id},12)">${tienePlan ? "Cambiar" : "Elegir"} anual</button>
+                    </div>`;
+                return `<div class="${clases.join(" ")}">
+                    ${badge}
+                    <div class="plan-nombre">${p.nombre}</div>
+                    <div class="plan-precio-mensual">S/ ${p.precio_mensual.toFixed(2)} /mes</div>
+                    <div class="plan-precio-anual">Anual: S/ ${p.precio_anual.toFixed(2)}</div>
+                    ${botones}
+                </div>`;
+            }).join("");
+            cont.innerHTML = `<h4 style="margin:20px 0 4px;font-size:.9em;">${titulo}</h4>
+                <p style="font-size:.78em;color:var(--color-texto-secundario);margin:0 0 4px;">El precio anual equivale a 10 meses (2 meses gratis).</p>
+                <div class="planes-grid">${tarjetas}</div>`;
+        } catch (e) {
+            cont.innerHTML = "";
+        }
+    }
+
+    // ====== Pago online de la suscripcion (Izipay, checkout incrustado) ======
+    async function abrirPagoIzipay(planId = null, meses = 1) {
+        try {
+            const body = { meses };
+            if (planId) body.plan_id = planId;
             const datos = await apiFetch("/suscripcion/pago/izipay/crear", {
                 method: "POST",
-                body: JSON.stringify({ meses: 1 }),
+                body: JSON.stringify(body),
             });
             document.getElementById("izipay-monto").textContent = `${datos.moneda} ${datos.monto.toFixed(2)}`;
             document.getElementById("modal-pago-izipay").classList.add("active");
