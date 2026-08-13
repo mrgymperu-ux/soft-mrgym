@@ -28,13 +28,37 @@ const ETIQUETAS = {
     profesor_de_sala: { singular: "Especialidad", plural: "Especialidades", nuevoPersonal: "Nuevo Profesor", editarPersonal: "Editar Profesor" },
 };
 
-const ZONAS_DISPONIBLES = [
-    ["clientes","Clientes"], ["membresias","Membresías"], ["productos","Productos"],
-    ["ventas","Ventas"], ["venta_rapida","Venta Rápida"], ["asistencias","Asistencias"],
-    ["agenda","Agenda"], ["entrenamientos","Rutinas"],
-    ["nutricion","Nutrición"], ["retos","Retos"], ["planilla","Planilla"], ["pagos","Pagos"],
-    ["sistema","SISTEMA"], ["configuracion","Configuración"],
+// Las zonas se agrupan igual que las secciones del menu lateral, para
+// que el administrador reconozca lo que esta habilitando. El titulo de
+// cada grupo marca o desmarca todas sus zonas de una vez.
+const ZONAS_POR_GRUPO = [
+    { titulo: "Principal", zonas: [
+        ["clientes", "Clientes y medidas"],
+        ["asistencias", "Asistencias"],
+    ]},
+    { titulo: "Gestión", zonas: [
+        ["membresias", "Membresías"],
+        ["productos", "Productos"],
+        ["ventas", "Ventas"],
+        ["venta_rapida", "Venta Rápida"],
+    ]},
+    { titulo: "Seguimiento", zonas: [
+        ["agenda", "Agenda"],
+        ["entrenamientos", "Rutinas"],
+        ["nutricion", "Nutrición"],
+        ["retos", "Retos"],
+    ]},
+    { titulo: "Personal", zonas: [
+        ["planilla", "Planilla de staff y profesores"],
+    ]},
+    { titulo: "Sistema", zonas: [
+        ["sistema", "Dashboard, Caja, Movimientos y Documentos"],
+        ["pagos", "Servicios y deudas"],
+        ["configuracion", "Configuración"],
+    ]},
 ];
+
+const ZONAS_DISPONIBLES = ZONAS_POR_GRUPO.flatMap(grupo => grupo.zonas);
 
 function etiqueta() { return ETIQUETAS[PERSONAL_TIPO]; }
 function esStaffPage() { return PERSONAL_TIPO === "staff_fijo"; }
@@ -83,7 +107,7 @@ function inyectarModalesPersonal() {
             </div>
             <div class="form-group" id="zonas-wrap">
                 <label>Zonas permitidas (solo aplica si NO es administrador)</label>
-                <div id="zonas-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+                <div id="zonas-chips" style="max-height:230px;overflow-y:auto;border:1px solid var(--color-borde);border-radius:10px;padding:4px 12px;"></div>
             </div>
         </div>` : `
         <div id="bloque-profesor">
@@ -252,11 +276,44 @@ async function agregarPuesto() {
 function renderZonasChips(zonasActivas) {
     if (!esStaffPage()) return;
     const activas = (zonasActivas || "").split(",").map(z => z.trim());
-    document.getElementById("zonas-chips").innerHTML = ZONAS_DISPONIBLES.map(([valor, texto]) => `
-        <label style="display:flex;align-items:center;gap:4px;font-size:0.78em;background:var(--color-fondo);padding:5px 9px;border-radius:14px;cursor:pointer;">
-            <input type="checkbox" value="${valor}" ${activas.includes(valor) ? "checked" : ""} style="width:auto;margin:0;"> ${texto}
-        </label>
+    document.getElementById("zonas-chips").innerHTML = ZONAS_POR_GRUPO.map((grupo, indice) => `
+        <div style="padding:6px 0;${indice ? "border-top:1px solid var(--color-borde);" : ""}">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:0.84em;">
+                <input type="checkbox" class="zona-grupo" data-grupo="${indice}" onchange="onToggleGrupoZonas(${indice})" style="width:auto;margin:0;">
+                ${grupo.titulo}
+            </label>
+            <div style="display:flex;flex-direction:column;gap:5px;margin:6px 0 2px 24px;">
+                ${grupo.zonas.map(([valor, texto]) => `
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.8em;">
+                    <input type="checkbox" class="zona-check" data-grupo="${indice}" value="${valor}"
+                           ${activas.includes(valor) ? "checked" : ""}
+                           onchange="sincronizarTituloGrupo(${indice})" style="width:auto;margin:0;">
+                    ${texto}
+                </label>`).join("")}
+            </div>
+        </div>
     `).join("");
+    ZONAS_POR_GRUPO.forEach((_, indice) => sincronizarTituloGrupo(indice));
+}
+
+function zonasDelGrupo(indice) {
+    return Array.from(document.querySelectorAll(`#zonas-chips .zona-check[data-grupo="${indice}"]`));
+}
+
+/** Marcar el titulo habilita todas sus zonas; desmarcarlo las quita. */
+function onToggleGrupoZonas(indice) {
+    const titulo = document.querySelector(`#zonas-chips .zona-grupo[data-grupo="${indice}"]`);
+    zonasDelGrupo(indice).forEach(chk => { chk.checked = titulo.checked; });
+}
+
+/** El titulo refleja el estado real: todo, nada o parcial. */
+function sincronizarTituloGrupo(indice) {
+    const titulo = document.querySelector(`#zonas-chips .zona-grupo[data-grupo="${indice}"]`);
+    if (!titulo) return;
+    const zonas = zonasDelGrupo(indice);
+    const marcadas = zonas.filter(chk => chk.checked).length;
+    titulo.checked = marcadas === zonas.length && zonas.length > 0;
+    titulo.indeterminate = marcadas > 0 && marcadas < zonas.length;
 }
 
 function onToggleAdmin() {
@@ -716,7 +773,8 @@ async function guardarPersonal() {
             // Sin username (solo permitido en accesoOpcional) se guardan
             // unicamente los datos del trabajador, sin crearle cuenta.
             if (username) {
-                const zonasSeleccionadas = Array.from(document.querySelectorAll("#zonas-chips input:checked")).map(c => c.value).join(",");
+                // Solo las zonas: los checkbox de titulo no son un permiso.
+                const zonasSeleccionadas = Array.from(document.querySelectorAll("#zonas-chips .zona-check:checked")).map(c => c.value).join(",");
                 const datosUsuario = {
                     nombre_completo: nombre, username, rol: "staff", empleado_id: empleadoId,
                     es_administrador: document.getElementById("u-es-admin").checked,
