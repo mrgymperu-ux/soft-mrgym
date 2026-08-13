@@ -16,7 +16,11 @@
                 <h1 class="header-title">Usuarios Profesores</h1>
                 <p class="header-subtitle">Profesores de sala con acceso a su Zona de Profesores (DNI + código)</p>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:12px;align-items:center;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;cursor:pointer;">
+                    <input type="checkbox" id="chk-mostrar-ocultos" onchange="alternarOcultos()" style="width:auto;margin:0;">
+                    <span id="etiqueta-ocultos">Mostrar ocultos</span>
+                </label>
                 <button id="btn-gestionar-puestos" class="btn btn-secondary" onclick="abrirModalPuestos()">⚙️ Especialidades</button>
                 <button class="btn btn-primary" onclick="abrirModalNuevo()">+ Nuevo Profesor</button>
             </div>
@@ -39,7 +43,7 @@
 
 <script src="js/api.js"></script>
 <script src="js/sidebar.js?v=20260805-1"></script>
-<script src="js/personal.js?v=20260723-3"></script>
+<script src="js/personal.js?v=20260813-1"></script>
 <script>initPersonal("profesor_de_sala");</script>
 </body>
 </html>

@@ -64,14 +64,18 @@ function inyectarModalesPersonal() {
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="form-group"><label>DNI *</label><input type="text" id="u-dni"></div>
-            <div class="form-group"><label>Celular *</label><input type="text" id="u-celular"></div>
+            <div class="form-group"><label id="label-dni">DNI *</label><input type="text" id="u-dni"></div>
+            <div class="form-group"><label id="label-celular">Celular *</label><input type="text" id="u-celular"></div>
         </div>
-        <div class="form-group"><label>Fecha de Nacimiento *</label><input type="date" id="u-fecha-nacimiento"></div>
+        <div class="form-group"><label id="label-fecha-nacimiento">Fecha de Nacimiento *</label><input type="date" id="u-fecha-nacimiento"></div>
 
         ${esStaffPage() ? `
         <div id="bloque-staff">
-            <div class="form-group"><label>Username *</label><input type="text" id="u-username" placeholder="ej: recepcion1"></div>
+            <div class="form-group">
+                <label>Username *</label>
+                <input type="text" id="u-username" placeholder="ej: recepcion1">
+                <small id="aviso-acceso-opcional" style="display:none;color:#636E72;">Déjalo vacío si por ahora no quieres darle acceso al software: se guardarán solo sus datos.</small>
+            </div>
             <div class="form-group" style="border-top:1px solid var(--color-borde);padding-top:14px;">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="u-es-admin" onchange="onToggleAdmin()" style="width:auto;"> Administrador (acceso total, incluye Usuarios y Metas/Comisiones)</label>
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;"><input type="checkbox" id="u-puede-eliminar" style="width:auto;"> Puede eliminar registros (clientes, membresías, productos)</label>
@@ -262,53 +266,130 @@ function onToggleAdmin() {
     document.getElementById("zonas-wrap").style.pointerEvents = esAdmin ? "none" : "auto";
 }
 
-async function cargarPersonal() {
-    if (!esAdministrador()) {
-        const btn = document.querySelector(".header .btn-primary");
-        if (btn) btn.style.display = "none";
-        const btnPuestos = document.getElementById("btn-gestionar-puestos");
-        if (btnPuestos) btnPuestos.style.display = "none";
+function mostrandoOcultos() {
+    const chk = document.getElementById("chk-mostrar-ocultos");
+    return !!(chk && chk.checked);
+}
+
+function alternarOcultos() {
+    cargarPersonal();
+}
+
+/**
+ * Filas de la tabla. En la pagina de staff se unen dos fuentes:
+ *   - las cuentas de acceso (/usuarios/)
+ *   - el personal staff que todavia NO tiene cuenta (/empleados/),
+ *     por ejemplo el registrado desde Planilla Staff.
+ * Sin esa union, ese personal queda invisible aqui.
+ */
+function construirFilasPersonal() {
+    if (!esStaffPage()) {
+        return empleadosCache
+            .filter(e => e.tipo === "profesor_de_sala")
+            .map(e => ({
+                tipo: "empleado", id: e.id, nombre: e.nombre_completo,
+                puesto: e.puesto || "—", dni: e.dni || "—",
+                acceso: '<span class="badge badge-success" style="font-size:0.65em;">Zona de Profesores</span>',
+                activo: e.activo,
+            }));
     }
 
-    [empleadosCache, usuariosCache] = await Promise.all([apiFetch("/empleados/"), apiFetch("/usuarios/")]);
+    const filas = usuariosCache.map(u => {
+        const empleado = u.empleado_id ? empleadosCache.find(e => e.id === u.empleado_id) : null;
+        const permisoBadge = u.es_administrador
+            ? '<span class="badge badge-info" style="font-size:0.65em;">Admin</span>'
+            : `<span class="badge badge-warning" style="font-size:0.65em;">${(u.zonas_permitidas||"").split(",").filter(Boolean).length} zonas</span>`;
+        return {
+            tipo: "usuario", id: u.id, nombre: u.nombre_completo,
+            puesto: empleado ? (empleado.puesto || "—") : "—",
+            dni: empleado ? (empleado.dni || "—") : "—",
+            acceso: `Software ${permisoBadge}`,
+            activo: u.activo,
+        };
+    });
+
+    const conCuenta = new Set(usuariosCache.map(u => u.empleado_id).filter(Boolean));
+    empleadosCache
+        .filter(e => e.tipo === "staff_fijo" && !conCuenta.has(e.id))
+        .forEach(e => filas.push({
+            tipo: "empleado", id: e.id, nombre: e.nombre_completo,
+            puesto: e.puesto || "—", dni: e.dni || "—",
+            acceso: '<span class="badge badge-warning" style="font-size:0.65em;">Sin acceso al software</span>',
+            activo: e.activo,
+        }));
+
+    return filas;
+}
+
+async function cargarPersonal() {
+    // Solo el administrador entra a esta pagina (ver initPersonal), asi
+    // que siempre se pide tambien el personal oculto para poder listarlo.
+    [empleadosCache, usuariosCache] = await Promise.all([
+        apiFetch("/empleados/?incluir_inactivos=true"),
+        apiFetch("/usuarios/"),
+    ]);
     const tbody = document.getElementById("tabla-personal");
 
-    let filas;
-    if (esStaffPage()) {
-        filas = usuariosCache.map(u => {
-            const empleado = u.empleado_id ? empleadosCache.find(e => e.id === u.empleado_id) : null;
-            const permisoBadge = u.es_administrador
-                ? '<span class="badge badge-info" style="font-size:0.65em;">Admin</span>'
-                : `<span class="badge badge-warning" style="font-size:0.65em;">${(u.zonas_permitidas||"").split(",").filter(Boolean).length} zonas</span>`;
-            return { nombre: u.nombre_completo, puesto: empleado ? (empleado.puesto || "—") : "—", dni: empleado ? (empleado.dni || "—") : "—",
-                acceso: `Software ${permisoBadge}`, activo: u.activo, id: u.id };
-        });
-    } else {
-        filas = empleadosCache.filter(e => e.tipo === "profesor_de_sala").map(e => ({
-            nombre: e.nombre_completo, puesto: e.puesto || "—", dni: e.dni || "—",
-            acceso: '<span class="badge badge-success" style="font-size:0.65em;">Zona de Profesores</span>', activo: e.activo, id: e.id,
-        }));
+    const todas = construirFilasPersonal();
+    const ocultas = todas.filter(f => !f.activo).length;
+    const filas = mostrandoOcultos() ? todas : todas.filter(f => f.activo);
+
+    const etiquetaOcultos = document.getElementById("etiqueta-ocultos");
+    if (etiquetaOcultos) {
+        etiquetaOcultos.textContent = ocultas ? `Mostrar ocultos (${ocultas})` : "Mostrar ocultos";
     }
 
     if (!filas.length) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No hay ${esStaffPage() ? "staff" : "profesores"} registrados</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No hay ${esStaffPage() ? "staff" : "profesores"} ${mostrandoOcultos() ? "registrado" : "visible"}</td></tr>`;
         return;
     }
 
-    tbody.innerHTML = filas.map(f => `<tr>
-        <td><strong>${f.nombre}</strong></td>
-        <td>${f.puesto}</td>
-        <td style="font-family:monospace;font-size:0.85em;">${f.dni}</td>
+    tbody.innerHTML = filas.map(f => {
+        const ref = `'${f.tipo}', ${f.id}`;
+        const acciones = f.activo
+            ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${ref})">Editar</button>
+               ${esStaffPage() && f.tipo === "usuario"
+                    ? `<button class="btn btn-sm" onclick="abrirModalInvitacion(${f.id})">Invitar</button>
+                       <button class="btn btn-sm btn-secondary" onclick="abrirModalVerAcceso(${f.id})">Ver</button>`
+                    : ""}
+               ${esStaffPage() && f.tipo === "empleado"
+                    ? `<button class="btn btn-sm btn-primary" onclick="abrirModalCrearAcceso(${f.id})">Crear acceso</button>`
+                    : ""}
+               <button class="btn btn-sm btn-secondary" onclick="ocultarPersonal(${ref}, true)">Ocultar</button>
+               ${f.tipo === "empleado" ? `<button class="btn btn-sm btn-danger" onclick="eliminarPersonal(${f.id})">Eliminar</button>` : ""}`
+            : `<button class="btn btn-sm btn-secondary" onclick="ocultarPersonal(${ref}, false)">Restaurar</button>
+               ${f.tipo === "empleado" ? `<button class="btn btn-sm btn-danger" onclick="eliminarPersonal(${f.id})">Eliminar</button>` : ""}`;
+        return `<tr${f.activo ? "" : ' style="opacity:.55;"'}>
+        <td><strong>${escapeHTML(f.nombre)}</strong></td>
+        <td>${escapeHTML(f.puesto)}</td>
+        <td style="font-family:monospace;font-size:0.85em;">${escapeHTML(f.dni)}</td>
         <td>${f.acceso}</td>
-        <td><span class="badge ${f.activo ? "badge-success" : "badge-error"}">${f.activo ? "Activo" : "Inactivo"}</span></td>
-        <td>
-            ${esAdministrador()
-                ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalEditar(${f.id})">Editar</button>
-                   ${esStaffPage() ? `<button class="btn btn-sm" onclick="abrirModalInvitacion(${f.id})" ${f.activo ? "" : "disabled"}>Invitar</button>
-                   <button class="btn btn-sm btn-secondary" onclick="abrirModalVerAcceso(${f.id})">Ver</button>` : ""}`
-                : '<span style="color:#636E72;font-size:0.8em;">Solo lectura</span>'}
-        </td>
-    </tr>`).join("");
+        <td><span class="badge ${f.activo ? "badge-success" : "badge-error"}">${f.activo ? "Activo" : "Oculto"}</span></td>
+        <td>${acciones}</td>
+    </tr>`;
+    }).join("");
+}
+
+/**
+ * Ocultar no borra nada: el trabajador sale de los listados y de
+ * Planilla, pierde el acceso al software y su historial de pagos se
+ * conserva. Se puede restaurar con "Mostrar ocultos".
+ */
+async function ocultarPersonal(tipo, id, oculto) {
+    const filas = construirFilasPersonal();
+    const fila = filas.find(f => f.tipo === tipo && f.id === id);
+    const nombre = fila ? fila.nombre : "este trabajador";
+    const mensaje = oculto
+        ? `¿Ocultar a ${nombre}?\n\nDejará de aparecer en Usuarios Staff y en Planilla, y si tiene cuenta perderá el acceso al software.\nNo se borra nada: su historial de pagos se conserva y puedes restaurarlo cuando quieras.`
+        : `¿Restaurar a ${nombre}?\n\nVolverá a aparecer en los listados y recuperará su acceso al software si tenía cuenta.`;
+    if (!(await confirmDialog(mensaje, oculto ? "Ocultar" : "Restaurar"))) return;
+
+    try {
+        const ruta = tipo === "usuario" ? `/usuarios/${id}/visibilidad` : `/empleados/${id}/visibilidad`;
+        await apiFetch(ruta, { method: "PUT", body: JSON.stringify({ oculto }) });
+        showSuccess(oculto ? "Trabajador ocultado" : "Trabajador restaurado");
+        cargarPersonal();
+    } catch (e) { showError(e.message); }
 }
 
 function abrirModalVerAcceso(usuarioId) {
@@ -451,6 +532,24 @@ async function invitarStaffPorWhatsApp() {
     }
 }
 
+/**
+ * Borrado definitivo de una ficha mal ingresada (un duplicado, por
+ * ejemplo). El backend lo rechaza si el trabajador tiene cuenta de
+ * acceso o historial; en ese caso queda ocultarlo.
+ */
+async function eliminarPersonal(empleadoId) {
+    const empleado = empleadosCache.find(e => e.id === empleadoId);
+    const nombre = empleado ? empleado.nombre_completo : "este trabajador";
+    const mensaje = `¿Borrar definitivamente a ${nombre}?\n\nEsta acción NO se puede deshacer: su ficha desaparece del sistema.\nSi solo dejó de trabajar, usa "Ocultar" para conservar su historial.`;
+    if (!(await confirmDialog(mensaje, "Borrar definitivamente"))) return;
+
+    try {
+        await apiFetch(`/empleados/${empleadoId}`, { method: "DELETE" });
+        showSuccess("Trabajador eliminado");
+        cargarPersonal();
+    } catch (e) { showError(e.message); }
+}
+
 // ==================================================================
 // MODAL NUEVO / EDITAR PERSONAL
 // ==================================================================
@@ -467,6 +566,7 @@ function limpiarFormulario() {
         document.getElementById("u-puede-exportar").checked = false;
         renderZonasChips("");
         onToggleAdmin();
+        mostrarAvisoAccesoOpcional(false);
     } else {
         document.getElementById("u-codigo-acceso").value = "";
     }
@@ -481,11 +581,19 @@ function abrirModalNuevo() {
     document.getElementById("modal-usuario").classList.add("active");
 }
 
-function abrirModalEditar(id) {
+function llenarDatosEmpleado(empleado) {
+    document.getElementById("u-nombre").value = empleado.nombre_completo;
+    document.getElementById("u-dni").value = empleado.dni || "";
+    document.getElementById("u-celular").value = empleado.telefono || "";
+    document.getElementById("u-fecha-nacimiento").value = empleado.fecha_nacimiento || "";
+    poblarSelectPuestos(empleado.puesto || null);
+}
+
+function abrirModalEditar(tipo, id) {
     limpiarFormulario();
     document.getElementById("modal-titulo").textContent = etiqueta().editarPersonal;
 
-    if (esStaffPage()) {
+    if (esStaffPage() && tipo === "usuario") {
         const usuario = usuariosCache.find(u => u.id === id);
         const empleado = usuario.empleado_id ? empleadosCache.find(e => e.id === usuario.empleado_id) : null;
         editando = { usuario, empleado };
@@ -497,25 +605,49 @@ function abrirModalEditar(id) {
         document.getElementById("u-puede-exportar").checked = !!usuario.puede_exportar;
         renderZonasChips(usuario.zonas_permitidas);
         onToggleAdmin();
-        if (empleado) {
-            document.getElementById("u-dni").value = empleado.dni || "";
-            document.getElementById("u-celular").value = empleado.telefono || "";
-            document.getElementById("u-fecha-nacimiento").value = empleado.fecha_nacimiento || "";
-            poblarSelectPuestos(empleado.puesto || null);
-        }
+        if (empleado) llenarDatosEmpleado(empleado);
+    } else if (esStaffPage()) {
+        // Staff registrado en Planilla, todavia sin cuenta de acceso.
+        const empleado = empleadosCache.find(e => e.id === id);
+        editando = { empleado, usuario: null };
+        llenarDatosEmpleado(empleado);
+        mostrarAvisoAccesoOpcional(true);
     } else {
         const empleado = empleadosCache.find(e => e.id === id);
         editando = { empleado };
-
-        document.getElementById("u-nombre").value = empleado.nombre_completo;
-        document.getElementById("u-dni").value = empleado.dni || "";
-        document.getElementById("u-celular").value = empleado.telefono || "";
-        document.getElementById("u-fecha-nacimiento").value = empleado.fecha_nacimiento || "";
+        llenarDatosEmpleado(empleado);
         document.getElementById("u-codigo-acceso").value = empleado.codigo_acceso || "";
-        poblarSelectPuestos(empleado.puesto || null);
     }
 
     document.getElementById("modal-usuario").classList.add("active");
+}
+
+/** Abre el modal para darle cuenta de software a un staff que ya existe. */
+function abrirModalCrearAcceso(empleadoId) {
+    const empleado = empleadosCache.find(e => e.id === empleadoId);
+    if (!empleado) { showError("No se encontró el trabajador"); return; }
+    limpiarFormulario();
+    document.getElementById("modal-titulo").textContent = "Crear acceso al software";
+    editando = { empleado, usuario: null };
+    llenarDatosEmpleado(empleado);
+    mostrarAvisoAccesoOpcional(true);
+    document.getElementById("modal-usuario").classList.add("active");
+    document.getElementById("u-username").focus();
+}
+
+/**
+ * Modo "staff que ya existe": el trabajador ya esta registrado (por
+ * ejemplo desde Planilla, que no pide DNI ni fecha), asi que esos
+ * campos y el username dejan de ser obligatorios.
+ */
+function mostrarAvisoAccesoOpcional(visible) {
+    const aviso = document.getElementById("aviso-acceso-opcional");
+    if (aviso) aviso.style.display = visible ? "block" : "none";
+    [["label-dni", "DNI"], ["label-celular", "Celular"], ["label-fecha-nacimiento", "Fecha de Nacimiento"]]
+        .forEach(([id, texto]) => {
+            const label = document.getElementById(id);
+            if (label) label.textContent = visible ? texto : `${texto} *`;
+        });
 }
 
 function cerrarModal() {
@@ -531,7 +663,18 @@ async function guardarPersonal() {
     const puesto = puestoSeleccionado();
     const esPuestoNuevo = document.getElementById("u-puesto-select").value === "__nuevo__";
 
-    if (!nombre || !dni || !celular || !fechaNacimiento || !puesto) {
+    // Al darle acceso a un staff que ya existe (creado en Planilla, que
+    // no pide DNI ni fecha) solo se exige lo minimo: el resto se
+    // completa cuando se tenga, sin bloquear la creacion del acceso.
+    // Por lo mismo el username es opcional ahi: sin el se guardan solo
+    // los datos del trabajador, sin darle acceso.
+    const accesoOpcional = esStaffPage() && !!(editando && editando.empleado && !editando.usuario);
+
+    if (!nombre || !puesto) {
+        showError(`Completa nombre y ${etiqueta().singular.toLowerCase()}`);
+        return;
+    }
+    if (!accesoOpcional && (!dni || !celular || !fechaNacimiento)) {
         showError(`Completa nombre, ${etiqueta().singular.toLowerCase()}, DNI, celular y fecha de nacimiento`);
         return;
     }
@@ -540,16 +683,17 @@ async function guardarPersonal() {
     let username = "", codigo = "";
     if (esStaffPage()) {
         username = document.getElementById("u-username").value.trim();
-        if (!username) { showError("El username es obligatorio"); return; }
+        if (!username && !accesoOpcional) { showError("El username es obligatorio"); return; }
     } else {
         codigo = document.getElementById("u-codigo-acceso").value.trim();
         if (!codigo) { showError("El código de acceso es obligatorio para profesores"); return; }
     }
 
-    const datosEmpleado = {
-        nombre_completo: nombre, tipo: PERSONAL_TIPO, telefono: celular, dni,
-        fecha_nacimiento: fechaNacimiento, puesto,
-    };
+    // Los campos vacios no se envian para no borrar lo que ya estaba.
+    const datosEmpleado = { nombre_completo: nombre, tipo: PERSONAL_TIPO, puesto };
+    if (dni) datosEmpleado.dni = dni;
+    if (celular) datosEmpleado.telefono = celular;
+    if (fechaNacimiento) datosEmpleado.fecha_nacimiento = fechaNacimiento;
 
     try {
         // Si el puesto es nuevo, tambien se registra en el catalogo
@@ -569,18 +713,22 @@ async function guardarPersonal() {
         }
 
         if (esStaffPage()) {
-            const zonasSeleccionadas = Array.from(document.querySelectorAll("#zonas-chips input:checked")).map(c => c.value).join(",");
-            const datosUsuario = {
-                nombre_completo: nombre, username, rol: "staff", empleado_id: empleadoId,
-                es_administrador: document.getElementById("u-es-admin").checked,
-                puede_eliminar: document.getElementById("u-puede-eliminar").checked,
-                puede_exportar: document.getElementById("u-puede-exportar").checked,
-                zonas_permitidas: zonasSeleccionadas,
-            };
-            if (editando && editando.usuario) {
-                await apiFetch(`/usuarios/${editando.usuario.id}`, { method: "PUT", body: JSON.stringify(datosUsuario) });
-            } else {
-                await apiFetch("/usuarios/", { method: "POST", body: JSON.stringify(datosUsuario) });
+            // Sin username (solo permitido en accesoOpcional) se guardan
+            // unicamente los datos del trabajador, sin crearle cuenta.
+            if (username) {
+                const zonasSeleccionadas = Array.from(document.querySelectorAll("#zonas-chips input:checked")).map(c => c.value).join(",");
+                const datosUsuario = {
+                    nombre_completo: nombre, username, rol: "staff", empleado_id: empleadoId,
+                    es_administrador: document.getElementById("u-es-admin").checked,
+                    puede_eliminar: document.getElementById("u-puede-eliminar").checked,
+                    puede_exportar: document.getElementById("u-puede-exportar").checked,
+                    zonas_permitidas: zonasSeleccionadas,
+                };
+                if (editando && editando.usuario) {
+                    await apiFetch(`/usuarios/${editando.usuario.id}`, { method: "PUT", body: JSON.stringify(datosUsuario) });
+                } else {
+                    await apiFetch("/usuarios/", { method: "POST", body: JSON.stringify(datosUsuario) });
+                }
             }
         } else {
             await apiFetch(`/empleados/${empleadoId}`, { method: "PUT", body: JSON.stringify({ codigo_acceso: codigo }) });
@@ -598,6 +746,16 @@ async function guardarPersonal() {
 
 async function initPersonal(tipo) {
     PERSONAL_TIPO = tipo;
+    // Zona exclusiva del administrador (el menu ya la oculta al resto y
+    // el backend la protege; esto evita entrar por URL directa).
+    if (!esAdministrador()) {
+        const tbody = document.getElementById("tabla-personal");
+        if (tbody) tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Sección exclusiva del administrador</td></tr>';
+        document.querySelectorAll(".header .btn").forEach(btn => { btn.style.display = "none"; });
+        showError("Esta sección es solo para el administrador");
+        setTimeout(() => { window.location.href = "principal.html"; }, 1500);
+        return;
+    }
     inyectarModalesPersonal();
     try {
         await cargarPuestos();

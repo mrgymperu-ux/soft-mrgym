@@ -1272,6 +1272,11 @@ class EmpleadoUpdate(BaseModel):
         return self
 
 
+class VisibilidadPersonal(BaseModel):
+    """Ocultar/restaurar personal desde Usuarios Staff (solo administrador)."""
+    oculto: bool
+
+
 class Empleado(EmpleadoBase):
     model_config = ConfigDict(from_attributes=True)
     codigo_acceso: Optional[str] = Field(default=None, exclude=True)

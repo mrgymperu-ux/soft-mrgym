@@ -89,6 +89,10 @@ from backend.main import (
     listado_completo_clientes,
     listado_paginado_clientes,
     listar_usuarios_counter,
+    listar_empleados,
+    eliminar_empleado,
+    cambiar_visibilidad_empleado,
+    cambiar_visibilidad_usuario,
     login_counter,
     obtener_whatsapp_configuracion,
     configurar_pin_counter,
@@ -1789,6 +1793,155 @@ class MultiTenantTest(unittest.TestCase):
                 usuario=self.admin1,
             )
         self.assertEqual(conflicto.exception.status_code, 409)
+
+    def _staff_con_cuenta(self, nombre="Counter Test"):
+        empleado = models.Empleado(
+            gimnasio_id=self.gym1.id,
+            nombre_completo=nombre,
+            tipo=models.TipoEmpleado.STAFF_FIJO,
+            puesto="Counter",
+        )
+        self.db.add(empleado)
+        self.db.flush()
+        usuario = models.Usuario(
+            gimnasio_id=self.gym1.id,
+            nombre_completo=nombre,
+            username=nombre.lower().replace(" ", "-"),
+            password_hash="test",
+            rol=models.RolUsuario.STAFF,
+            empleado_id=empleado.id,
+        )
+        self.db.add(usuario)
+        self.db.commit()
+        return empleado, usuario
+
+    def test_ocultar_staff_lo_saca_de_los_listados_y_restaurar_lo_devuelve(self):
+        self.plan_saas.max_usuarios_staff = 0  # ilimitado en esta prueba
+        self.db.commit()
+        empleado, usuario = self._staff_con_cuenta()
+        version_previa = int(usuario.sesion_version or 1)
+
+        cambiar_visibilidad_usuario(
+            usuario.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+        )
+        self.db.refresh(empleado)
+        self.db.refresh(usuario)
+        self.assertFalse(empleado.activo)
+        self.assertFalse(usuario.activo)
+        # La sesion abierta del trabajador oculto queda invalidada.
+        self.assertGreater(int(usuario.sesion_version or 1), version_previa)
+
+        visibles = listar_empleados(db=self.db, usuario=self.admin1)
+        self.assertNotIn(empleado.id, [e.id for e in visibles])
+        con_ocultos = listar_empleados(incluir_inactivos=True, db=self.db, usuario=self.admin1)
+        self.assertIn(empleado.id, [e.id for e in con_ocultos])
+
+        cambiar_visibilidad_usuario(
+            usuario.id, schemas.VisibilidadPersonal(oculto=False), db=self.db, usuario_admin=self.admin1
+        )
+        self.db.refresh(empleado)
+        self.db.refresh(usuario)
+        self.assertTrue(empleado.activo)
+        self.assertTrue(usuario.activo)
+
+    def test_ocultar_empleado_sin_cuenta_y_arrastrando_la_cuenta_ligada(self):
+        sin_cuenta = crear_empleado(
+            schemas.EmpleadoCreate(nombre_completo="Limpieza Test", tipo=models.TipoEmpleado.STAFF_FIJO),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        cambiar_visibilidad_empleado(
+            sin_cuenta.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+        )
+        self.db.refresh(sin_cuenta)
+        self.assertFalse(sin_cuenta.activo)
+
+        empleado, usuario = self._staff_con_cuenta("Otro Counter")
+        cambiar_visibilidad_empleado(
+            empleado.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+        )
+        self.db.refresh(usuario)
+        self.assertFalse(usuario.activo)
+
+    def test_administrador_no_puede_ocultarse_a_si_mismo(self):
+        with self.assertRaises(HTTPException) as error:
+            cambiar_visibilidad_usuario(
+                self.admin1.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+            )
+        self.assertEqual(error.exception.status_code, 400)
+        self.db.refresh(self.admin1)
+        self.assertTrue(self.admin1.activo)
+
+    def test_ocultar_no_cruza_gimnasios(self):
+        ajeno = models.Empleado(
+            gimnasio_id=self.gym2.id, nombre_completo="Ajeno", tipo=models.TipoEmpleado.STAFF_FIJO
+        )
+        self.db.add(ajeno)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            cambiar_visibilidad_empleado(
+                ajeno.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+            )
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_restaurar_respeta_el_limite_de_staff_del_plan(self):
+        # El plan permite 1 usuario de staff y el gimnasio ya tiene 2 activos.
+        self.plan_saas.max_usuarios_staff = 1
+        self.db.commit()
+        _, usuario = self._staff_con_cuenta("Cupo Test")
+        cambiar_visibilidad_usuario(
+            usuario.id, schemas.VisibilidadPersonal(oculto=True), db=self.db, usuario_admin=self.admin1
+        )
+        with self.assertRaises(HTTPException) as error:
+            cambiar_visibilidad_usuario(
+                usuario.id, schemas.VisibilidadPersonal(oculto=False), db=self.db, usuario_admin=self.admin1
+            )
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_borrar_ficha_duplicada_sin_cuenta_ni_historial(self):
+        duplicado = crear_empleado(
+            schemas.EmpleadoCreate(nombre_completo="Duplicado", tipo=models.TipoEmpleado.STAFF_FIJO),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        eliminar_empleado(duplicado.id, db=self.db, usuario_admin=self.admin1)
+        self.assertIsNone(_del_gym(self.db, models.Empleado, duplicado.id, self.admin1))
+
+    def test_no_borra_al_que_tiene_cuenta_ni_al_que_tiene_historial(self):
+        empleado, _ = self._staff_con_cuenta("Con Cuenta")
+        with self.assertRaises(HTTPException) as con_cuenta:
+            eliminar_empleado(empleado.id, db=self.db, usuario_admin=self.admin1)
+        self.assertEqual(con_cuenta.exception.status_code, 409)
+
+        con_pagos = crear_empleado(
+            schemas.EmpleadoCreate(nombre_completo="Con Historial", tipo=models.TipoEmpleado.STAFF_FIJO),
+            db=self.db,
+            usuario=self.admin1,
+        )
+        self.db.add(models.PagoPlanilla(
+            gimnasio_id=self.gym1.id, empleado_id=con_pagos.id, tipo="staff",
+            anio=2026, mes=8, monto_total=500, fecha_pago=datetime(2026, 8, 1),
+        ))
+        self.db.commit()
+        with self.assertRaises(HTTPException) as con_historial:
+            eliminar_empleado(con_pagos.id, db=self.db, usuario_admin=self.admin1)
+        self.assertEqual(con_historial.exception.status_code, 409)
+        self.assertIsNotNone(_del_gym(self.db, models.Empleado, con_pagos.id, self.admin1))
+
+    def test_no_se_borra_personal_de_otro_gimnasio(self):
+        ajeno = models.Empleado(
+            gimnasio_id=self.gym2.id, nombre_completo="Ajeno Borrar", tipo=models.TipoEmpleado.STAFF_FIJO
+        )
+        self.db.add(ajeno)
+        self.db.commit()
+        with self.assertRaises(HTTPException) as error:
+            eliminar_empleado(ajeno.id, db=self.db, usuario_admin=self.admin1)
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_solo_el_administrador_ve_al_personal_oculto(self):
+        with self.assertRaises(HTTPException) as error:
+            listar_empleados(incluir_inactivos=True, db=self.db, usuario=self.staff1)
+        self.assertEqual(error.exception.status_code, 403)
 
 
 if __name__ == "__main__":

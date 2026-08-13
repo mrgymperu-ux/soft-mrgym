@@ -3030,6 +3030,51 @@ def desactivar_usuario(usuario_id: int, db: Session = Depends(get_db), usuario_a
     return {"message": "Usuario desactivado correctamente"}
 
 
+def _cambiar_visibilidad_personal(
+    db: Session,
+    usuario_admin: models.Usuario,
+    empleado: Optional[models.Empleado],
+    usuario: Optional[models.Usuario],
+    oculto: bool,
+):
+    """
+    Oculta o restaura a un trabajador. Ocultar nunca borra: desactiva
+    su ficha de Empleado (sale de Planilla y de los listados) y su
+    cuenta de acceso si la tiene, conservando el historial de pagos.
+    """
+    if usuario and usuario.id == usuario_admin.id:
+        raise HTTPException(status_code=400, detail="No puedes ocultarte a ti mismo")
+
+    # Restaurar una cuenta de staff vuelve a consumir un cupo del plan.
+    if not oculto and usuario and not usuario.activo and usuario.rol == models.RolUsuario.STAFF:
+        _validar_limite_plan(db, usuario_admin, "usuarios_staff")
+
+    if empleado:
+        empleado.activo = not oculto
+    if usuario:
+        usuario.activo = not oculto
+        if oculto:
+            # Corta cualquier sesion abierta del trabajador oculto.
+            usuario.sesion_version = int(usuario.sesion_version or 1) + 1
+    db.commit()
+    return {"message": "Trabajador ocultado" if oculto else "Trabajador restaurado"}
+
+
+@app.put("/usuarios/{usuario_id}/visibilidad", tags=["Usuarios"])
+def cambiar_visibilidad_usuario(
+    usuario_id: int,
+    datos: schemas.VisibilidadPersonal,
+    db: Session = Depends(get_db),
+    usuario_admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Oculta/restaura a un trabajador con cuenta de acceso, junto con su ficha."""
+    usuario = q(db, models.Usuario, usuario_admin).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    empleado = _del_gym(db, models.Empleado, usuario.empleado_id, usuario_admin) if usuario.empleado_id else None
+    return _cambiar_visibilidad_personal(db, usuario_admin, empleado, usuario, datos.oculto)
+
+
 @app.get("/usuarios/me", response_model=schemas.Usuario, tags=["Usuarios"])
 def mi_cuenta(usuario: models.Usuario = Depends(auth.get_usuario_actual)):
     """Devuelve los datos del usuario (staff o profesor) actualmente logueado."""
@@ -9047,8 +9092,23 @@ def crear_reto(reto: schemas.RetoCreate, db: Session = Depends(get_db), usuario:
 # ==================================================================
 
 @app.get("/empleados/", response_model=List[schemas.Empleado], tags=["Personal"])
-def listar_empleados(db: Session = Depends(get_db), usuario: models.Usuario = Depends(auth.requiere_staff)):
-    return q(db, models.Empleado, usuario).filter(models.Empleado.activo == True).all()
+def listar_empleados(
+    incluir_inactivos: bool = False,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(auth.requiere_staff),
+):
+    """
+    Por defecto solo el personal activo. El administrador puede pedir
+    tambien el oculto (incluir_inactivos=true) para restaurarlo desde
+    Usuarios Staff.
+    """
+    consulta = q(db, models.Empleado, usuario)
+    if incluir_inactivos:
+        if not usuario.es_administrador:
+            raise HTTPException(status_code=403, detail="Requiere permisos de administrador")
+    else:
+        consulta = consulta.filter(models.Empleado.activo == True)
+    return consulta.all()
 
 
 @app.get("/agenda/profesores", response_model=List[schemas.ProfesorMinimo], tags=["Agenda"])
@@ -9147,6 +9207,67 @@ def crear_empleado(empleado: schemas.EmpleadoCreate, db: Session = Depends(get_d
     db.commit()
     db.refresh(db_empleado)
     return db_empleado
+
+
+@app.delete("/empleados/{empleado_id}", tags=["Personal"])
+def eliminar_empleado(
+    empleado_id: int,
+    db: Session = Depends(get_db),
+    usuario_admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """
+    Borra definitivamente una ficha de personal mal ingresada (por
+    ejemplo un duplicado). Solo procede si no tiene cuenta de acceso ni
+    historial: con movimientos registrados el borrado dejaria huerfanos
+    los pagos y las ventas, asi que en ese caso se oculta.
+    """
+    empleado = _del_gym(db, models.Empleado, empleado_id, usuario_admin)
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    cuenta = q(db, models.Usuario, usuario_admin).filter(models.Usuario.empleado_id == empleado_id).first()
+    if cuenta:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Este trabajador tiene la cuenta de acceso '{cuenta.username}'. Ocúltalo en vez de borrarlo.",
+        )
+
+    def _cuantos(modelo, columna):
+        return db.query(func.count(modelo.id)).filter(columna == empleado_id).scalar() or 0
+
+    historial = {
+        "pagos de planilla": _cuantos(models.PagoPlanilla, models.PagoPlanilla.empleado_id),
+        "asistencias": _cuantos(models.AsistenciaEmpleado, models.AsistenciaEmpleado.empleado_id),
+        "clases dictadas": _cuantos(models.ClaseDictada, models.ClaseDictada.profesor_id),
+        "ventas": _cuantos(models.Venta, models.Venta.empleado_id),
+    }
+    con_movimientos = [f"{cantidad} {nombre}" for nombre, cantidad in historial.items() if cantidad]
+    if con_movimientos:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se puede borrar: tiene {', '.join(con_movimientos)}. Ocúltalo para conservar el historial.",
+        )
+
+    # Una invitacion pendiente no es historial: se va con la ficha.
+    db.query(models.InvitacionUsuario).filter(models.InvitacionUsuario.empleado_id == empleado_id).delete()
+    db.delete(empleado)
+    db.commit()
+    return {"message": "Trabajador eliminado definitivamente"}
+
+
+@app.put("/empleados/{empleado_id}/visibilidad", tags=["Personal"])
+def cambiar_visibilidad_empleado(
+    empleado_id: int,
+    datos: schemas.VisibilidadPersonal,
+    db: Session = Depends(get_db),
+    usuario_admin: models.Usuario = Depends(auth.requiere_administrador),
+):
+    """Oculta/restaura a un trabajador desde su ficha (tenga cuenta o no)."""
+    empleado = _del_gym(db, models.Empleado, empleado_id, usuario_admin)
+    if not empleado:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    usuario = q(db, models.Usuario, usuario_admin).filter(models.Usuario.empleado_id == empleado_id).first()
+    return _cambiar_visibilidad_personal(db, usuario_admin, empleado, usuario, datos.oculto)
 
 
 @app.put("/empleados/{empleado_id}", response_model=schemas.Empleado, tags=["Personal"])
